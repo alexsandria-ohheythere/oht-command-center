@@ -53,7 +53,7 @@ export default function DashboardPage() {
           {/* Today's shifts */}
           <div className="card fade-up">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 14, fontWeight: 700 }}>Today's Shifts</div>
+              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 14, fontWeight: 700 }}>Today's Shifts</div>
               <a href="/schedule" style={{ fontSize: 11, color: 'var(--matcha-dark)', fontWeight: 600, textDecoration: 'none' }}>View all →</a>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -73,18 +73,18 @@ export default function DashboardPage() {
           {/* Quick actions + staff overview */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="card fade-up">
-              <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Staff Overview</div>
+              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Staff Overview</div>
               <div style={{ display: 'flex', justifyContent: 'space-around' }}>
                 {[['22','Total'],['6','On Shift'],['2','Absent']].map(([num, lbl], i) => (
                   <div key={lbl} style={{ textAlign: 'center' }}>
-                    <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: i===1?'var(--matcha-dark)':i===2?'#c0392b':'var(--espresso)' }}>{num}</div>
+                    <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 26, fontWeight: 700, color: i===1?'var(--matcha-dark)':i===2?'#c0392b':'var(--espresso)' }}>{num}</div>
                     <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 }}>{lbl}</div>
                   </div>
                 ))}
               </div>
             </div>
             <div className="card fade-up">
-              <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Quick Actions</div>
+              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Quick Actions</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
                 {[['📅','Scheduling','/schedule'],['✅','New Task','/tasks'],['📣','Announce','/announce'],['💸','Payroll','/payroll']].map(([icon, label, href]) => (
                   <a key={label} href={href} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 9, padding: 10, textAlign: 'center', textDecoration: 'none', transition: 'all .15s', display: 'block' }}
@@ -102,7 +102,7 @@ export default function DashboardPage() {
         {/* Announcements */}
         <div className="card fade-up">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-            <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 14, fontWeight: 700 }}>Announcements</div>
+            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 14, fontWeight: 700 }}>Announcements</div>
             <a href="/announce" style={{ fontSize: 11, color: 'var(--matcha-dark)', fontWeight: 600, textDecoration: 'none' }}>View all →</a>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
