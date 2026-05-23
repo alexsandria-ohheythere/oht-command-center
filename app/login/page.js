@@ -51,7 +51,7 @@ export default function LoginPage() {
             margin: '0 auto 14px', fontSize: 24
           }}>🌿</div>
           <div style={{
-            fontFamily: "'Playfair Display', serif", fontSize: 22,
+            fontFamily: "'Montserrat', sans-serif", fontSize: 22,
             fontWeight: 900, color: 'var(--espresso)', letterSpacing: .5
           }}>Oh Hey There</div>
           <div style={{
