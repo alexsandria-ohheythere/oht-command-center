@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;900&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
 :root {
   --matcha: #7ab648;
@@ -7,7 +7,7 @@
   --matcha-pale: #eef7e4;
   --cream: #f5f0e8;
   --cream-dark: #e8e0d0;
-  --espresso: #1a1208;
+  --espresso: #EF4576;
   --espresso-mid: #2d2010;
   --gold: #d4a843;
   --gold-pale: #fef8ec;
@@ -17,7 +17,7 @@
   --sky-pale: #e8f3fb;
   --fb: #1877F2;
   --fb-pale: #e8f0fe;
-  --text-primary: #1a1208;
+  --text-primary: #EF4576;
   --text-muted: #7a6a50;
   --border: #d8cebb;
   --surface: #faf7f2;
@@ -67,7 +67,7 @@ body {
   z-index: 10;
 }
 .sidebar-brand { padding: 22px 20px 16px; border-bottom: 1px solid #2d2010; }
-.sidebar-brand-name { font-family: 'Playfair Display', serif; font-size: 15px; font-weight: 900; color: var(--cream); letter-spacing: .5px; }
+.sidebar-brand-name { font-family: 'Montserrat', sans-serif; font-size: 15px; font-weight: 900; color: var(--cream); letter-spacing: .5px; }
 .sidebar-brand-sub { font-size: 9px; color: var(--matcha-light); letter-spacing: 2px; text-transform: uppercase; margin-top: 3px; }
 
 .sidebar-user { margin: 12px 12px 4px; background: #2d2010; border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; gap: 9px; }
@@ -90,7 +90,7 @@ body {
 /* Main area */
 .main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .topbar { background: var(--white); border-bottom: 1px solid var(--border); padding: 0 24px; height: 56px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.topbar-title { font-family: 'Playfair Display', serif; font-size: 17px; font-weight: 700; color: var(--espresso); }
+.topbar-title { font-family: 'Montserrat', sans-serif; font-size: 17px; font-weight: 700; color: var(--espresso); }
 .topbar-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 .page-content { flex: 1; overflow-y: auto; padding: 22px 24px; }
 
@@ -118,7 +118,7 @@ body {
 .kpi-card.c-blush::before { background: var(--blush); }
 .kpi-card.c-bark::before { background: #5c3d1e; }
 .kpi-label { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 7px; }
-.kpi-value { font-family: 'Playfair Display', serif; font-size: 26px; font-weight: 700; color: var(--espresso); line-height: 1; }
+.kpi-value { font-family: 'Montserrat', sans-serif; font-size: 26px; font-weight: 700; color: var(--espresso); line-height: 1; }
 .kpi-delta { font-size: 10px; margin-top: 5px; font-weight: 500; }
 .kpi-delta.up { color: var(--matcha-dark); }
 .kpi-delta.down { color: #c0392b; }
