@@ -290,7 +290,7 @@ export default function LeavePage() {
                           {ss.label}
                         </span>
                         {r.status==='pending' && (
-                          <div style={{display:'flex',gap:6'}}>
+                          <div style={{display:'flex',gap:6}}>
                             <button onClick={()=>updateStatus(r.id,'approved','alex')}
                               style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:7,padding:'5px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
                               ✓ Approve
