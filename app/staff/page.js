@@ -5,7 +5,7 @@ import { createClient } from '../../lib/supabase'
 import {
   EMPLOYMENT_TYPES, RATES, getBaseRate, getDailyRate,
   calcSSS, calcPhilHealth, calcPagIBIG, calcWithholdingTax,
-  isServiceChargeEligible, LEAVE_ENTITLEMENT, computePayroll
+  isServiceChargeEligible, LEAVE_ENTITLEMENT, computeCutoffPayroll, getDailyRate as getStaffDailyRate
 } from '../../lib/payroll'
 
 const ROLES = [
@@ -198,8 +198,25 @@ export default function StaffPage() {
 
   // ── PAYROLL PREVIEW for profile ──
   function getPayrollPreview(s) {
-    const days = 26
-    return computePayroll(s, days, s.late_minutes||0, s.absent_days||0)
+    // Build dummy shifts from stored late_minutes and absent_days for profile preview
+    const type = s.employment_type || 'Full-time'
+    const role = s.role || ''
+    const daily = getStaffDailyRate(type, role)
+    const hourly = daily / 8
+    const minuteRate = hourly / 60
+    const daysWorked = Math.max(0, 26 - (s.absent_days || 0))
+    const paidHours = daysWorked * 8
+    const lateMinutes = s.late_minutes || 0
+    const lateCount = s.late_count_this_month || 0
+
+    // Simulate shifts array for computeCutoffPayroll
+    const fakeShifts = Array.from({ length: daysWorked }, (_, i) => ({
+      paidHours: 8,
+      lateMinutes: i === 0 ? lateMinutes : 0, // put all late mins on first shift
+      rawHours: 9,
+    }))
+
+    return computeCutoffPayroll(s, fakeShifts)
   }
 
   const typeColors = {'Full-time':'#4a7a1e','Part-time':'#2d5a8a','Freelancer':'#8e44ad'}
