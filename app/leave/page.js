@@ -28,9 +28,17 @@ const initials = (f, l) => ((f||'')[0]||'').toUpperCase() + ((l||'')[0]||'').toU
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—'
 const toISO = d => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}` }
 
+const SHIFT_OPTIONS = [
+  { id:'all', label:'All Shifts',  icon:'📅' },
+  { id:'am',  label:'AM Shift',    icon:'🌅', time:'6:30AM–3:30PM' },
+  { id:'mid', label:'Mid Shift',   icon:'☀️',  time:'11:00AM–8:00PM' },
+  { id:'pm',  label:'PM Shift',    icon:'🌙', time:'3:00PM–11:00PM' },
+]
+
 const EMPTY_FORM = {
   staff_id:'', leave_type:'unavailable',
   date_from: toISO(new Date()), date_to: toISO(new Date()),
+  shifts: ['all'],
   reason:'', submitted_by:'alex',
 }
 
@@ -75,6 +83,7 @@ export default function LeavePage() {
       leave_type: form.leave_type,
       date_from: form.date_from,
       date_to: form.date_to,
+      shifts: form.shifts.includes('all') ? ['am','mid','pm'] : form.shifts,
       reason: form.reason,
       submitted_by: form.submitted_by,
       status: 'pending',
@@ -185,6 +194,41 @@ export default function LeavePage() {
               )}
 
               <div style={{marginBottom:14}}>
+                <label style={lStyle}>Affected Shifts</label>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:7}}>
+                  {SHIFT_OPTIONS.map(sh => {
+                    const isSelected = form.shifts.includes(sh.id)
+                    const isAllMode  = form.shifts.includes('all')
+                    const active     = sh.id==='all' ? isAllMode : (!isAllMode && isSelected)
+                    return (
+                      <div key={sh.id}
+                        onClick={() => {
+                          if (sh.id==='all') {
+                            setForm(prev=>({...prev, shifts:['all']}))
+                          } else {
+                            setForm(prev => {
+                              const cur = prev.shifts.filter(x=>x!=='all')
+                              const next = cur.includes(sh.id) ? cur.filter(x=>x!==sh.id) : [...cur, sh.id]
+                              return {...prev, shifts: next.length===0?['all']:next}
+                            })
+                          }
+                        }}
+                        style={{padding:'9px 8px',borderRadius:9,border:`1.5px solid ${active?'var(--espresso)':'var(--border)'}`,background:active?'var(--espresso)':'var(--surface)',cursor:'pointer',textAlign:'center',transition:'all .15s'}}>
+                        <div style={{fontSize:16,marginBottom:3}}>{sh.icon}</div>
+                        <div style={{fontSize:10,fontWeight:700,color:active?'var(--cream)':'var(--text-muted)'}}>{sh.label}</div>
+                        {sh.time&&<div style={{fontSize:8,color:active?'var(--matcha-light)':'var(--border)',marginTop:2}}>{sh.time}</div>}
+                      </div>
+                    )
+                  })}
+                </div>
+                {!form.shifts.includes('all') && (
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:5}}>
+                    Only blocked for: {form.shifts.map(s=>s==='am'?'AM':s==='mid'?'Mid':'PM').join(', ')} shift{form.shifts.length!==1?'s':''}
+                  </div>
+                )}
+              </div>
+
+              <div style={{marginBottom:14}}>
                 <label style={lStyle}>Reason / Notes</label>
                 <textarea style={{...iStyle,resize:'vertical',minHeight:70,lineHeight:1.5}} value={form.reason} onChange={fv('reason')} placeholder="Optional — medical certificate, personal reason, etc." />
               </div>
@@ -279,6 +323,18 @@ export default function LeavePage() {
                         <div style={{fontSize:12,color:'var(--espresso)',fontWeight:600}}>
                           {fmtDate(r.date_from)}{r.date_from!==r.date_to?` → ${fmtDate(r.date_to)}`:''}
                         </div>
+                        {/* Shift badges */}
+                        {r.shifts && r.shifts.length > 0 && !(r.shifts.length===3) && (
+                          <div style={{display:'flex',gap:5,marginTop:4,flexWrap:'wrap'}}>
+                            {r.shifts.map(sh=>(
+                              <span key={sh} style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:6,
+                                background:sh==='am'?'#eef7e4':sh==='mid'?'#fef3e2':'#e8f0fb',
+                                color:sh==='am'?'#4a7a1e':sh==='mid'?'#a06000':'#2d5a8a'}}>
+                                {sh==='am'?'AM Shift':sh==='mid'?'Mid Shift':'PM Shift'}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         {r.reason&&<div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>{r.reason}</div>}
                         <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Submitted by {r.submitted_by==='alex'?'Alex':'CJ'} · {fmtDate(r.created_at)}</div>
                         {r.approved_by&&<div style={{fontSize:10,color:'var(--text-muted)'}}>{r.status==='approved'?'Approved':'Rejected'} by {r.approved_by==='alex'?'Alex':'CJ'}</div>}
