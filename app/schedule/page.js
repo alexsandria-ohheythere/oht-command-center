@@ -89,15 +89,25 @@ export default function SchedulePage() {
     setTimeout(() => setToast(null), 3500)
   }
 
-  // Check if staff member is on approved leave for a given day
-  function isOnLeave(staffId, dayIdx) {
+  // Check if staff member is on approved leave for a given day+shift
+  function isOnLeave(staffId, dayIdx, shiftId) {
     const date = toISO(weekDates[dayIdx])
-    return approvedLeaves.some(l => l.staff_id === staffId && date >= l.date_from && date <= l.date_to)
+    return approvedLeaves.some(l => {
+      if (l.staff_id !== staffId) return false
+      if (date < l.date_from || date > l.date_to) return false
+      if (!l.shifts || l.shifts.length === 0) return true
+      return l.shifts.includes(shiftId) || l.shifts.includes('all')
+    })
   }
 
-  function getLeaveType(staffId, dayIdx) {
+  function getLeaveType(staffId, dayIdx, shiftId) {
     const date = toISO(weekDates[dayIdx])
-    return approvedLeaves.find(l => l.staff_id === staffId && date >= l.date_from && date <= l.date_to)
+    return approvedLeaves.find(l => {
+      if (l.staff_id !== staffId) return false
+      if (date < l.date_from || date > l.date_to) return false
+      if (!l.shifts || l.shifts.length === 0) return true
+      return l.shifts.includes(shiftId) || l.shifts.includes('all')
+    })
   }
 
   // Get assigned staff for a cell
@@ -276,7 +286,7 @@ export default function SchedulePage() {
                       <div style={{fontSize:9,color:'#8a7a60',marginTop:1}}>{s.role}</div>
                     </div>
                     {weekHrs > 0 && <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'var(--matcha-light)',background:'#1a1208',padding:'2px 5px',borderRadius:4,flexShrink:0}}>{weekHrs}h</div>}
-                    {weekDates.some((_,di)=>isOnLeave(s.id,di)) && <div style={{fontSize:9,fontWeight:700,color:'#c0392b',background:'#fdeaea',padding:'2px 5px',borderRadius:4,flexShrink:0}}>On Leave</div>}
+                    {weekDates.some((_,di)=>['am','mid','pm'].some(sh=>isOnLeave(s.id,di,sh))) && <div style={{fontSize:9,fontWeight:700,color:'#c0392b',background:'#fdeaea',padding:'2px 5px',borderRadius:4,flexShrink:0}}>On Leave</div>}
                   </div>
                   {/* Messenger status dot */}
                   <div style={{display:'flex',alignItems:'center',gap:4,marginTop:5}}>
@@ -343,7 +353,7 @@ export default function SchedulePage() {
                           e.preventDefault()
                           e.currentTarget.style.outline=''
                           e.currentTarget.style.background=''
-                          if (dragStaffId && isOnLeave(dragStaffId, dayIdx)) {
+                          if (dragStaffId && isOnLeave(dragStaffId, dayIdx, shift.id)) {
                             showToast('🚫', 'This staff member is on approved leave for this date')
                           } else if (dragSource) {
                             moveAssignment(dragSource.date, dragSource.shiftType, dragStaffId, dayIdx, shift.id)
@@ -355,7 +365,16 @@ export default function SchedulePage() {
                         }}
                         style={{background:'var(--white)',borderTop:'1px solid var(--border)',borderLeft:'1px solid var(--border)',padding:5,minHeight:100,position:'relative',transition:'background .1s'}}>
 
-                        {assignments.length === 0 && (
+                        {/* Leave overlays — show blocked staff indicators */}
+                        {staff.filter(s => isOnLeave(s.id, dayIdx, shift.id)).map(s => (
+                          <div key={s.id} style={{display:'flex',alignItems:'center',gap:5,borderRadius:7,padding:'4px 7px',marginBottom:3,background:'#fdeaea',border:'1.5px solid #f5c6c6',opacity:.8}}>
+                            <div style={{width:16,height:16,borderRadius:'50%',background:'#ccc',display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,fontWeight:700,color:'white',flexShrink:0}}>
+                              {((s.first_name||'')[0]||'').toUpperCase()}{((s.last_name||'')[0]||'').toUpperCase()}
+                            </div>
+                            <span style={{fontSize:9,fontWeight:600,color:'#c0392b',flex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>🚫 {s.nickname||s.first_name}</span>
+                          </div>
+                        ))}
+                        {assignments.length === 0 && staff.filter(s => isOnLeave(s.id, dayIdx, shift.id)).length === 0 && (
                           <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
                             <div style={{fontSize:9,color:'var(--border)',textAlign:'center',lineHeight:1.5}}>Drop<br/>profile</div>
                           </div>
