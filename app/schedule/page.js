@@ -298,7 +298,7 @@ export default function SchedulePage() {
                 <div key={shift.id} style={{display:'grid',gridTemplateColumns:'80px repeat(7,1fr)'}}>
                   {/* Row label */}
                   <div style={{background:'var(--white)',padding:'10px 6px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-start',borderTop:'1px solid var(--border)'}}>
-                    <div style={{fontSize:10,fontWeight:700,letterSpacing:.5px,textTransform:'uppercase',writingMode:'vertical-rl',textOrientation:'mixed',transform:'rotate(180deg)',
+                    <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.5px',textTransform:'uppercase',writingMode:'vertical-rl',textOrientation:'mixed',transform:'rotate(180deg)',
                       color:shift.id==='am'?'#4a7a1e':shift.id==='mid'?'#a06000':'#2d5a8a'}}>
                       {shift.label}
                     </div>
