@@ -23,6 +23,8 @@ export default function Sidebar({ user }) {
     { href: '/schedule',   icon: '📅', label: 'Scheduling',    section: 'Operations' },
     { href: '/tasks',      icon: '✅', label: 'Tasks',         section: null },
     { href: '/leave',      icon: '🗓️', label: 'Leave & Unavail.', section: null },
+    { href: '/roles',      icon: '📋', label: 'Role Tasks',       section: null },
+    { href: '/checkin',    icon: '✔️', label: 'Daily Check-In',   section: null },
     { href: '/payroll',    icon: '💸', label: 'Payroll',       section: null },
     { href: '/staff',      icon: '👥', label: 'Staff',         section: null },
     { href: '/announce',   icon: '📣', label: 'Announcements', section: 'Comms' },
