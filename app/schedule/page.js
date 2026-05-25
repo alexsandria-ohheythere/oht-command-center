@@ -51,6 +51,7 @@ export default function SchedulePage() {
   const [weekOffset, setWeekOffset] = useState(0)
   const [toast, setToast]           = useState(null)
   const [showPublishModal, setShowPublishModal] = useState(false)
+  const [approvedLeaves, setApprovedLeaves] = useState([]) // [{staff_id, date_from, date_to}]
   const [dragStaffId, setDragStaffId] = useState(null)
   const [dragSource, setDragSource]   = useState(null) // {shiftDate, shiftType}
   const [sidebarSearch, setSidebarSearch] = useState('')
@@ -58,7 +59,15 @@ export default function SchedulePage() {
   const weekStart = toISO(weekDates[0])
 
   useEffect(() => { fetchStaff() }, [])
-  useEffect(() => { if (staff.length) fetchSchedules() }, [weekOffset, staff])
+  useEffect(() => { if (staff.length) { fetchSchedules(); fetchLeaves() } }, [weekOffset, staff])
+
+  async function fetchLeaves() {
+    const { data } = await supabase
+      .from('leave_requests')
+      .select('staff_id, date_from, date_to, leave_type')
+      .eq('status', 'approved')
+    setApprovedLeaves(data || [])
+  }
 
   async function fetchStaff() {
     const { data } = await supabase.from('staff').select('*').order('last_name')
@@ -78,6 +87,17 @@ export default function SchedulePage() {
   function showToast(icon, msg) {
     setToast({ icon, msg })
     setTimeout(() => setToast(null), 3500)
+  }
+
+  // Check if staff member is on approved leave for a given day
+  function isOnLeave(staffId, dayIdx) {
+    const date = toISO(weekDates[dayIdx])
+    return approvedLeaves.some(l => l.staff_id === staffId && date >= l.date_from && date <= l.date_to)
+  }
+
+  function getLeaveType(staffId, dayIdx) {
+    const date = toISO(weekDates[dayIdx])
+    return approvedLeaves.find(l => l.staff_id === staffId && date >= l.date_from && date <= l.date_to)
   }
 
   // Get assigned staff for a cell
@@ -256,6 +276,7 @@ export default function SchedulePage() {
                       <div style={{fontSize:9,color:'#8a7a60',marginTop:1}}>{s.role}</div>
                     </div>
                     {weekHrs > 0 && <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'var(--matcha-light)',background:'#1a1208',padding:'2px 5px',borderRadius:4,flexShrink:0}}>{weekHrs}h</div>}
+                    {weekDates.some((_,di)=>isOnLeave(s.id,di)) && <div style={{fontSize:9,fontWeight:700,color:'#c0392b',background:'#fdeaea',padding:'2px 5px',borderRadius:4,flexShrink:0}}>On Leave</div>}
                   </div>
                   {/* Messenger status dot */}
                   <div style={{display:'flex',alignItems:'center',gap:4,marginTop:5}}>
@@ -322,7 +343,9 @@ export default function SchedulePage() {
                           e.preventDefault()
                           e.currentTarget.style.outline=''
                           e.currentTarget.style.background=''
-                          if (dragSource) {
+                          if (dragStaffId && isOnLeave(dragStaffId, dayIdx)) {
+                            showToast('🚫', 'This staff member is on approved leave for this date')
+                          } else if (dragSource) {
                             moveAssignment(dragSource.date, dragSource.shiftType, dragStaffId, dayIdx, shift.id)
                           } else if (dragStaffId) {
                             addAssignment(dayIdx, shift.id, dragStaffId)
