@@ -27,6 +27,7 @@ export default function Sidebar({ user }) {
     { href: '/checkin',    icon: '✔️', label: 'Daily Check-In',   section: null },
     { href: '/payroll',    icon: '💸', label: 'Payroll',       section: null },
     { href: '/staff',      icon: '👥', label: 'Staff',         section: null },
+    { href: '/finance',    icon: '💹', label: 'Finance',         section: 'Finance' },
     { href: '/announce',   icon: '📣', label: 'Announcements', section: 'Comms' },
     { href: '/settings',   icon: '⚙️', label: 'Settings',      section: 'Admin' },
   ]
