@@ -22,13 +22,11 @@ const NAV = [
   { type:'link', href:'/staff',    icon:'👥', label:'Staff'            },
 
   { type:'section', label:'Finance' },
-  { type:'group', icon:'💹', label:'Finance', key:'finance', children:[
-    { href:'/finance',          icon:'📊', label:'Financial Statement' },
-    { href:'/finance/sales',    icon:'💰', label:'Sales'               },
-    { href:'/finance/expenses', icon:'🧾', label:'Expenses'            },
-    { href:'/finance/forecast', icon:'📈', label:'Forecast'            },
-    { href:'/finance/bank',     icon:'🏦', label:'Bank Records'        },
-  ]},
+  { type:'link', href:'/finance',          icon:'📊', label:'Financial Statement' },
+  { type:'link', href:'/finance/sales',    icon:'💰', label:'Sales'               },
+  { type:'link', href:'/finance/expenses', icon:'🧾', label:'Expenses'            },
+  { type:'link', href:'/finance/forecast', icon:'📈', label:'Forecast'            },
+  { type:'link', href:'/finance/bank',     icon:'🏦', label:'Bank Records'        },
 
   { type:'section', label:'Comms' },
   { type:'link', href:'/announce', icon:'📣', label:'Announcements' },
