@@ -148,35 +148,84 @@ export default function FinancePage() {
   }
 
   // ── BANK CSV UPLOAD ──
+  // Supports UnionBank format (header block rows 1-15, transactions from row 16)
   function handleBankCSV(e) {
     const file = e.target.files[0]; if(!file) return
     const reader = new FileReader()
     reader.onload = async ev => {
-      const lines = ev.target.result.split('\n').filter(l=>l.trim())
-      const headers = lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,''))
+      const allLines = ev.target.result.split('\n')
       const rows = []
-      for (let i=1;i<lines.length;i++) {
-        const vals = lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''))
-        const obj = {}; headers.forEach((h,idx)=>{obj[h]=vals[idx]||''})
-        const rawDate = obj.date||obj.transaction_date||obj.value_date||''
-        let txDate = null
-        if (rawDate) { const d=new Date(rawDate); if(!isNaN(d)) txDate=toISO(d) }
-        if (!txDate) continue
-        rows.push({
-          transaction_date: txDate,
-          description: obj.description||obj.details||obj.narration||'',
-          debit:  parseFloat(obj.debit||obj.withdrawal||0),
-          credit: parseFloat(obj.credit||obj.deposit||0),
-          balance: parseFloat(obj.balance||obj.running_balance||0),
-          reference: obj.reference||obj.ref||obj.check_no||'',
-        })
+
+      // ── UNIONBANK DETECTION ──
+      // UnionBank CSVs have "ACCOUNT DETAILS:" on line 1 and
+      // "TRANSACTIONS LIST:" somewhere before the header row
+      const isUnionBank = allLines[0]?.includes('ACCOUNT DETAILS')
+
+      if (isUnionBank) {
+        // Find the header row (contains "Transaction Date")
+        let headerIdx = allLines.findIndex(l => l.includes('Transaction Date'))
+        if (headerIdx === -1) { showToast('⚠️', 'Could not find transaction headers in UnionBank CSV'); return }
+        const headers = allLines[headerIdx].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,''))
+
+        for (let i = headerIdx + 1; i < allLines.length; i++) {
+          const line = allLines[i].trim()
+          if (!line) continue
+          // Split carefully — values may have commas inside
+          const vals = line.split(',')
+          const obj = {}; headers.forEach((h, idx) => { obj[h] = (vals[idx]||'').trim().replace(/^"|"$/g,'') })
+
+          // Parse date — format: 2026-04-30T00:00:00.000
+          const rawDate = obj.transaction_date || ''
+          if (!rawDate) continue
+          const d = new Date(rawDate)
+          if (isNaN(d)) continue
+          const txDate = toISO(d)
+
+          // UnionBank: debits and credits can be " " (space) when empty
+          const debit  = parseFloat(obj.debits?.trim()  || '0') || 0
+          const credit = parseFloat(obj.credits?.trim() || '0') || 0
+          const balance = parseFloat(obj.ending_balance?.trim() || '0') || 0
+          const desc = obj.transaction_description || ''
+          const ref  = obj.transaction_id || obj.reference_number || ''
+          const remarks = [obj.remarks, obj.remarks_1].filter(Boolean).join(' · ')
+
+          rows.push({
+            transaction_date: txDate,
+            description: desc + (remarks ? ' — ' + remarks : ''),
+            debit, credit, balance,
+            reference: ref,
+            bank_name: 'UnionBank',
+          })
+        }
+      } else {
+        // ── GENERIC BANK FORMAT ──
+        const lines = allLines.filter(l=>l.trim())
+        const headers = lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,''))
+        for (let i=1;i<lines.length;i++) {
+          const vals = lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''))
+          const obj = {}; headers.forEach((h,idx)=>{obj[h]=vals[idx]||''})
+          const rawDate = obj.date||obj.transaction_date||obj.value_date||''
+          let txDate = null
+          if (rawDate) { const d=new Date(rawDate); if(!isNaN(d)) txDate=toISO(d) }
+          if (!txDate) continue
+          rows.push({
+            transaction_date: txDate,
+            description: obj.description||obj.details||obj.narration||'',
+            debit:  parseFloat(obj.debit||obj.debits||obj.withdrawal||0)||0,
+            credit: parseFloat(obj.credit||obj.credits||obj.deposit||0)||0,
+            balance: parseFloat(obj.balance||obj.ending_balance||obj.running_balance||0)||0,
+            reference: obj.reference||obj.transaction_id||obj.ref||'',
+            bank_name: 'Bank',
+          })
+        }
       }
-      if (!rows.length) { showToast('⚠️','No valid rows found'); return }
+
+      if (!rows.length) { showToast('⚠️','No valid rows found in CSV'); return }
       setSaving(true)
       const { error } = await supabase.from('bank_records').insert(rows)
       if (error) { showToast('❌',error.message); setSaving(false); return }
       await fetchAll()
-      showToast('✅',`${rows.length} bank records imported`)
+      showToast('✅',`${rows.length} UnionBank transactions imported`)
       setSaving(false)
     }
     reader.readAsText(file)
@@ -555,7 +604,7 @@ export default function FinancePage() {
                 <input type="file" accept=".csv" ref={bankFileRef} style={{display:'none'}} onChange={handleBankCSV}/>
               </label>
               <div style={{fontSize:11,color:'var(--text-muted)',background:'var(--surface)',border:'1px solid var(--border)',padding:'7px 12px',borderRadius:8}}>
-                💡 Works with BDO, BPI, UnionBank, Metrobank CSV exports
+                ✅ UnionBank format supported · Also works with BDO, BPI, Metrobank CSV exports
               </div>
               <div style={{marginLeft:'auto',fontFamily:"'DM Mono',monospace",fontSize:12,color:'var(--text-muted)'}}>{bankRecords.length} transactions</div>
             </div>
@@ -571,7 +620,7 @@ export default function FinancePage() {
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                   <thead>
                     <tr style={{background:'var(--espresso)'}}>
-                      {['Date','Description','Reference','Debit','Credit','Balance'].map(h=>(
+                      {['Date','Description','Reference','Debit','Credit','Balance','Bank'].map(h=>(
                         <th key={h} style={{padding:'11px 14px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}}>{h}</th>
                       ))}
                     </tr>
