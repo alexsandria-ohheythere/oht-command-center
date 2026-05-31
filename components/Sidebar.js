@@ -1,60 +1,23 @@
 'use client'
-import { useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '../lib/supabase'
+import { can } from '../lib/auth'
 
-const ADMIN_USERS = {
-  'alex@ohheythere.cafe': { name: 'Alex', role: 'Managing Director', color: '#7ab648', initials: 'A' },
-  'cj@ohheythere.cafe':   { name: 'CJ',   role: 'CEO',               color: '#4a90c4', initials: 'CJ' },
+const ROLE_PROFILES = {
+  'ohheythere.matcha@gmail.com': { name:'Alex', role:'Managing Director', color:'#7ab648', initials:'A' },
+  'ohheythere.group@gmail.com':  { name:'CJ',   role:'CEO',               color:'#4a90c4', initials:'CJ' },
+  'richelle@ohheythere.cafe':    { name:'Richelle', role:'Cafe Supervisor', color:'#b06af5', initials:'R' },
 }
 
-const NAV = [
-  { type:'section', label:'Overview' },
-  { type:'link', href:'/dashboard', icon:'🏠', label:'Dashboard' },
-
-  { type:'section', label:'Operations' },
-  { type:'link', href:'/schedule', icon:'📅', label:'Scheduling'      },
-  { type:'link', href:'/tasks',    icon:'✅', label:'Tasks'            },
-  { type:'link', href:'/leave',    icon:'🗓️', label:'Leave & Unavail.' },
-  { type:'link', href:'/roles',    icon:'📋', label:'Role Tasks'       },
-  { type:'link', href:'/checkin',  icon:'✔️', label:'Daily Check-In'   },
-  { type:'link', href:'/payroll',  icon:'💸', label:'Payroll'          },
-  { type:'link', href:'/staff',    icon:'👥', label:'Staff'            },
-
-  { type:'section', label:'Finance' },
-  { type:'link', href:'/finance',          icon:'📊', label:'Financial Statement' },
-  { type:'link', href:'/finance/sales',    icon:'💰', label:'Sales'               },
-  { type:'link', href:'/finance/expenses', icon:'🧾', label:'Expenses'            },
-  { type:'link', href:'/finance/forecast', icon:'📈', label:'Forecast'            },
-  { type:'link', href:'/finance/bank',     icon:'🏦', label:'Bank Records'        },
-
-  { type:'section', label:'Comms' },
-  { type:'link', href:'/announce', icon:'📣', label:'Announcements' },
-
-  { type:'section', label:'Admin' },
-  { type:'link', href:'/settings', icon:'⚙️', label:'Settings' },
-]
-
-export default function Sidebar({ user }) {
+export default function Sidebar({ user, userRole }) {
   const router   = useRouter()
   const pathname = usePathname()
-  const profile  = ADMIN_USERS[user?.email] || {
-    name: user?.email?.split('@')[0] || 'Admin',
-    role: 'Admin', color: '#7ab648', initials: 'A',
-  }
+  const role     = userRole?.role || 'staff'
 
-  // Auto-open Finance group if currently on a finance page
-  const [openGroups, setOpenGroups] = useState(() => {
-    const open = {}
-    if (typeof window !== 'undefined') {
-      const p = window.location.pathname
-      if (p.startsWith('/finance')) open['finance'] = true
-    }
-    return open
-  })
-
-  function toggleGroup(key) {
-    setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }))
+  const profile = ROLE_PROFILES[user?.email] || {
+    name: user?.email?.split('@')[0] || 'User',
+    role: role.charAt(0).toUpperCase() + role.slice(1),
+    color: '#7ab648', initials: (user?.email||'U')[0].toUpperCase(),
   }
 
   async function signOut() {
@@ -63,7 +26,36 @@ export default function Sidebar({ user }) {
     router.replace('/login')
   }
 
-  const isFinanceActive = pathname.startsWith('/finance')
+  // Build nav based on permissions
+  const NAV = [
+    { type:'section', label:'Overview' },
+    { type:'link', href:'/dashboard',  icon:'🏠', label:'Dashboard',       show: true },
+
+    { type:'section', label:'Operations', show: can(role,'schedule')||can(role,'tasks')||can(role,'checkin') },
+    { type:'link', href:'/schedule',   icon:'📅', label:'Scheduling',       show: can(role,'schedule')  },
+    { type:'link', href:'/tasks',      icon:'✅', label:'Tasks',             show: can(role,'tasks')     },
+    { type:'link', href:'/leave',      icon:'🗓️', label:'Leave & Unavail.', show: can(role,'leaveReview') },
+    { type:'link', href:'/roles',      icon:'📋', label:'Role Tasks',        show: can(role,'roles')     },
+    { type:'link', href:'/checkin',    icon:'✔️', label:'Daily Check-In',    show: can(role,'checkin')   },
+    { type:'link', href:'/payroll',    icon:'💸', label:'Payroll',           show: can(role,'payrollUpload') },
+    { type:'link', href:'/staff',      icon:'👥', label:'Staff',             show: can(role,'staffView') },
+
+    { type:'section', label:'Finance', show: can(role,'finance') },
+    { type:'link', href:'/finance',          icon:'📊', label:'Financial Statement', show: can(role,'finance') },
+    { type:'link', href:'/finance/sales',    icon:'💰', label:'Sales',               show: can(role,'finance') },
+    { type:'link', href:'/finance/expenses', icon:'🧾', label:'Expenses',            show: can(role,'finance') },
+    { type:'link', href:'/finance/forecast', icon:'📈', label:'Forecast',            show: can(role,'finance') },
+    { type:'link', href:'/finance/bank',     icon:'🏦', label:'Bank Records',        show: can(role,'finance') },
+
+    { type:'section', label:'Comms', show: can(role,'announcements') },
+    { type:'link', href:'/announce',   icon:'📣', label:'Announcements',    show: can(role,'announcements') },
+
+    { type:'section', label:'Admin', show: can(role,'settings') },
+    { type:'link', href:'/settings',   icon:'⚙️', label:'Settings',         show: can(role,'settings') },
+  ]
+
+  // Supervisor badge
+  const roleLabel = role === 'supervisor' ? 'Supervisor Access' : role === 'admin' ? 'Admin Access' : ''
 
   return (
     <div className="sidebar">
@@ -79,62 +71,36 @@ export default function Sidebar({ user }) {
         <div>
           <div className="sidebar-user-name">{profile.name}</div>
           <div className="sidebar-user-role">{profile.role}</div>
+          {roleLabel && (
+            <div style={{ fontSize:8, fontWeight:700, letterSpacing:1, color: role==='supervisor'?'#b06af5':'var(--matcha-light)', marginTop:2, textTransform:'uppercase' }}>
+              {roleLabel}
+            </div>
+          )}
         </div>
       </div>
 
       <nav className="sidebar-nav">
         {NAV.map((item, i) => {
+          if (item.show === false) return null
 
-          // Section header
-          if (item.type === 'section') return (
-            <div key={i} className="sidebar-section">{item.label}</div>
-          )
-
-          // Regular link
-          if (item.type === 'link') return (
-            <a key={item.href} href={item.href}
-              className={`sidebar-link ${pathname === item.href ? 'active' : ''}`}>
-              <span className="sidebar-link-icon">{item.icon}</span>
-              {item.label}
-            </a>
-          )
-
-          // Collapsible group
-          if (item.type === 'group') {
-            const isOpen    = openGroups[item.key]
-            const anyActive = item.children.some(c => pathname === c.href)
+          if (item.type === 'section') {
+            // Don't show section if no visible links follow
+            const hasVisibleLinks = NAV.slice(i+1).some(n => n.type === 'link' && n.show !== false) &&
+              NAV.slice(i+1).findIndex(n => n.type === 'section' && n.show !== false) !== 0
             return (
-              <div key={item.key}>
-                {/* Group header */}
-                <div
-                  onClick={() => toggleGroup(item.key)}
-                  className={`sidebar-link ${anyActive ? 'active' : ''}`}
-                  style={{ cursor:'pointer', justifyContent:'space-between' }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                    <span className="sidebar-link-icon">{item.icon}</span>
-                    {item.label}
-                  </div>
-                  <span style={{
-                    fontSize:10, color: anyActive ? 'var(--matcha-light)' : '#5a4a30',
-                    transition:'transform .2s',
-                    transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
-                    display:'inline-block',
-                  }}>▶</span>
-                </div>
-
-                {/* Children */}
-                {isOpen && item.children.map(child => (
-                  <a key={child.href} href={child.href}
-                    className={`sidebar-link ${pathname === child.href ? 'active' : ''}`}
-                    style={{ paddingLeft:32, fontSize:11 }}>
-                    <span className="sidebar-link-icon" style={{fontSize:12}}>{child.icon}</span>
-                    {child.label}
-                  </a>
-                ))}
-              </div>
+              <div key={i} className="sidebar-section">{item.label}</div>
             )
           }
 
+          if (item.type === 'link') {
+            return (
+              <a key={item.href} href={item.href}
+                className={`sidebar-link ${pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href) && item.href !== '/finance') ? 'active' : ''}`}>
+                <span className="sidebar-link-icon">{item.icon}</span>
+                {item.label}
+              </a>
+            )
+          }
           return null
         })}
       </nav>
