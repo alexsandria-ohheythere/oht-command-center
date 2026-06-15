@@ -25,7 +25,7 @@ const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(-
 const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
 const EMPTY_FORM = { title:'', description:'', priority:'normal', assigned_to:'', due_date:'', status:'todo' }
 
-export default function TasksPage() {
+export default function JobOrderPage() {
   const supabase = createClient()
   const [tasks, setTasks]       = useState([])
   const [staff, setStaff]       = useState([])
@@ -36,7 +36,7 @@ export default function TasksPage() {
   const [form, setForm]         = useState(EMPTY_FORM)
   const [dragTask, setDragTask] = useState(null)
   const [dragOver, setDragOver] = useState(null)
-  const [filterStaff, setFilterStaff]     = useState('')
+  const [filterStaff, setFilterStaff]       = useState('')
   const [filterPriority, setFilterPriority] = useState('')
   const [toast, setToast]       = useState(null)
 
@@ -48,9 +48,7 @@ export default function TasksPage() {
       supabase.from('tasks').select('*, staff(first_name,last_name,nickname,role)').order('created_at',{ascending:false}),
       supabase.from('staff').select('id,first_name,last_name,nickname,role').order('last_name'),
     ])
-    setTasks(t || [])
-    setStaff(s || [])
-    setLoading(false)
+    setTasks(t||[]); setStaff(s||[]); setLoading(false)
   }
 
   function showToast(icon,msg){setToast({icon,msg});setTimeout(()=>setToast(null),3000)}
@@ -60,29 +58,25 @@ export default function TasksPage() {
     if (!form.title.trim()) { showToast('⚠️','Title is required'); return }
     setSaving(true)
     const payload = { title:form.title, description:form.description, priority:form.priority, assigned_to:form.assigned_to||null, due_date:form.due_date||null, status:form.status }
-    if (editTask) {
-      const { error } = await supabase.from('tasks').update(payload).eq('id', editTask.id)
-      if (error) { showToast('❌',error.message); setSaving(false); return }
-      showToast('✅','Task updated')
-    } else {
-      const { error } = await supabase.from('tasks').insert([payload])
-      if (error) { showToast('❌',error.message); setSaving(false); return }
-      showToast('✅','Task created')
-    }
+    const { error } = editTask
+      ? await supabase.from('tasks').update(payload).eq('id', editTask.id)
+      : await supabase.from('tasks').insert([payload])
+    if (error) { showToast('❌',error.message); setSaving(false); return }
     await fetchAll()
     setShowForm(false); setEditTask(null); setForm(EMPTY_FORM); setSaving(false)
+    showToast('✅', editTask ? 'Job order updated' : 'Job order created')
   }
 
   async function deleteTask(id) {
-    if (!confirm('Delete this task?')) return
+    if (!confirm('Delete this job order?')) return
     await supabase.from('tasks').delete().eq('id', id)
-    setTasks(prev => prev.filter(t => t.id !== id))
-    showToast('🗑️','Task deleted')
+    setTasks(prev=>prev.filter(t=>t.id!==id))
+    showToast('🗑️','Job order deleted')
   }
 
   async function moveTask(taskId, newStatus) {
-    await supabase.from('tasks').update({ status: newStatus }).eq('id', taskId)
-    setTasks(prev => prev.map(t => t.id===taskId ? {...t, status:newStatus} : t))
+    await supabase.from('tasks').update({ status:newStatus }).eq('id', taskId)
+    setTasks(prev=>prev.map(t=>t.id===taskId?{...t,status:newStatus}:t))
   }
 
   function openEdit(task) {
@@ -97,15 +91,15 @@ export default function TasksPage() {
     return true
   })
 
-  const getColTasks = colId => filtered.filter(t => (t.status||'todo') === colId)
-  const pri = id => PRIORITIES.find(p => p.id===id) || PRIORITIES[2]
+  const getColTasks = colId => filtered.filter(t=>(t.status||'todo')===colId)
+  const pri = id => PRIORITIES.find(p=>p.id===id)||PRIORITIES[2]
 
   return (
     <AuthShell>
       <div className="topbar">
         <div>
-          <div className="topbar-title">Task Board</div>
-          <div className="topbar-sub">{tasks.length} tasks · {tasks.filter(t=>t.status==='done').length} done</div>
+          <div className="topbar-title">Job Orders</div>
+          <div className="topbar-sub">{tasks.length} orders · {tasks.filter(t=>t.status==='done').length} completed</div>
         </div>
         <div style={{display:'flex',gap:9,alignItems:'center'}}>
           <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
@@ -116,17 +110,16 @@ export default function TasksPage() {
             <option value="">All Priorities</option>
             {PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
-          <button className="btn btn-primary" onClick={()=>{setShowForm(true);setEditTask(null);setForm(EMPTY_FORM)}}>+ Add Task</button>
+          <button className="btn btn-primary" onClick={()=>{setShowForm(true);setEditTask(null);setForm(EMPTY_FORM)}}>+ New Job Order</button>
         </div>
       </div>
 
       <div className="page-content">
-        {/* Modal */}
         {showForm && (
           <div onClick={e=>e.target===e.currentTarget&&(setShowForm(false),setEditTask(null))}
             style={{position:'fixed',inset:0,background:'rgba(26,18,8,.6)',backdropFilter:'blur(4px)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
             <div style={{background:'var(--white)',borderRadius:18,padding:28,width:'100%',maxWidth:500,boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700,marginBottom:20}}>{editTask?'Edit Task':'+ New Task'}</div>
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700,marginBottom:20}}>{editTask?'Edit Job Order':'+ New Job Order'}</div>
               <div style={{marginBottom:12}}>
                 <label style={lStyle}>Title *</label>
                 <input style={iStyle} placeholder="What needs to be done?" value={form.title} onChange={fv('title')}/>
@@ -135,7 +128,7 @@ export default function TasksPage() {
                 <label style={lStyle}>Description</label>
                 <textarea style={{...iStyle,resize:'vertical',minHeight:70,lineHeight:1.5}} placeholder="Additional details…" value={form.description} onChange={fv('description')}/>
               </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
                 <div>
                   <label style={lStyle}>Assigned To</label>
                   <select style={iStyle} value={form.assigned_to} onChange={fv('assigned_to')}>
@@ -168,19 +161,18 @@ export default function TasksPage() {
               <div style={{display:'flex',gap:9}}>
                 <button onClick={()=>{setShowForm(false);setEditTask(null)}} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:9,padding:'10px 16px',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Cancel</button>
                 <button onClick={saveTask} disabled={saving} style={{flex:1,background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:10,fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                  {saving?'Saving…':editTask?'✓ Update Task':'✓ Create Task'}
+                  {saving?'Saving…':editTask?'✓ Update':'✓ Create Job Order'}
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Kanban */}
         {loading ? (
-          <div style={{textAlign:'center',padding:'60px',color:'var(--text-muted)'}}>Loading tasks…</div>
+          <div style={{textAlign:'center',padding:'60px',color:'var(--text-muted)'}}>Loading…</div>
         ) : (
           <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,height:'calc(100vh - 130px)'}}>
-            {COLUMNS.map(col => {
+            {COLUMNS.map(col=>{
               const colTasks = getColTasks(col.id)
               return (
                 <div key={col.id}
@@ -196,18 +188,15 @@ export default function TasksPage() {
                     <span style={{fontSize:11,fontWeight:700,color:col.color,background:'white',padding:'2px 8px',borderRadius:20}}>{colTasks.length}</span>
                   </div>
                   <div style={{flex:1,overflowY:'auto',padding:'10px 10px 16px'}}>
-                    {colTasks.length===0&&(
-                      <div style={{textAlign:'center',padding:'30px 10px',color:'var(--border)',fontSize:12}}>Drop tasks here</div>
-                    )}
+                    {colTasks.length===0&&<div style={{textAlign:'center',padding:'30px 10px',color:'var(--border)',fontSize:12}}>Drop here</div>}
                     {colTasks.map(task=>{
                       const p = pri(task.priority)
                       const assignee = task.staff
                       return (
-                        <div key={task.id}
-                          draggable
+                        <div key={task.id} draggable
                           onDragStart={()=>setDragTask(task)}
                           onDragEnd={()=>setDragTask(null)}
-                          style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 13px',marginBottom:8,cursor:'grab',transition:'all .15s',borderLeft:`3px solid ${p.color}`,opacity:dragTask?.id===task.id?.4:1}}
+                          style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 13px',marginBottom:8,cursor:'grab',borderLeft:`3px solid ${p.color}`,opacity:dragTask?.id===task.id?.4:1,transition:'all .15s'}}
                           onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 4px 14px rgba(26,18,8,.08)';e.currentTarget.style.transform='translateY(-1px)'}}
                           onMouseLeave={e=>{e.currentTarget.style.boxShadow='';e.currentTarget.style.transform=''}}>
                           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
@@ -220,21 +209,13 @@ export default function TasksPage() {
                           <div style={{fontSize:13,fontWeight:600,color:'var(--espresso)',marginBottom:4,lineHeight:1.4}}>{task.title}</div>
                           {task.description&&<div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8,lineHeight:1.5,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{task.description}</div>}
                           <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
-                            {assignee ? (
+                            {assignee?(
                               <div style={{display:'flex',alignItems:'center',gap:5,flex:1}}>
-                                <div style={{width:20,height:20,borderRadius:'50%',background:getRoleColor(assignee.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'white',flexShrink:0}}>
-                                  {initials(assignee.first_name,assignee.last_name)}
-                                </div>
+                                <div style={{width:20,height:20,borderRadius:'50%',background:getRoleColor(assignee.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'white',flexShrink:0}}>{initials(assignee.first_name,assignee.last_name)}</div>
                                 <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:500}}>{assignee.nickname||assignee.first_name}</span>
                               </div>
-                            ) : (
-                              <span style={{fontSize:10,color:'var(--border)',flex:1}}>Unassigned</span>
-                            )}
-                            {task.due_date&&(
-                              <span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:new Date(task.due_date)<new Date()?'#c0392b':'var(--text-muted)',fontWeight:500}}>
-                                📅 {fmtDate(task.due_date)}
-                              </span>
-                            )}
+                            ):<span style={{fontSize:10,color:'var(--border)',flex:1}}>Unassigned</span>}
+                            {task.due_date&&<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:new Date(task.due_date)<new Date()?'#c0392b':'var(--text-muted)'}}>📅 {fmtDate(task.due_date)}</span>}
                           </div>
                           <div style={{display:'flex',gap:5,marginTop:8}}>
                             {COLUMNS.filter(c=>c.id!==col.id).map(c=>(
@@ -255,11 +236,7 @@ export default function TasksPage() {
         )}
       </div>
 
-      {toast&&(
-        <div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}>
-          <span>{toast.icon}</span><span>{toast.msg}</span>
-        </div>
-      )}
+      {toast&&<div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}><span>{toast.icon}</span><span>{toast.msg}</span></div>}
     </AuthShell>
   )
 }
