@@ -4,13 +4,15 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '../lib/supabase'
 import Sidebar from './Sidebar'
 
-const ADMIN_EMAILS = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
+const ADMIN_EMAILS      = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
 const SUPERVISOR_EMAILS = ['richelle@ohheythere.cafe']
+const HR_EMAILS         = ['hr.ohtgroup@gmail.com']
 
 function getRoleFromEmail(email) {
   if (!email) return 'staff'
-  if (ADMIN_EMAILS.includes(email.toLowerCase())) return 'admin'
+  if (ADMIN_EMAILS.includes(email.toLowerCase()))      return 'admin'
   if (SUPERVISOR_EMAILS.includes(email.toLowerCase())) return 'supervisor'
+  if (HR_EMAILS.includes(email.toLowerCase()))         return 'hr'
   return 'staff'
 }
 
@@ -26,7 +28,7 @@ export default function AuthShell({ children, require: requirePermission }) {
       if (!session) { router.replace('/login'); return }
       const email = session.user.email
       const role = getRoleFromEmail(email)
-      // If it's a staff email, redirect to staff portal
+      // If it's a plain staff email, redirect to staff portal
       if (role === 'staff') { router.replace('/login'); return }
       setUser(session.user)
       setUserRole({ role, email })
