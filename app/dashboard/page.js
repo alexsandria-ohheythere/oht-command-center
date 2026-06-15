@@ -42,8 +42,15 @@ export default function DashboardPage() {
   const [totalSales, setTotalSales]       = useState(0)
   const [totalExpenses, setTotalExpenses] = useState(0)
   const [financeLoading, setFinanceLoading] = useState(true)
+  const [userRole, setUserRole] = useState('admin')
 
-  useEffect(() => { fetchDashboard() }, [])
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const email = session?.user?.email?.toLowerCase() || ''
+      setUserRole(email === 'hr.ohtgroup@gmail.com' ? 'hr' : 'admin')
+    })
+    fetchDashboard()
+  }, [])
 
   async function fetchDashboard() {
     setLoading(true)
@@ -134,7 +141,8 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* FINANCE STRIP — Sales / Expenses / Net Profit */}
+        {/* FINANCE STRIP — hidden for HR */}
+        {userRole !== 'hr' && (
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:20}}>
           {/* Sales This Month */}
           <a href="/finance/sales" style={{textDecoration:'none'}}>
@@ -184,6 +192,7 @@ export default function DashboardPage() {
             </div>
           </a>
         </div>
+        )}{/* end hide finance for HR */}
 
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,marginBottom:16}}>
           {/* TODAY'S SHIFTS */}
