@@ -124,7 +124,7 @@ export default function JobOrderPage() {
             style={{position:'fixed',inset:0,background:'rgba(26,18,8,.6)',backdropFilter:'blur(4px)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
             <div style={{background:'var(--white)',borderRadius:18,padding:28,width:'100%',maxWidth:500,boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
-                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700}}>{editTask?`Edit ${editTask.ticket_no||'Job Order'}':'+ New Job Order'}</div>
+                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700}}>{editTask ? (editTask.ticket_no ? 'Edit ' + editTask.ticket_no : 'Edit Job Order') : '+ New Job Order'}</div>
                 {editTask?.ticket_no && <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:700,color:'var(--espresso)',background:'var(--surface)',padding:'4px 10px',borderRadius:8}}>{editTask.ticket_no}</span>}
               </div>
               <div style={{marginBottom:12}}>
@@ -140,7 +140,7 @@ export default function JobOrderPage() {
                   <label style={lStyle}>Assigned To</label>
                   <select style={iStyle} value={form.assigned_to} onChange={fv('assigned_to')}>
                     <option value="">Unassigned</option>
-                    {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}{s.nickname?` "${s.nickname}"`:''}</option>)}
+                    {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}{s.nickname ? ' "' + s.nickname + '"' : ''}</option>)}
                   </select>
                 </div>
                 <div>
