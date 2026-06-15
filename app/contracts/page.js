@@ -203,11 +203,12 @@ export default function ContractsPage() {
 
   async function fetchAll() {
     setLoading(true)
-    const [{ data:c },{ data:cl },{ data:s }] = await Promise.all([
-      supabase.from('contracts').select('*, staff(first_name,last_name,nickname,role,email)').order('created_at',{ascending:false}),
+    const [{ data:c, error:ce },{ data:cl },{ data:s }] = await Promise.all([
+      supabase.from('contracts').select('id,title,content_html,staff_id,status,employment_type,salary,start_date,expires_at,created_by,sent_at,employee_signed_at,employee_signature,employee_signature_type,management_signed_at,management_signed_by,management_signature,management_signature_type,variables,created_at,updated_at, staff(first_name,last_name,nickname,role,email)').order('created_at',{ascending:false}),
       supabase.from('contract_clauses').select('*').eq('is_active',true).order('sort_order'),
       supabase.from('staff').select('*').order('last_name'),
     ])
+    if (ce) console.error('Contracts fetch error:', ce.message)
     setContracts(c||[]); setClauses(cl||[]); setStaff(s||[])
     setLoading(false)
   }
