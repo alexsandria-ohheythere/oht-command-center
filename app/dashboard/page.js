@@ -19,18 +19,29 @@ const SHIFT_BADGE = {
 }
 
 const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+const peso = n => '₱'+(parseFloat(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
 
 export default function DashboardPage() {
   const supabase = createClient()
   const today = toISO(new Date())
   const todayLabel = new Date().toLocaleDateString('en-PH',{weekday:'long',month:'long',day:'numeric',year:'numeric'})
 
-  const [staffList, setStaffList]       = useState([])
-  const [todayShifts, setTodayShifts]   = useState([])
+  // Month range
+  const now = new Date()
+  const monthStart = toISO(new Date(now.getFullYear(), now.getMonth(), 1))
+  const monthEnd   = toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+  const monthLabel = now.toLocaleDateString('en-PH',{month:'long',year:'numeric'})
+
+  const [staffList, setStaffList]         = useState([])
+  const [todayShifts, setTodayShifts]     = useState([])
   const [pendingLeaves, setPendingLeaves] = useState([])
-  const [openTasks, setOpenTasks]       = useState([])
   const [announcements, setAnnouncements] = useState([])
-  const [loading, setLoading]           = useState(true)
+  const [loading, setLoading]             = useState(true)
+
+  // Finance state
+  const [totalSales, setTotalSales]       = useState(0)
+  const [totalExpenses, setTotalExpenses] = useState(0)
+  const [financeLoading, setFinanceLoading] = useState(true)
 
   useEffect(() => { fetchDashboard() }, [])
 
@@ -52,11 +63,29 @@ export default function DashboardPage() {
     setPendingLeaves(leaves || [])
     setAnnouncements(announceData || [])
     setLoading(false)
+
+    // Fetch finance separately so it doesn't block main load
+    fetchFinance()
+  }
+
+  async function fetchFinance() {
+    setFinanceLoading(true)
+    const [
+      { data: salesData },
+      { data: expensesData },
+    ] = await Promise.all([
+      supabase.from('sales').select('gross_sales').gte('sale_date', monthStart).lte('sale_date', monthEnd),
+      supabase.from('expenses').select('amount').gte('expense_date', monthStart).lte('expense_date', monthEnd),
+    ])
+    setTotalSales((salesData||[]).reduce((sum,r)=>sum+(parseFloat(r.gross_sales)||0),0))
+    setTotalExpenses((expensesData||[]).reduce((sum,r)=>sum+(parseFloat(r.amount)||0),0))
+    setFinanceLoading(false)
   }
 
   const totalStaff   = staffList.length
   const onShiftToday = [...new Set(todayShifts.map(s=>s.staff_id))].length
   const pendingCount = pendingLeaves.length
+  const netProfit    = totalSales - totalExpenses
 
   const QUICK_ACTIONS = [
     { icon:'📅', label:'Scheduling',    href:'/schedule',  color:'var(--matcha)'  },
@@ -82,7 +111,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="page-content">
-        {/* KPI STRIP */}
+        {/* KPI STRIP — Operations */}
         <div className="kpi-grid fade-up" style={{marginBottom:20}}>
           {[
             { label:'Total Staff',      value: loading?'…':totalStaff,           delta:'Active team members',          dir:'neutral', icon:'👥', cls:'c-matcha', href:'/staff'   },
@@ -99,6 +128,57 @@ export default function DashboardPage() {
               </div>
             </a>
           ))}
+        </div>
+
+        {/* FINANCE STRIP — Sales / Expenses / Net Profit */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:20}}>
+          {/* Sales This Month */}
+          <a href="/finance/sales" style={{textDecoration:'none'}}>
+            <div className="card fade-up" style={{cursor:'pointer',borderTop:'3px solid #7ab648',transition:'box-shadow .15s'}}
+              onMouseEnter={e=>e.currentTarget.style.boxShadow='0 4px 16px #7ab64822'}
+              onMouseLeave={e=>e.currentTarget.style.boxShadow=''}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                <span style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Sales · {monthLabel}</span>
+                <span style={{fontSize:16}}>💰</span>
+              </div>
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:22,fontWeight:700,color:'#4a7a1e'}}>
+                {financeLoading ? '…' : peso(totalSales)}
+              </div>
+              <div style={{fontSize:10,color:'var(--matcha-dark)',marginTop:4,fontWeight:600}}>View Sales →</div>
+            </div>
+          </a>
+
+          {/* Expenses This Month */}
+          <a href="/finance/expenses" style={{textDecoration:'none'}}>
+            <div className="card fade-up" style={{cursor:'pointer',borderTop:'3px solid #e8845a',transition:'box-shadow .15s'}}
+              onMouseEnter={e=>e.currentTarget.style.boxShadow='0 4px 16px #e8845a22'}
+              onMouseLeave={e=>e.currentTarget.style.boxShadow=''}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                <span style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Expenses · {monthLabel}</span>
+                <span style={{fontSize:16}}>📋</span>
+              </div>
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:22,fontWeight:700,color:'#c0392b'}}>
+                {financeLoading ? '…' : peso(totalExpenses)}
+              </div>
+              <div style={{fontSize:10,color:'#e8845a',marginTop:4,fontWeight:600}}>View Expenses →</div>
+            </div>
+          </a>
+
+          {/* Net Profit */}
+          <a href="/finance/financial-statement" style={{textDecoration:'none'}}>
+            <div className="card fade-up" style={{cursor:'pointer',borderTop:`3px solid ${netProfit>=0?'#4a90c4':'#c0392b'}`,transition:'box-shadow .15s'}}
+              onMouseEnter={e=>e.currentTarget.style.boxShadow='0 4px 16px #4a90c422'}
+              onMouseLeave={e=>e.currentTarget.style.boxShadow=''}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                <span style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Net Profit · {monthLabel}</span>
+                <span style={{fontSize:16}}>📊</span>
+              </div>
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:22,fontWeight:700,color:financeLoading?'var(--text-muted)':netProfit>=0?'#2d5a8a':'#c0392b'}}>
+                {financeLoading ? '…' : peso(netProfit)}
+              </div>
+              <div style={{fontSize:10,color:'#4a90c4',marginTop:4,fontWeight:600}}>Full P&L →</div>
+            </div>
+          </a>
         </div>
 
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,marginBottom:16}}>
