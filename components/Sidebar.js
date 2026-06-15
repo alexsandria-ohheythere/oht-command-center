@@ -4,10 +4,9 @@ import { createClient } from '../lib/supabase'
 import { can } from '../lib/auth'
 
 const ROLE_PROFILES = {
-  'ohheythere.matcha@gmail.com': { name:'Alex',    role:'Managing Director', color:'#7ab648', initials:'A'  },
-  'ohheythere.group@gmail.com':  { name:'CJ',      role:'CEO',               color:'#4a90c4', initials:'CJ' },
-  'richelle@ohheythere.cafe':    { name:'Richelle', role:'Cafe Supervisor',   color:'#b06af5', initials:'R'  },
-  'hr.ohtgroup@gmail.com':       { name:'HR',       role:'Human Resources',   color:'#e8845a', initials:'HR' },
+  'ohheythere.matcha@gmail.com': { name:'Alex',     role:'Managing Director', color:'#7ab648', initials:'A' },
+  'ohheythere.group@gmail.com':  { name:'CJ',       role:'CEO',               color:'#4a90c4', initials:'CJ' },
+  'hr.ohtgroup@gmail.com':       { name:'Richelle', role:'Human Resources',   color:'#e8845a', initials:'R'  },
 }
 
 export default function Sidebar({ user, userRole }) {
@@ -78,7 +77,7 @@ export default function Sidebar({ user, userRole }) {
           <div style={{ fontSize:13, fontWeight:700, color:'white', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{profile.name}</div>
           <div style={{ fontSize:10, color:'rgba(255,255,255,.65)', marginTop:1 }}>{profile.role}</div>
           <div style={{ fontSize:8, fontWeight:700, letterSpacing:1, color:'rgba(255,255,255,.5)', textTransform:'uppercase', marginTop:1 }}>
-            {role==='admin'?'Admin Access':role==='supervisor'?'Supervisor Access':role==='hr'?'HR Access':''}
+            {role==='admin'?'Admin Access':role==='hr'?'HR Access':''}
           </div>
         </div>
       </div>
