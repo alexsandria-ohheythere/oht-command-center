@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { notifyOne } from '../../lib/notify'
+import { notifyOne, notifyAdmins, notifyWithAdmins } from '../../lib/notify'
 
 const LEAVE_TYPES = [
   { id:'unavailable',     label:'Unavailable',              color:'#7a6a50', bg:'#f0ede8', icon:'🚫' },
@@ -63,6 +63,14 @@ export default function LeavePage() {
       reason:form.reason, submitted_by:form.submitted_by, status:'pending'
     }])
     if (error) { showToast('❌',error.message); setSaving(false); return }
+    // Notify admins of new leave request
+    const staffMember = staff.find(s=>s.id===form.staff_id)
+    const lt = LEAVE_TYPES.find(x=>x.id===form.leave_type)
+    await notifyAdmins({
+      type: 'general',
+      title: `🗓️ Leave Request: ${staffMember?.first_name} ${staffMember?.last_name}`,
+      message: `${staffMember?.first_name} submitted a ${lt?.label} request for ${fmtDate(form.date_from)}${form.date_from!==form.date_to?' – '+fmtDate(form.date_to):''}.`,
+    })
     await fetchAll(); setForm(EMPTY_FORM); setView('list')
     showToast('✅','Leave request submitted'); setSaving(false)
   }
@@ -70,21 +78,20 @@ export default function LeavePage() {
   async function updateStatus(id, status, approver) {
     const { error } = await supabase.from('leave_requests').update({ status, approved_by:approver, approved_at:new Date().toISOString() }).eq('id',id)
     if (error) { showToast('❌',error.message); return }
-    // Find the request to get staff_id and details
     const req = requests.find(r=>r.id===id)
     setRequests(prev=>prev.map(r=>r.id===id?{...r,status,approved_by:approver}:r))
-    // Send notification to staff member
+    // Notify the staff member
     if (req?.staff_id) {
       const lt = LEAVE_TYPES.find(x=>x.id===req.leave_type)
       await notifyOne(req.staff_id, {
         type: status==='approved'?'leave_approved':'leave_rejected',
-        title: status==='approved' ? `${lt?.icon||''} Leave Approved` : `${lt?.icon||''} Leave Request Update`,
+        title: status==='approved' ? `${lt?.icon} Leave Approved ✅` : `${lt?.icon} Leave Request Rejected`,
         message: status==='approved'
-          ? `Your ${lt?.label} request (${fmtDate(req.date_from)}${req.date_from!==req.date_to?' – '+fmtDate(req.date_to):''}) has been approved by ${approver==='alex'?'Alex':'CJ'}.`
-          : `Your ${lt?.label} request has been rejected. Please see your manager for details.`,
+          ? `Your ${lt?.label} (${fmtDate(req.date_from)}${req.date_from!==req.date_to?' – '+fmtDate(req.date_to):''}) has been approved by ${approver==='alex'?'Alex':'CJ'}.`
+          : `Your ${lt?.label} request has been rejected by ${approver==='alex'?'Alex':'CJ'}. Please speak to your manager.`,
       })
     }
-    showToast(status==='approved'?'✅':'❌',`Request ${status}`)
+    showToast(status==='approved'?'✅':'❌',`Request ${status} — staff notified`)
   }
 
   async function deleteRequest(id) {
@@ -176,7 +183,6 @@ export default function LeavePage() {
             </div>
           </div>
         )}
-
         {view==='list'&&<>
           <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap',alignItems:'center'}}>
             <div style={{display:'flex',gap:6}}>
@@ -243,7 +249,7 @@ export default function LeavePage() {
                           </div>
                         )}
                         {r.status!=='pending'&&<button onClick={()=>updateStatus(r.id,'pending',null)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:7,padding:'4px 9px',fontSize:10,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Undo</button>}
-                        <button onClick={()=>deleteRequest(r.id)} style={{background:'transparent',color:'var(--text-muted)',border:'none',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑</button>
+                        <button onClick={()=>deleteRequest(r.id)} style={{background:'transparent',color:'var(--text-muted)',border:'none',fontSize:11,cursor:'pointer'}}>🗑</button>
                       </div>
                     </div>
                   </div>
