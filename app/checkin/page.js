@@ -34,34 +34,61 @@ function ScoreRing({ pct, color, size=56 }) {
 
 export default function CheckinPage() {
   const supabase = createClient()
-  const today = toISO(new Date())
-  const todayLabel = new Date().toLocaleDateString('en-PH',{weekday:'long',month:'long',day:'numeric',year:'numeric'})
-  const [staff, setStaff]             = useState([])
-  const [selectedShift, setSelectedShift] = useState('am')
-  const [assignments, setAssignments] = useState([])
-  const [tasks, setTasks]             = useState([])
-  const [checkIns, setCheckIns]       = useState([])
-  const [loading, setLoading]         = useState(true)
-  const [selectedStaff, setSelectedStaff] = useState(null)
-  const [view, setView]               = useState('overview') // overview | detail
-  const [saving, setSaving]           = useState(null)
-  const [toast, setToast]             = useState(null)
+  const todayISO = toISO(new Date())
 
-  useEffect(() => { fetchAll() }, [])
+  const [viewDate, setViewDate]           = useState(new Date())
+  const [staff, setStaff]                 = useState([])
+  const [selectedShift, setSelectedShift] = useState('am')
+  const [assignments, setAssignments]     = useState([])
+  const [tasks, setTasks]                 = useState([])
+  const [checkIns, setCheckIns]           = useState([])
+  const [loading, setLoading]             = useState(true)
+  const [selectedStaff, setSelectedStaff] = useState(null)
+  const [view, setView]                   = useState('overview')
+  const [saving, setSaving]               = useState(null)
+  const [toast, setToast]                 = useState(null)
+
+  const dateISO   = toISO(viewDate)
+  const isToday   = dateISO === todayISO
+  const isPast    = dateISO < todayISO
+  const dateLabel = viewDate.toLocaleDateString('en-PH',{weekday:'long',month:'long',day:'numeric',year:'numeric'})
+
+  useEffect(() => {
+    setView('overview')
+    setSelectedStaff(null)
+    fetchAll()
+  }, [dateISO])
 
   async function fetchAll() {
     setLoading(true)
     const [{ data: s }, { data: sch }, { data: t }, { data: ci }] = await Promise.all([
       supabase.from('staff').select('*').order('last_name'),
-      supabase.from('schedules').select('*').eq('shift_date', today),
+      supabase.from('schedules').select('*').eq('shift_date', dateISO),
       supabase.from('role_tasks').select('*').eq('is_active', true).order('task_order'),
-      supabase.from('shift_task_assignments').select('*').eq('shift_date', today),
+      supabase.from('shift_task_assignments').select('*').eq('shift_date', dateISO),
     ])
     setStaff(s||[])
     setAssignments(sch||[])
     setTasks(t||[])
     setCheckIns(ci||[])
     setLoading(false)
+  }
+
+  function goToPrevDay() {
+    const d = new Date(viewDate)
+    d.setDate(d.getDate() - 1)
+    setViewDate(d)
+  }
+
+  function goToNextDay() {
+    if (isToday) return
+    const d = new Date(viewDate)
+    d.setDate(d.getDate() + 1)
+    setViewDate(d)
+  }
+
+  function goToToday() {
+    setViewDate(new Date())
   }
 
   function showToast(icon,msg){setToast({icon,msg});setTimeout(()=>setToast(null),3000)}
@@ -84,19 +111,23 @@ export default function CheckinPage() {
     setSelectedStaff(staffMember)
     setSelectedShift(shiftId)
     setView('detail')
-    const existing = checkIns.filter(ci=>ci.staff_id===staffMember.id&&ci.shift_type===shiftId)
-    if (existing.length === 0) {
-      const roleTasks = tasks.filter(t=>t.role===staffMember.role&&t.shift_type===shiftId)
-      if (roleTasks.length > 0) {
-        const schedEntry = assignments.find(a=>a.staff_id===staffMember.id&&a.shift_type===shiftId)
-        const inserts = roleTasks.map(t=>({ schedule_id:schedEntry?.id||null, task_id:t.id, staff_id:staffMember.id, shift_date:today, shift_type:shiftId, completed:false, completed_at:null }))
-        const { data } = await supabase.from('shift_task_assignments').insert(inserts).select()
-        if (data) setCheckIns(prev=>[...prev,...data])
+    // Only auto-assign tasks on today — don't create tasks for past dates
+    if (isToday) {
+      const existing = checkIns.filter(ci=>ci.staff_id===staffMember.id&&ci.shift_type===shiftId)
+      if (existing.length === 0) {
+        const roleTasks = tasks.filter(t=>t.role===staffMember.role&&t.shift_type===shiftId)
+        if (roleTasks.length > 0) {
+          const schedEntry = assignments.find(a=>a.staff_id===staffMember.id&&a.shift_type===shiftId)
+          const inserts = roleTasks.map(t=>({ schedule_id:schedEntry?.id||null, task_id:t.id, staff_id:staffMember.id, shift_date:dateISO, shift_type:shiftId, completed:false, completed_at:null }))
+          const { data } = await supabase.from('shift_task_assignments').insert(inserts).select()
+          if (data) setCheckIns(prev=>[...prev,...data])
+        }
       }
     }
   }
 
   async function toggleTask(ciId, completed) {
+    if (isPast) return // read-only for past dates
     setSaving(ciId)
     const completed_at = completed ? new Date().toISOString() : null
     const { data } = await supabase.from('shift_task_assignments').update({ completed, completed_at }).eq('id', ciId).select().single()
@@ -104,7 +135,6 @@ export default function CheckinPage() {
     setSaving(null)
   }
 
-  // Overview scores per shift
   const shiftOverview = SHIFTS.map(sh => {
     const shiftStaff = getScheduledStaff(sh.id)
     const scores = shiftStaff.map(s => getScore(s.id, sh.id))
@@ -123,17 +153,43 @@ export default function CheckinPage() {
       <div className="topbar">
         <div>
           <div className="topbar-title">Daily Check-In</div>
-          <div className="topbar-sub">{todayLabel}</div>
+          <div className="topbar-sub" style={{display:'flex',alignItems:'center',gap:8}}>
+            {/* Date navigator */}
+            <button onClick={goToPrevDay}
+              style={{background:'none',border:'1px solid var(--border)',borderRadius:6,width:24,height:24,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)'}}>
+              ‹
+            </button>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:11}}>
+              {isToday ? `Today · ${dateLabel}` : isPast ? `${dateLabel}` : dateLabel}
+            </span>
+            <button onClick={goToNextDay} disabled={isToday}
+              style={{background:'none',border:'1px solid var(--border)',borderRadius:6,width:24,height:24,cursor:isToday?'not-allowed':'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',color:isToday?'var(--border)':'var(--text-muted)',opacity:isToday?.4:1}}>
+              ›
+            </button>
+            {!isToday && (
+              <button onClick={goToToday}
+                style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:6,padding:'2px 10px',fontSize:10,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",marginLeft:4}}>
+                Today
+              </button>
+            )}
+          </div>
         </div>
         {view==='detail'&&<button className="btn btn-secondary" onClick={()=>setView('overview')}>← Back</button>}
       </div>
 
       <div className="page-content">
 
+        {/* Past date banner */}
+        {isPast && (
+          <div style={{background:'#fef3e2',border:'1px solid #d4a84366',borderRadius:10,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,fontSize:12}}>
+            <span style={{fontSize:16}}>📅</span>
+            <span style={{color:'#a06000',fontWeight:600}}>Viewing past check-in — read-only</span>
+          </div>
+        )}
+
         {/* ── OVERVIEW ── */}
         {view==='overview'&&(
           <>
-            {/* Shift tabs */}
             <div style={{display:'flex',gap:8,marginBottom:20}}>
               {SHIFTS.map(sh=>(
                 <button key={sh.id} onClick={()=>setSelectedShift(sh.id)}
@@ -144,18 +200,16 @@ export default function CheckinPage() {
               ))}
             </div>
 
-            {/* Shift score summary */}
             {(() => {
               const sh = shiftOverview.find(s=>s.id===selectedShift)
               if (!sh || sh.staff.length===0) return (
                 <div style={{textAlign:'center',padding:'60px',background:'var(--white)',border:'1px solid var(--border)',borderRadius:13}}>
                   <div style={{fontSize:36,marginBottom:12}}>{sh?.emoji||'📅'}</div>
-                  <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:15,fontWeight:700}}>No staff scheduled for {sh?.label} today</div>
+                  <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:15,fontWeight:700}}>No staff scheduled for {sh?.label} {isToday?'today':'on this day'}</div>
                 </div>
               )
               return (
                 <>
-                  {/* Shift score card */}
                   {sh.avgPct !== null && (
                     <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 20px',marginBottom:16,display:'flex',alignItems:'center',gap:20}}>
                       <ScoreRing pct={sh.avgPct} color={sh.color} size={64}/>
@@ -169,7 +223,6 @@ export default function CheckinPage() {
                     </div>
                   )}
 
-                  {/* Staff cards */}
                   <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12}}>
                     {sh.staff.map(s=>{
                       const score = getScore(s.id, selectedShift)
@@ -196,7 +249,9 @@ export default function CheckinPage() {
                               <div style={{fontSize:10,color:'var(--text-muted)'}}>{score.done}/{score.total} tasks · {score.pct===100?'✅ Complete':'In progress'}</div>
                             </>
                           ) : (
-                            <div style={{fontSize:11,color:'var(--text-muted)'}}>Tap to assign & start check-in</div>
+                            <div style={{fontSize:11,color:'var(--text-muted)'}}>
+                              {isPast ? 'No check-in recorded' : 'Tap to assign & start check-in'}
+                            </div>
                           )}
                         </div>
                       )
@@ -211,7 +266,6 @@ export default function CheckinPage() {
         {/* ── DETAIL ── */}
         {view==='detail'&&selectedStaff&&(
           <div style={{maxWidth:560,margin:'0 auto'}}>
-            {/* Header */}
             <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:14,padding:'18px 22px',marginBottom:14,display:'flex',alignItems:'center',gap:14}}>
               <div style={{width:48,height:48,borderRadius:'50%',background:getRoleColor(selectedStaff.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:700,color:'white',flexShrink:0}}>
                 {initials(selectedStaff.first_name,selectedStaff.last_name)}
@@ -223,27 +277,29 @@ export default function CheckinPage() {
               <ScoreRing pct={detailScore.pct} color={detailShift?.color||'#7ab648'} size={64}/>
             </div>
 
-            {/* Progress */}
             {detailTasks.length>0&&(
               <div style={{height:8,background:'var(--cream-dark)',borderRadius:4,overflow:'hidden',marginBottom:14}}>
                 <div style={{height:'100%',width:`${detailScore.pct}%`,background:detailScore.pct===100?'var(--matcha)':detailShift?.border,borderRadius:4,transition:'width .4s'}}/>
               </div>
             )}
 
-            {/* Tasks */}
             <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden',marginBottom:12}}>
               <div style={{background:detailShift?.bg,padding:'11px 16px',borderBottom:`1px solid ${detailShift?.border}33`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                <span style={{fontSize:11,fontWeight:700,color:detailShift?.color}}>Today's Checklist · {detailScore.done}/{detailScore.total}</span>
+                <span style={{fontSize:11,fontWeight:700,color:detailShift?.color}}>
+                  {isToday ? "Today's" : dateLabel.split(',')[0] + "'s"} Checklist · {detailScore.done}/{detailScore.total}
+                </span>
                 <span style={{fontSize:13,fontWeight:700,color:detailScore.pct===100?'var(--matcha-dark)':detailShift?.color}}>{detailScore.pct}%</span>
               </div>
               {detailTasks.length===0?(
-                <div style={{padding:'24px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No tasks assigned — tasks auto-load from Role Templates.</div>
+                <div style={{padding:'24px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>
+                  {isPast ? 'No tasks were recorded for this shift.' : 'No tasks assigned — tasks auto-load from Role Templates.'}
+                </div>
               ):detailTasks.map(ci=>{
                 const task = tasks.find(t=>t.id===ci.task_id)
                 return (
                   <div key={ci.id} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 16px',borderBottom:'1px solid var(--cream-dark)',background:ci.completed?'#f8fdf5':'var(--white)',transition:'background .2s'}}>
-                    <button onClick={()=>toggleTask(ci.id,!ci.completed)} disabled={saving===ci.id}
-                      style={{width:24,height:24,borderRadius:'50%',border:`2px solid ${ci.completed?'var(--matcha)':detailShift?.border}`,background:ci.completed?'var(--matcha)':'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .2s',flexShrink:0}}>
+                    <button onClick={()=>toggleTask(ci.id,!ci.completed)} disabled={saving===ci.id||isPast}
+                      style={{width:24,height:24,borderRadius:'50%',border:`2px solid ${ci.completed?'var(--matcha)':detailShift?.border}`,background:ci.completed?'var(--matcha)':'transparent',cursor:isPast?'default':'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .2s',flexShrink:0,opacity:isPast?.7:1}}>
                       {ci.completed&&<span style={{color:'white',fontSize:12,fontWeight:700}}>✓</span>}
                     </button>
                     <div style={{flex:1}}>
@@ -263,7 +319,7 @@ export default function CheckinPage() {
               <div style={{background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:12,padding:'16px',textAlign:'center'}}>
                 <div style={{fontSize:28,marginBottom:6}}>🎉</div>
                 <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:15,fontWeight:700,color:'var(--matcha-dark)'}}>100% Complete!</div>
-                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{selectedStaff.first_name} has finished all {detailShift?.label} tasks</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{selectedStaff.first_name} finished all {detailShift?.label} tasks {isToday?'today':'on this day'}</div>
               </div>
             )}
           </div>
