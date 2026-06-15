@@ -95,18 +95,18 @@ export default function DashboardPage() {
   const netProfit    = totalSales - totalExpenses
 
   const QUICK_ACTIONS = [
-    { icon:'📅', label:'Scheduling',    href:'/schedule',  color:'var(--matcha)'  },
-    { icon:'📋', label:'Job Orders',    href:'/tasks',     color:'var(--sky)'     },
-    { icon:'🗓️', label:'Leave & Unavail.',href:'/leave',   color:'#2d7a6a'        },
-    { icon:'📝', label:'Role Tasks',    href:'/roles',     color:'#8e44ad'        },
-    { icon:'✔️', label:'Daily Check-In',href:'/checkin',   color:'var(--gold)'    },
-    { icon:'💸', label:'Payroll',       href:'/payroll',   color:'var(--blush)'   },
-    { icon:'👥', label:'Staff',         href:'/staff',     color:'var(--bark)'    },
-    { icon:'📄', label:'Contracts',     href:'/contracts', color:'#4a90c4'        },
-    { icon:'📁', label:'Files · 201',   href:'/files',     color:'#c0392b'        },
-    { icon:'📊', label:'Finance',       href:'/finance',   color:'#2d7a6a'        },
-    { icon:'📣', label:'Announcements', href:'/announce',  color:'#c0392b'        },
-    { icon:'⚙️', label:'Settings',      href:'/settings',  color:'#7a6a50'        },
+    { icon:'📅', label:'Scheduling',    href:'/schedule',  color:'var(--matcha)',  show: true },
+    { icon:'📋', label:'Job Orders',    href:'/tasks',     color:'var(--sky)',     show: true },
+    { icon:'🗓️', label:'Leave & Unavail.',href:'/leave',   color:'#2d7a6a',        show: true },
+    { icon:'📝', label:'Role Tasks',    href:'/roles',     color:'#8e44ad',        show: true },
+    { icon:'✔️', label:'Daily Check-In',href:'/checkin',   color:'var(--gold)',    show: true },
+    { icon:'💸', label:'Payroll',       href:'/payroll',   color:'var(--blush)',   show: true },
+    { icon:'👥', label:'Staff',         href:'/staff',     color:'var(--bark)',    show: true },
+    { icon:'📄', label:'Contracts',     href:'/contracts', color:'#4a90c4',        show: true },
+    { icon:'📁', label:'Files · 201',   href:'/files',     color:'#c0392b',        show: true },
+    { icon:'📊', label:'Finance',       href:'/finance',   color:'#2d7a6a',        show: userRole !== 'hr' },
+    { icon:'📣', label:'Announcements', href:'/announce',  color:'#c0392b',        show: true },
+    { icon:'⚙️', label:'Settings',      href:'/settings',  color:'#7a6a50',        show: userRole !== 'hr' },
   ]
 
   return (
@@ -272,7 +272,7 @@ export default function DashboardPage() {
         <div className="card fade-up" style={{marginBottom:16}}>
           <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:14}}>Quick Actions</div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:8}}>
-            {QUICK_ACTIONS.map(qa=>(
+            {QUICK_ACTIONS.filter(qa => qa.show).map(qa=>(
               <a key={qa.label} href={qa.href} style={{textDecoration:'none'}}>
                 <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 8px',textAlign:'center',transition:'all .15s',cursor:'pointer'}}
                   onMouseEnter={e=>{e.currentTarget.style.background=qa.color;e.currentTarget.style.borderColor=qa.color;e.currentTarget.querySelectorAll('span').forEach(s=>s.style.color='white')}}
