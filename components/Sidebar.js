@@ -36,6 +36,7 @@ export default function Sidebar({ user, userRole }) {
   const NAV = [
     { type:'section', label:'Overview' },
     { type:'link', href:'/dashboard',          icon:'🏠', label:'Dashboard',           show: true },
+
     { type:'section', label:'Operations' },
     { type:'link', href:'/schedule',           icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
     { type:'link', href:'/tasks',              icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
@@ -44,14 +45,21 @@ export default function Sidebar({ user, userRole }) {
     { type:'link', href:'/checkin',            icon:'✔️', label:'Daily Check-In',        show: can(role,'checkin') },
     { type:'link', href:'/payroll',            icon:'💸', label:'Payroll',               show: can(role,'payrollUpload') },
     { type:'link', href:'/staff',              icon:'👥', label:'Staff',                 show: can(role,'staffView') },
+
+    { type:'section', label:'Documents', show: can(role,'admin') },
+    { type:'link', href:'/contracts',          icon:'📄', label:'Contracts',             show: can(role,'admin') },
+    { type:'link', href:'/files',              icon:'📁', label:'Files · 201',           show: can(role,'admin') },
+
     { type:'section', label:'Finance', show: can(role,'finance') },
     { type:'link', href:'/finance',            icon:'📊', label:'Financial Statement',   show: can(role,'finance') },
     { type:'link', href:'/finance/sales',      icon:'💰', label:'Sales',                 show: can(role,'finance') },
     { type:'link', href:'/finance/expenses',   icon:'🧾', label:'Expenses',              show: can(role,'finance') },
     { type:'link', href:'/finance/forecast',   icon:'📈', label:'Forecast',              show: can(role,'finance') },
     { type:'link', href:'/finance/bank',       icon:'🏦', label:'Bank Records',          show: can(role,'finance') },
+
     { type:'section', label:'Comms' },
     { type:'link', href:'/announce',           icon:'📣', label:'Announcements',         show: can(role,'announcements') },
+
     { type:'section', label:'Admin', show: can(role,'settings') },
     { type:'link', href:'/settings',           icon:'⚙️', label:'Settings',              show: can(role,'settings') },
   ]
