@@ -38,6 +38,7 @@ export default function JobOrderPage() {
   const [dragOver, setDragOver] = useState(null)
   const [filterStaff, setFilterStaff]       = useState('')
   const [filterPriority, setFilterPriority] = useState('')
+  const [search, setSearch]     = useState('')
   const [toast, setToast]       = useState(null)
 
   useEffect(() => { fetchAll() }, [])
@@ -71,7 +72,7 @@ export default function JobOrderPage() {
     if (!confirm('Delete this job order?')) return
     await supabase.from('tasks').delete().eq('id', id)
     setTasks(prev=>prev.filter(t=>t.id!==id))
-    showToast('🗑️','Job order deleted')
+    showToast('🗑️','Deleted')
   }
 
   async function moveTask(taskId, newStatus) {
@@ -88,6 +89,7 @@ export default function JobOrderPage() {
   const filtered = tasks.filter(t => {
     if (filterStaff && t.assigned_to !== filterStaff) return false
     if (filterPriority && t.priority !== filterPriority) return false
+    if (search && !`${t.ticket_no} ${t.title} ${t.description||''}`.toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
 
@@ -102,6 +104,8 @@ export default function JobOrderPage() {
           <div className="topbar-sub">{tasks.length} orders · {tasks.filter(t=>t.status==='done').length} completed</div>
         </div>
         <div style={{display:'flex',gap:9,alignItems:'center'}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by ticket or title…"
+            style={{...iStyle,width:220,padding:'6px 12px'}}/>
           <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
             <option value="">All Staff</option>
             {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
@@ -119,7 +123,10 @@ export default function JobOrderPage() {
           <div onClick={e=>e.target===e.currentTarget&&(setShowForm(false),setEditTask(null))}
             style={{position:'fixed',inset:0,background:'rgba(26,18,8,.6)',backdropFilter:'blur(4px)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
             <div style={{background:'var(--white)',borderRadius:18,padding:28,width:'100%',maxWidth:500,boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700,marginBottom:20}}>{editTask?'Edit Job Order':'+ New Job Order'}</div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700}}>{editTask?`Edit ${editTask.ticket_no||'Job Order'}':'+ New Job Order'}</div>
+                {editTask?.ticket_no && <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:700,color:'var(--espresso)',background:'var(--surface)',padding:'4px 10px',borderRadius:8}}>{editTask.ticket_no}</span>}
+              </div>
               <div style={{marginBottom:12}}>
                 <label style={lStyle}>Title *</label>
                 <input style={iStyle} placeholder="What needs to be done?" value={form.title} onChange={fv('title')}/>
@@ -192,6 +199,7 @@ export default function JobOrderPage() {
                     {colTasks.map(task=>{
                       const p = pri(task.priority)
                       const assignee = task.staff
+                      const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'done'
                       return (
                         <div key={task.id} draggable
                           onDragStart={()=>setDragTask(task)}
@@ -199,11 +207,19 @@ export default function JobOrderPage() {
                           style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 13px',marginBottom:8,cursor:'grab',borderLeft:`3px solid ${p.color}`,opacity:dragTask?.id===task.id?.4:1,transition:'all .15s'}}
                           onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 4px 14px rgba(26,18,8,.08)';e.currentTarget.style.transform='translateY(-1px)'}}
                           onMouseLeave={e=>{e.currentTarget.style.boxShadow='';e.currentTarget.style.transform=''}}>
-                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
-                            <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:20,background:p.bg,color:p.color}}>{p.label}</span>
-                            <div style={{display:'flex',gap:5}}>
-                              <button onClick={()=>openEdit(task)} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:12,padding:'2px 4px'}}>✏️</button>
-                              <button onClick={()=>deleteTask(task.id)} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:12,padding:'2px 4px'}}>🗑</button>
+                          {/* Ticket + priority */}
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:7}}>
+                            <div style={{display:'flex',alignItems:'center',gap:6}}>
+                              {task.ticket_no && (
+                                <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:'var(--espresso)',background:'var(--cream-dark)',padding:'2px 7px',borderRadius:6}}>
+                                  {task.ticket_no}
+                                </span>
+                              )}
+                              <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:20,background:p.bg,color:p.color}}>{p.label}</span>
+                            </div>
+                            <div style={{display:'flex',gap:4}}>
+                              <button onClick={()=>openEdit(task)} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px'}}>✏️</button>
+                              <button onClick={()=>deleteTask(task.id)} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px'}}>🗑</button>
                             </div>
                           </div>
                           <div style={{fontSize:13,fontWeight:600,color:'var(--espresso)',marginBottom:4,lineHeight:1.4}}>{task.title}</div>
@@ -215,7 +231,7 @@ export default function JobOrderPage() {
                                 <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:500}}>{assignee.nickname||assignee.first_name}</span>
                               </div>
                             ):<span style={{fontSize:10,color:'var(--border)',flex:1}}>Unassigned</span>}
-                            {task.due_date&&<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:new Date(task.due_date)<new Date()?'#c0392b':'var(--text-muted)'}}>📅 {fmtDate(task.due_date)}</span>}
+                            {task.due_date&&<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:isOverdue?'#c0392b':'var(--text-muted)'}}>📅 {fmtDate(task.due_date)}</span>}
                           </div>
                           <div style={{display:'flex',gap:5,marginTop:8}}>
                             {COLUMNS.filter(c=>c.id!==col.id).map(c=>(
