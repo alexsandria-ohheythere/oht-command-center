@@ -1,156 +1,315 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { notifyOne } from '../../lib/notify'
+import { notifyOne, notifyAdmins } from '../../lib/notify'
 
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—'
+const fmtDateTime = d => d ? new Date(d).toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'
 
 const STATUS_STYLES = {
-  draft:             { label:'Draft',            color:'#7a6a50', bg:'#f0ede8' },
-  pending_signature: { label:'Pending Signature',color:'#a06000', bg:'#fef3e2' },
-  signed:            { label:'Signed',           color:'#4a7a1e', bg:'#eef7e4' },
-  expired:           { label:'Expired',          color:'#c0392b', bg:'#fdeaea' },
-  archived:          { label:'Archived',         color:'#4a90c4', bg:'#e8f0fb' },
+  draft:             { label:'Draft',             color:'#7a6a50', bg:'#f0ede8' },
+  pending_signature: { label:'Pending Signature', color:'#a06000', bg:'#fef3e2' },
+  signed:            { label:'Fully Signed',      color:'#4a7a1e', bg:'#eef7e4' },
+  expired:           { label:'Expired',           color:'#c0392b', bg:'#fdeaea' },
+  archived:          { label:'Archived',          color:'#4a90c4', bg:'#e8f0fb' },
 }
 
+const ROLES = ['Cafe Supervisor','Cafe Operations Support','Senior Barista','Junior Barista - Milk Station','Junior Barista - Cashier','Executive Chef','Sous Chef','Kitchen Staff']
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
 
+const CAT_COLORS = { Role:'#b06af5', Duties:'#4a90c4', Terms:'#4a7a1e', Compensation:'#d4a843', Legal:'#c0392b', General:'#7a6a50' }
 const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none'}
 const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
 
-const DEFAULT_VARIABLES = [
-  '{{employee_name}}','{{position}}','{{salary}}','{{start_date}}',
-  '{{contract_duration}}','{{department}}','{{company_name}}','{{date_today}}'
-]
+// Salary defaults per role
+const ROLE_SALARY = {
+  'Cafe Supervisor':              { ft:'₱22,000/month', pt:'₱700/day' },
+  'Cafe Operations Support':      { ft:'₱18,000/month', pt:'₱600/day' },
+  'Senior Barista':               { ft:'₱17,000/month', pt:'₱570/day' },
+  'Junior Barista - Milk Station':{ ft:'₱15,000/month', pt:'₱500/day' },
+  'Junior Barista - Cashier':     { ft:'₱15,000/month', pt:'₱500/day' },
+  'Executive Chef':               { ft:'₱22,000/month', pt:'₱700/day' },
+  'Sous Chef':                    { ft:'₱18,000/month', pt:'₱600/day' },
+  'Kitchen Staff':                { ft:'₱15,000/month', pt:'₱500/day' },
+}
 
 export default function ContractsPage() {
   const supabase = createClient()
+  const [view, setView]             = useState('list')
   const [contracts, setContracts]   = useState([])
-  const [templates, setTemplates]   = useState([])
+  const [clauses, setClauses]       = useState([])
   const [staff, setStaff]           = useState([])
   const [loading, setLoading]       = useState(true)
-  const [view, setView]             = useState('list') // list | new | detail | templates
+  const [saving, setSaving]         = useState(false)
   const [selected, setSelected]     = useState(null)
+  const [toast, setToast]           = useState(null)
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterStaff, setFilterStaff]   = useState('')
-  const [toast, setToast]           = useState(null)
-  const [saving, setSaving]         = useState(false)
 
-  // Contract builder form
-  const [form, setForm] = useState({
-    title: '', content: '', staff_id: '', template_id: '',
-    expires_at: '', status: 'draft', variables: {},
+  // Builder state
+  const [builderForm, setBuilderForm] = useState({
+    title:'', staff_id:'', employment_type:'Full-time',
+    start_date:'', salary:'', expires_at:'', custom_vars:{}
   })
+  const [selectedClauses, setSelectedClauses] = useState([]) // ordered list of clause IDs
+  const [dragIdx, setDragIdx]     = useState(null)
+  const [catFilter, setCatFilter] = useState('All')
+  const [clauseSearch, setClauseSearch] = useState('')
+  const [preview, setPreview]     = useState(false)
 
-  // Template form
-  const [tplForm, setTplForm] = useState({ name:'', description:'', content:'' })
-  const [showTplForm, setShowTplForm] = useState(false)
+  // Manage signatory modal
+  const [showMgmtSign, setShowMgmtSign]     = useState(false)
+  const [mgmtSigner, setMgmtSigner]         = useState('alex')
+  const [mgmtSignMode, setMgmtSignMode]     = useState('type')
+  const [mgmtTypedSig, setMgmtTypedSig]     = useState('')
+  const mgmtCanvasRef = useRef(null)
+  const isDrawing = useRef(false)
 
   useEffect(() => { fetchAll() }, [])
 
   async function fetchAll() {
     setLoading(true)
-    const [{ data:c },{ data:t },{ data:s }] = await Promise.all([
+    const [{ data:c },{ data:cl },{ data:s }] = await Promise.all([
       supabase.from('contracts').select('*, staff(first_name,last_name,nickname,role,email)').order('created_at',{ascending:false}),
-      supabase.from('contract_templates').select('*').eq('is_active',true).order('name'),
+      supabase.from('contract_clauses').select('*').eq('is_active',true).order('sort_order'),
       supabase.from('staff').select('*').order('last_name'),
     ])
-    setContracts(c||[]); setTemplates(t||[]); setStaff(s||[]); setLoading(false)
+    setContracts(c||[]); setClauses(cl||[]); setStaff(s||[]); setLoading(false)
   }
 
   function showToast(icon,msg){setToast({icon,msg});setTimeout(()=>setToast(null),4000)}
-  const fv = k => e => setForm(p=>({...p,[k]:e.target.value}))
+  const bfv = k => e => setBuilderForm(p=>({...p,[k]:e.target.value}))
 
-  // Load template into builder
-  function loadTemplate(tplId) {
-    const tpl = templates.find(t=>t.id===tplId)
-    if (tpl) setForm(p=>({...p, template_id:tplId, content:tpl.content, title:tpl.name}))
+  // Auto-suggest clauses when role or employment type changes
+  function autoSuggestClauses(role, empType) {
+    const suggested = clauses.filter(c => {
+      if (c.applicable_roles?.length === 0) return true
+      return c.applicable_roles?.includes(role)
+    }).filter(c => {
+      if (empType === 'Full-time' && c.title === 'Pay - Part Time') return false
+      if (empType !== 'Full-time' && c.title === 'Pay - Full Time') return false
+      if (empType !== 'Full-time' && c.title === 'Hours of Work - Full Time') return false
+      return true
+    })
+    setSelectedClauses(suggested.map(c => c.id))
   }
 
-  // Replace variables in content
-  function resolveContent(content, variables, staffMember) {
-    let resolved = content
+  function handleStaffChange(staffId) {
+    setBuilderForm(p => ({ ...p, staff_id: staffId }))
+    const s = staff.find(s => s.id === staffId)
+    if (s) {
+      const salary = ROLE_SALARY[s.role]
+      setBuilderForm(p => ({
+        ...p, staff_id: staffId,
+        salary: builderForm.employment_type === 'Full-time' ? salary?.ft || '' : salary?.pt || '',
+        title: `${builderForm.employment_type} Contract — ${s.first_name} ${s.last_name}`
+      }))
+      autoSuggestClauses(s.role, builderForm.employment_type)
+    }
+  }
+
+  function handleEmpTypeChange(empType) {
+    setBuilderForm(p => ({ ...p, employment_type: empType }))
+    const s = staff.find(s => s.id === builderForm.staff_id)
+    if (s) {
+      const salary = ROLE_SALARY[s.role]
+      setBuilderForm(p => ({
+        ...p, employment_type: empType,
+        salary: empType === 'Full-time' ? salary?.ft || '' : salary?.pt || '',
+      }))
+      autoSuggestClauses(s.role, empType)
+    }
+  }
+
+  // Toggle clause in/out
+  function toggleClause(clauseId) {
+    setSelectedClauses(prev =>
+      prev.includes(clauseId) ? prev.filter(id => id !== clauseId) : [...prev, clauseId]
+    )
+  }
+
+  // Drag to reorder selected clauses
+  function onDragStart(idx) { setDragIdx(idx) }
+  function onDragOver(e, idx) {
+    e.preventDefault()
+    if (dragIdx === null || dragIdx === idx) return
+    setSelectedClauses(prev => {
+      const next = [...prev]
+      const [moved] = next.splice(dragIdx, 1)
+      next.splice(idx, 0, moved)
+      return next
+    })
+    setDragIdx(idx)
+  }
+  function onDragEnd() { setDragIdx(null) }
+
+  // Build final contract content from clauses + variables
+  function buildContent() {
+    const staffMember = staff.find(s => s.id === builderForm.staff_id)
     const today = new Date().toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'})
-    const defaults = {
+    const vars = {
       '{{employee_name}}': staffMember ? `${staffMember.first_name} ${staffMember.last_name}` : '',
       '{{position}}': staffMember?.role || '',
-      '{{company_name}}': 'Oh Hey There',
+      '{{salary}}': builderForm.salary || '',
+      '{{start_date}}': builderForm.start_date ? new Date(builderForm.start_date+'T00:00:00').toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'}) : '',
+      '{{company_name}}': 'OHT Cafe',
       '{{date_today}}': today,
-      ...variables,
+      '{{employment_type}}': builderForm.employment_type,
+      ...builderForm.custom_vars,
     }
-    Object.entries(defaults).forEach(([key, val]) => {
-      resolved = resolved.replaceAll(key, val || `[${key}]`)
-    })
-    return resolved
+    const header = `OHT Cafe
+Unit A 156 A. Aguirre Ave., Barangay BF Homes, Parañaque City
+
+${builderForm.employment_type.toUpperCase()} EMPLOYMENT CONTRACT & NON-DISCLOSURE AGREEMENT
+
+${today}
+
+${staffMember ? `${staffMember.first_name} ${staffMember.last_name}` : ''}
+
+Dear ${staffMember ? `${staffMember.first_name}` : 'Employee'};
+
+We are pleased to inform you of your ${builderForm.employment_type.toLowerCase()} engagement with OHT Cafe on the terms set out below:\n\n`
+
+    const orderedClauses = selectedClauses.map((id,i) => {
+      const clause = clauses.find(c => c.id === id)
+      if (!clause) return ''
+      let content = clause.content
+      Object.entries(vars).forEach(([k,v]) => { content = content.replaceAll(k, v||`[${k}]`) })
+      return `${i+1}. ${content}`
+    }).join('\n\n')
+
+    const footer = `\n\nIN WITNESS WHEREOF, the parties have executed this Employment Contract as of the date first written above.\n\nIf you acknowledge that you have read and fully understood this CONTRACT and willingly consent to its terms, please sign below.\n\n\n_______________________________\nSignature Over Printed Name (Employee)\n\n_______________________________\nDate\n\n\nNoted by:\n\nAgnes Alexsandria S. Lalog\n_______________________________\nManaging Director & Co-founder\n\nCJ [Lastname]\n_______________________________\nCEO & Co-founder`
+
+    return header + orderedClauses + footer
   }
 
   async function saveContract(sendNow = false) {
-    if (!form.title || !form.content) { showToast('⚠️','Title and content required'); return }
+    if (!builderForm.title) { showToast('⚠️','Contract title required'); return }
+    if (selectedClauses.length === 0) { showToast('⚠️','Add at least one clause'); return }
+    if (sendNow && !builderForm.staff_id) { showToast('⚠️','Select an employee to send'); return }
     setSaving(true)
-    const staffMember = staff.find(s=>s.id===form.staff_id)
-    const resolved = resolveContent(form.content, form.variables, staffMember)
+    const content = buildContent()
     const payload = {
-      title: form.title,
-      content: resolved,
-      staff_id: form.staff_id || null,
-      template_id: form.template_id || null,
+      title: builderForm.title,
+      content,
+      staff_id: builderForm.staff_id || null,
       status: sendNow ? 'pending_signature' : 'draft',
-      variables: form.variables,
-      expires_at: form.expires_at || null,
+      variables: { ...builderForm.custom_vars, salary:builderForm.salary, start_date:builderForm.start_date, employment_type:builderForm.employment_type },
+      expires_at: builderForm.expires_at || null,
       created_by: 'alex',
       sent_at: sendNow ? new Date().toISOString() : null,
     }
     const { data, error } = await supabase.from('contracts').insert([payload]).select().single()
     if (error) { showToast('❌',error.message); setSaving(false); return }
-    // Notify staff if sending
-    if (sendNow && form.staff_id) {
-      await notifyOne(form.staff_id, {
-        type: 'general',
-        title: '📄 New Contract Awaiting Signature',
-        message: `"${form.title}" has been sent to you for signature. Please review and sign it in your portal.`,
+    if (sendNow && builderForm.staff_id) {
+      await notifyOne(builderForm.staff_id, {
+        type:'general',
+        title:'📄 Contract Awaiting Your Signature',
+        message:`"${builderForm.title}" has been sent to you. Please review and sign it in your portal.`,
       })
     }
     await fetchAll()
     setView('list')
-    setForm({title:'',content:'',staff_id:'',template_id:'',expires_at:'',status:'draft',variables:{}})
-    showToast(sendNow?'📤':'💾', sendNow?'Contract sent for signature':'Contract saved as draft')
+    setBuilderForm({title:'',staff_id:'',employment_type:'Full-time',start_date:'',salary:'',expires_at:'',custom_vars:{}})
+    setSelectedClauses([])
+    showToast(sendNow?'📤':'💾', sendNow?'Contract sent for signature!':'Saved as draft')
     setSaving(false)
-  }
-
-  async function updateStatus(id, status) {
-    await supabase.from('contracts').update({ status }).eq('id',id)
-    setContracts(prev=>prev.map(c=>c.id===id?{...c,status}:c))
-    if (selected?.id===id) setSelected(prev=>({...prev,status}))
-    showToast('✅',`Status updated to ${STATUS_STYLES[status]?.label}`)
   }
 
   async function deleteContract(id) {
     if (!confirm('Delete this contract?')) return
     await supabase.from('contracts').delete().eq('id',id)
     setContracts(prev=>prev.filter(c=>c.id!==id))
-    setView('list')
-    showToast('🗑️','Contract deleted')
+    setView('list'); setSelected(null)
+    showToast('🗑️','Deleted')
   }
 
-  async function saveTemplate() {
-    if (!tplForm.name||!tplForm.content) { showToast('⚠️','Name and content required'); return }
-    const { error } = await supabase.from('contract_templates').insert([{...tplForm, created_by:'alex'}])
-    if (error) { showToast('❌',error.message); return }
+  // Management countersign
+  function startDraw(e) {
+    isDrawing.current = true
+    const canvas = mgmtCanvasRef.current
+    const ctx = canvas.getContext('2d')
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.clientX||e.touches?.[0]?.clientX) - rect.left
+    const y = (e.clientY||e.touches?.[0]?.clientY) - rect.top
+    ctx.beginPath(); ctx.moveTo(x,y)
+  }
+  function draw(e) {
+    if (!isDrawing.current) return
+    e.preventDefault()
+    const canvas = mgmtCanvasRef.current
+    const ctx = canvas.getContext('2d')
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.clientX||e.touches?.[0]?.clientX) - rect.left
+    const y = (e.clientY||e.touches?.[0]?.clientY) - rect.top
+    ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.strokeStyle='#1a1208'
+    ctx.lineTo(x,y); ctx.stroke()
+  }
+  function endDraw() { isDrawing.current = false }
+  function clearCanvas() {
+    const canvas = mgmtCanvasRef.current
+    canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height)
+  }
+
+  async function submitMgmtSignature() {
+    if (!selected) return
+    let sigData = ''
+    if (mgmtSignMode === 'draw') {
+      const canvas = mgmtCanvasRef.current
+      sigData = canvas.toDataURL('image/png')
+    } else {
+      if (!mgmtTypedSig.trim()) { showToast('⚠️','Please type your name'); return }
+      sigData = mgmtTypedSig
+    }
+    setSaving(true)
+    const now = new Date().toISOString()
+    await supabase.from('contract_signatures').insert([{
+      contract_id: selected.id,
+      staff_id: null,
+      signature_type: mgmtSignMode,
+      signature_data: sigData,
+      signed_at: now,
+      signatory_type: 'management',
+      user_agent: navigator.userAgent,
+      audit_trail: [{ event:'management_countersigned', timestamp:now, signer:mgmtSigner }],
+    }])
+    await supabase.from('contracts').update({
+      management_signed_at: now,
+      management_signed_by: mgmtSigner,
+      management_signature: sigData,
+      status: 'signed',
+    }).eq('id', selected.id)
+    // Notify the employee
+    if (selected.staff_id) {
+      await notifyOne(selected.staff_id, {
+        type:'general',
+        title:'✅ Contract Fully Executed',
+        message:`"${selected.title}" has been countersigned by ${mgmtSigner==='alex'?'Alex (Managing Director)':'CJ (CEO)'}. Your contract is now fully executed.`,
+      })
+    }
     await fetchAll()
-    setShowTplForm(false); setTplForm({name:'',description:'',content:''})
-    showToast('✅','Template saved')
+    setSelected(prev=>({...prev,status:'signed',management_signed_at:now,management_signed_by:mgmtSigner}))
+    setShowMgmtSign(false); setMgmtTypedSig(''); setSaving(false)
+    showToast('✅','Contract countersigned & fully executed!')
   }
 
-  const filtered = contracts.filter(c => {
-    if (filterStatus!=='all' && c.status!==filterStatus) return false
-    if (filterStaff && c.staff_id!==filterStaff) return false
+  // Filtered clauses for library
+  const filteredClauses = clauses.filter(c => {
+    if (catFilter !== 'All' && c.category !== catFilter) return false
+    if (clauseSearch && !c.title.toLowerCase().includes(clauseSearch.toLowerCase())) return false
     return true
   })
+  const categories = ['All', ...new Set(clauses.map(c => c.category))]
+  const selectedClauseObjects = selectedClauses.map(id => clauses.find(c => c.id === id)).filter(Boolean)
 
-  const ss = STATUS_STYLES
+  const filtered = contracts.filter(c => {
+    if (filterStatus !== 'all' && c.status !== filterStatus) return false
+    if (filterStaff && c.staff_id !== filterStaff) return false
+    return true
+  })
 
   return (
     <AuthShell>
@@ -160,10 +319,18 @@ export default function ContractsPage() {
           <div className="topbar-sub">{contracts.length} total · {contracts.filter(c=>c.status==='pending_signature').length} awaiting signature</div>
         </div>
         <div style={{display:'flex',gap:9,alignItems:'center'}}>
-          {view!=='list'&&<button className="btn btn-secondary" onClick={()=>setView('list')}>← Back</button>}
-          {view==='list'&&<>
-            <button onClick={()=>setView('templates')} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:600,color:'var(--text-muted)',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>📋 Templates</button>
-            <button className="btn btn-primary" onClick={()=>setView('new')}>+ New Contract</button>
+          {view!=='list'&&<button className="btn btn-secondary" onClick={()=>{setView('list');setSelected(null);setPreview(false)}}>← Back</button>}
+          {view==='list'&&<button className="btn btn-primary" onClick={()=>{setView('builder');setSelectedClauses([]);setBuilderForm({title:'',staff_id:'',employment_type:'Full-time',start_date:'',salary:'',expires_at:'',custom_vars:{}})}}>+ New Contract</button>}
+          {view==='builder'&&<>
+            <button onClick={()=>setPreview(!preview)} style={{background:'var(--sky-pale)',color:'var(--sky)',border:'1px solid #4a90c444',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+              {preview?'← Edit':'👁 Preview'}
+            </button>
+            <button onClick={()=>saveContract(false)} disabled={saving} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",color:'var(--espresso)'}}>
+              💾 Save Draft
+            </button>
+            <button onClick={()=>saveContract(true)} disabled={saving||!builderForm.staff_id} style={{background:builderForm.staff_id?'var(--matcha)':'var(--border)',color:'white',border:'none',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:700,cursor:builderForm.staff_id?'pointer':'not-allowed',fontFamily:"'DM Sans',sans-serif"}}>
+              📤 Send for Signature
+            </button>
           </>}
         </div>
       </div>
@@ -172,12 +339,12 @@ export default function ContractsPage() {
 
         {/* ── LIST ── */}
         {view==='list'&&<>
-          <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap',alignItems:'center'}}>
+          <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',alignItems:'center'}}>
             <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-              {['all',...Object.keys(ss)].map(s=>(
+              {['all',...Object.keys(STATUS_STYLES)].map(s=>(
                 <button key={s} onClick={()=>setFilterStatus(s)}
-                  style={{padding:'6px 12px',borderRadius:7,border:`1px solid ${filterStatus===s?'var(--espresso)':'var(--border)'}`,background:filterStatus===s?'var(--espresso)':'transparent',color:filterStatus===s?'var(--cream)':'var(--text-muted)',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s'}}>
-                  {s==='all'?`All (${contracts.length})`:(ss[s]?.label+' ('+contracts.filter(c=>c.status===s).length+')')}
+                  style={{padding:'5px 12px',borderRadius:7,border:`1px solid ${filterStatus===s?'var(--espresso)':'var(--border)'}`,background:filterStatus===s?'var(--espresso)':'transparent',color:filterStatus===s?'var(--cream)':'var(--text-muted)',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s',whiteSpace:'nowrap'}}>
+                  {s==='all'?`All (${contracts.length})`:STATUS_STYLES[s]?.label+' ('+contracts.filter(c=>c.status===s).length+')'}
                 </button>
               ))}
             </div>
@@ -187,54 +354,71 @@ export default function ContractsPage() {
             </select>
           </div>
 
-          {loading?<div style={{textAlign:'center',padding:'40px',color:'var(--text-muted)'}}>Loading…</div>:filtered.length===0?(
+          {loading?<div style={{textAlign:'center',padding:'40px',color:'var(--text-muted)'}}>Loading…</div>:
+          filtered.length===0?(
             <div style={{textAlign:'center',padding:'60px',background:'var(--white)',border:'1px solid var(--border)',borderRadius:13}}>
               <div style={{fontSize:40,marginBottom:12}}>📄</div>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:16,fontWeight:700,marginBottom:6}}>No contracts yet</div>
-              <button className="btn btn-primary" onClick={()=>setView('new')}>+ Create First Contract</button>
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:16,fontWeight:700,marginBottom:8}}>No contracts yet</div>
+              <button className="btn btn-primary" onClick={()=>setView('builder')}>+ Create First Contract</button>
             </div>
           ):(
             <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                 <thead><tr style={{background:'var(--espresso)'}}>
-                  {['Contract','Employee','Status','Created','Expires','Actions'].map(h=>(
-                    <th key={h} style={{padding:'11px 14px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}}>{h}</th>
+                  {['Contract','Employee','Status','Signatories','Created','Actions'].map(h=>(
+                    <th key={h} style={{padding:'11px 14px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)',whiteSpace:'nowrap'}}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
                   {filtered.map((c,i)=>{
-                    const st = ss[c.status]||ss.draft
+                    const st = STATUS_STYLES[c.status]||STATUS_STYLES.draft
                     const s = c.staff
+                    const employeeSigned = c.signed_at
+                    const mgmtSigned = c.management_signed_at
                     return(
                       <tr key={c.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)',cursor:'pointer'}}
                         onMouseEnter={e=>e.currentTarget.style.background='var(--matcha-pale)'}
                         onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'var(--white)':'var(--surface)'}>
                         <td style={{padding:'11px 14px'}} onClick={()=>{setSelected(c);setView('detail')}}>
-                          <div style={{fontWeight:600,fontSize:13}}>{c.title}</div>
-                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>Created by {c.created_by==='alex'?'Alex':'CJ'}</div>
+                          <div style={{fontWeight:600}}>{c.title}</div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>by {c.created_by==='alex'?'Alex':'CJ'} · {fmtDate(c.created_at)}</div>
                         </td>
                         <td style={{padding:'11px 14px'}} onClick={()=>{setSelected(c);setView('detail')}}>
                           {s?(
-                            <div style={{display:'flex',alignItems:'center',gap:8}}>
-                              <div style={{width:26,height:26,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
+                            <div style={{display:'flex',alignItems:'center',gap:7}}>
+                              <div style={{width:24,height:24,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
                               <div>
-                                <div style={{fontWeight:600}}>{s.first_name} {s.last_name}</div>
-                                <div style={{fontSize:10,color:'var(--text-muted)'}}>{s.role}</div>
+                                <div style={{fontWeight:600,fontSize:11}}>{s.first_name} {s.last_name}</div>
+                                <div style={{fontSize:9,color:'var(--text-muted)'}}>{s.role}</div>
                               </div>
                             </div>
-                          ):<span style={{color:'var(--text-muted)',fontSize:11}}>Unassigned</span>}
+                          ):<span style={{color:'var(--text-muted)',fontSize:11}}>—</span>}
                         </td>
                         <td style={{padding:'11px 14px'}}>
-                          <span style={{fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:8,background:st.bg,color:st.color}}>{st.label}</span>
+                          <span style={{fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:7,background:st.bg,color:st.color}}>{st.label}</span>
                         </td>
-                        <td style={{padding:'11px 14px',color:'var(--text-muted)',fontSize:11,fontFamily:"'DM Mono',monospace"}}>{fmtDate(c.created_at)}</td>
-                        <td style={{padding:'11px 14px',color:c.expires_at&&new Date(c.expires_at)<new Date()?'#c0392b':'var(--text-muted)',fontSize:11,fontFamily:"'DM Mono',monospace"}}>{fmtDate(c.expires_at)}</td>
                         <td style={{padding:'11px 14px'}}>
-                          <div style={{display:'flex',gap:6}}>
-                            <button onClick={()=>{setSelected(c);setView('detail')}} style={{background:'var(--sky-pale)',color:'var(--sky)',border:'none',borderRadius:6,padding:'4px 9px',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>View</button>
-                            {c.status==='draft'&&c.staff_id&&(
-                              <button onClick={async()=>{await supabase.from('contracts').update({status:'pending_signature',sent_at:new Date().toISOString()}).eq('id',c.id);await notifyOne(c.staff_id,{type:'general',title:'📄 Contract Awaiting Signature',message:`"${c.title}" has been sent to you for signature.`});await fetchAll();showToast('📤','Sent for signature')}}
-                                style={{background:'var(--matcha-pale)',color:'var(--matcha-dark)',border:'none',borderRadius:6,padding:'4px 9px',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Send</button>
+                          <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                            <div style={{display:'flex',alignItems:'center',gap:5,fontSize:10}}>
+                              <span style={{fontSize:12}}>{employeeSigned?'✅':'⏳'}</span>
+                              <span style={{color:employeeSigned?'var(--matcha-dark)':'var(--text-muted)',fontWeight:employeeSigned?600:400}}>
+                                Employee {employeeSigned?'signed':'pending'}
+                              </span>
+                            </div>
+                            <div style={{display:'flex',alignItems:'center',gap:5,fontSize:10}}>
+                              <span style={{fontSize:12}}>{mgmtSigned?'✅':'⏳'}</span>
+                              <span style={{color:mgmtSigned?'var(--matcha-dark)':'var(--text-muted)',fontWeight:mgmtSigned?600:400}}>
+                                {mgmtSigned?`${c.management_signed_by==='alex'?'Alex':'CJ'} signed`:'Mgmt pending'}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontSize:10,color:'var(--text-muted)'}}>{fmtDate(c.created_at)}</td>
+                        <td style={{padding:'11px 14px'}}>
+                          <div style={{display:'flex',gap:5}}>
+                            <button onClick={()=>{setSelected(c);setView('detail')}} style={{background:'var(--sky-pale)',color:'var(--sky)',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>View</button>
+                            {c.signed_at&&!c.management_signed_at&&(
+                              <button onClick={()=>{setSelected(c);setShowMgmtSign(true)}} style={{background:'var(--matcha-pale)',color:'var(--matcha-dark)',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Countersign</button>
                             )}
                           </div>
                         </td>
@@ -247,153 +431,245 @@ export default function ContractsPage() {
           )}
         </>}
 
-        {/* ── NEW CONTRACT BUILDER ── */}
-        {view==='new'&&(
-          <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16,height:'calc(100vh-130px)'}}>
-            <div style={{display:'flex',flexDirection:'column',gap:12}}>
-              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'20px'}}>
-                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:14}}>Contract Builder</div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
-                  <div>
-                    <label style={lStyle}>Contract Title *</label>
-                    <input style={iStyle} placeholder="e.g. Employment Contract" value={form.title} onChange={fv('title')}/>
-                  </div>
-                  <div>
-                    <label style={lStyle}>Load Template</label>
-                    <select style={iStyle} value={form.template_id} onChange={e=>loadTemplate(e.target.value)}>
-                      <option value="">Start from scratch</option>
-                      {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={lStyle}>Assign To</label>
-                    <select style={iStyle} value={form.staff_id} onChange={fv('staff_id')}>
-                      <option value="">Select employee…</option>
-                      {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name} — {s.role}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={lStyle}>Expiry Date</label>
-                    <input style={iStyle} type="date" value={form.expires_at} onChange={fv('expires_at')}/>
-                  </div>
-                </div>
-                {/* Variable chips */}
-                <div style={{marginBottom:12}}>
-                  <label style={lStyle}>Dynamic Variables — click to insert</label>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                    {DEFAULT_VARIABLES.map(v=>(
-                      <span key={v} onClick={()=>setForm(p=>({...p,content:(p.content||'')+v}))}
-                        style={{fontFamily:"'DM Mono',monospace",fontSize:10,padding:'3px 8px',background:'var(--sky-pale)',color:'var(--sky)',borderRadius:6,cursor:'pointer',border:'1px solid #4a90c422',transition:'all .15s'}}
-                        onMouseEnter={e=>e.currentTarget.style.background='var(--sky)'.replace(')',', .2)')}
-                        onMouseLeave={e=>e.currentTarget.style.background='var(--sky-pale)'}>
-                        {v}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <label style={lStyle}>Contract Content *</label>
-                  <textarea
-                    style={{...iStyle,resize:'vertical',minHeight:400,lineHeight:1.8,fontFamily:"'DM Sans',sans-serif",fontSize:13}}
-                    placeholder="Write your contract here. Use {{variable_name}} for dynamic content…"
-                    value={form.content}
-                    onChange={fv('content')}/>
+        {/* ── BUILDER ── */}
+        {view==='builder'&&!preview&&(
+          <div style={{display:'grid',gridTemplateColumns:'280px 1fr 260px',gap:14,height:'calc(100vh - 130px)'}}>
+
+            {/* LEFT — Clause Library */}
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              <div style={{padding:'14px 14px 10px',borderBottom:'1px solid var(--border)',flexShrink:0}}>
+                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,marginBottom:10}}>📚 Clause Library</div>
+                <input value={clauseSearch} onChange={e=>setClauseSearch(e.target.value)} placeholder="Search clauses…"
+                  style={{...iStyle,padding:'6px 10px',fontSize:11,marginBottom:8}}/>
+                <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+                  {categories.map(cat=>(
+                    <button key={cat} onClick={()=>setCatFilter(cat)}
+                      style={{padding:'3px 8px',borderRadius:20,border:`1px solid ${catFilter===cat?(CAT_COLORS[cat]||'var(--espresso)'):'var(--border)'}`,background:catFilter===cat?(CAT_COLORS[cat]||'var(--espresso)')+'22':'transparent',color:catFilter===cat?(CAT_COLORS[cat]||'var(--espresso)'):'var(--text-muted)',fontSize:9,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                      {cat}
+                    </button>
+                  ))}
                 </div>
               </div>
-            </div>
-
-            {/* Right panel */}
-            <div style={{display:'flex',flexDirection:'column',gap:12}}>
-              {/* Variable values */}
-              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px'}}>
-                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,marginBottom:12}}>Fill Variables</div>
-                {DEFAULT_VARIABLES.filter(v=>!['{{employee_name}}','{{position}}','{{company_name}}','{{date_today}}'].includes(v)).map(v=>{
-                  const key = v.replace('{{','').replace('}}','')
+              <div style={{flex:1,overflowY:'auto',padding:'10px'}}>
+                {filteredClauses.map(clause=>{
+                  const isSelected = selectedClauses.includes(clause.id)
+                  const color = CAT_COLORS[clause.category]||'#7a6a50'
                   return(
-                    <div key={v} style={{marginBottom:8}}>
-                      <label style={{...lStyle,marginBottom:3}}>{key.replace(/_/g,' ')}</label>
-                      <input style={{...iStyle,padding:'6px 10px'}} placeholder={`Enter ${key.replace(/_/g,' ')}…`}
-                        value={form.variables[v]||''}
-                        onChange={e=>setForm(p=>({...p,variables:{...p.variables,[v]:e.target.value}}))}/>
+                    <div key={clause.id} onClick={()=>toggleClause(clause.id)}
+                      style={{padding:'10px 12px',borderRadius:9,border:`1.5px solid ${isSelected?color:'var(--border)'}`,background:isSelected?color+'15':'var(--surface)',marginBottom:7,cursor:'pointer',transition:'all .15s'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:3}}>
+                        <span style={{fontSize:11,fontWeight:600,color:isSelected?color:'var(--espresso)'}}>{clause.title}</span>
+                        <span style={{fontSize:14}}>{isSelected?'✅':'➕'}</span>
+                      </div>
+                      <span style={{fontSize:9,fontWeight:700,padding:'1px 6px',borderRadius:4,background:color+'22',color}}>{clause.category}</span>
                     </div>
                   )
                 })}
               </div>
+            </div>
 
-              {/* Preview */}
-              {form.staff_id&&form.content&&(
-                <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:13,padding:'14px',fontSize:11,color:'var(--text-muted)',lineHeight:1.7,maxHeight:200,overflowY:'auto'}}>
-                  <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',marginBottom:8,color:'var(--text-muted)'}}>Preview</div>
-                  <div style={{whiteSpace:'pre-wrap',fontSize:11}}>
-                    {resolveContent(form.content,form.variables,staff.find(s=>s.id===form.staff_id)).slice(0,500)}…
+            {/* MIDDLE — Contract canvas */}
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              <div style={{padding:'14px 16px 10px',borderBottom:'1px solid var(--border)',flexShrink:0}}>
+                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,marginBottom:3}}>📄 Contract</div>
+                <div style={{fontSize:10,color:'var(--text-muted)'}}>Drag clauses below to reorder. Click ✕ to remove.</div>
+              </div>
+              <div style={{flex:1,overflowY:'auto',padding:'14px'}}>
+                {selectedClauseObjects.length===0?(
+                  <div style={{textAlign:'center',padding:'40px',color:'var(--border)',border:'2px dashed var(--border)',borderRadius:10,marginTop:10}}>
+                    <div style={{fontSize:32,marginBottom:8}}>📋</div>
+                    <div style={{fontSize:12}}>Click clauses from the library to add them here</div>
+                  </div>
+                ):selectedClauseObjects.map((clause,idx)=>{
+                  const color = CAT_COLORS[clause.category]||'#7a6a50'
+                  return(
+                    <div key={clause.id}
+                      draggable
+                      onDragStart={()=>onDragStart(idx)}
+                      onDragOver={e=>onDragOver(e,idx)}
+                      onDragEnd={onDragEnd}
+                      style={{background:'var(--surface)',border:`1.5px solid ${dragIdx===idx?color:'var(--border)'}`,borderRadius:9,padding:'12px 13px',marginBottom:8,cursor:'grab',borderLeft:`4px solid ${color}`,opacity:dragIdx===idx?.5:1,transition:'all .15s'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <span style={{fontSize:12,color:'var(--text-muted)',cursor:'grab'}}>⠿</span>
+                          <span style={{fontSize:11,fontWeight:700,color:color}}>{clause.title}</span>
+                          <span style={{fontSize:9,background:color+'22',color,padding:'1px 6px',borderRadius:4,fontWeight:600}}>{clause.category}</span>
+                        </div>
+                        <button onClick={()=>toggleClause(clause.id)} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:14,padding:'0 2px'}}
+                          onMouseEnter={e=>e.currentTarget.style.color='#c0392b'} onMouseLeave={e=>e.currentTarget.style.color='var(--text-muted)'}>✕</button>
+                      </div>
+                      <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.6,whiteSpace:'pre-wrap'}}>{clause.content.slice(0,120)}{clause.content.length>120?'…':''}</div>
+                    </div>
+                  )
+                })}
+              </div>
+              <div style={{padding:'10px 14px',borderTop:'1px solid var(--border)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>{selectedClauses.length} clause{selectedClauses.length!==1?'s':''} added</span>
+                {selectedClauses.length>0&&<button onClick={()=>setPreview(true)} style={{background:'var(--sky-pale)',color:'var(--sky)',border:'none',borderRadius:7,padding:'5px 12px',fontSize:10,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>👁 Preview Contract</button>}
+              </div>
+            </div>
+
+            {/* RIGHT — Settings */}
+            <div style={{display:'flex',flexDirection:'column',gap:12,overflowY:'auto'}}>
+              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px'}}>
+                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,marginBottom:14}}>⚙️ Contract Settings</div>
+                <div style={{marginBottom:10}}>
+                  <label style={lStyle}>Contract Title *</label>
+                  <input style={iStyle} value={builderForm.title} onChange={bfv('title')} placeholder="e.g. Full-time Contract — Berna Castro"/>
+                </div>
+                <div style={{marginBottom:10}}>
+                  <label style={lStyle}>Employment Type</label>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
+                    {['Full-time','Part-time','Freelancer'].map(t=>(
+                      <div key={t} onClick={()=>handleEmpTypeChange(t)}
+                        style={{padding:'7px 6px',borderRadius:7,border:`1.5px solid ${builderForm.employment_type===t?'var(--matcha)':'var(--border)'}`,background:builderForm.employment_type===t?'var(--matcha-pale)':'var(--surface)',cursor:'pointer',textAlign:'center',fontSize:10,fontWeight:600,color:builderForm.employment_type===t?'var(--matcha-dark)':'var(--text-muted)',transition:'all .15s'}}>
+                        {t}
+                      </div>
+                    ))}
                   </div>
                 </div>
-              )}
+                <div style={{marginBottom:10}}>
+                  <label style={lStyle}>Assign Employee</label>
+                  <select style={iStyle} value={builderForm.staff_id} onChange={e=>handleStaffChange(e.target.value)}>
+                    <option value="">Select employee…</option>
+                    {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name} — {s.role}</option>)}
+                  </select>
+                </div>
+                <div style={{marginBottom:10}}>
+                  <label style={lStyle}>Salary / Rate</label>
+                  <input style={iStyle} value={builderForm.salary} onChange={bfv('salary')} placeholder="e.g. ₱17,000/month"/>
+                </div>
+                <div style={{marginBottom:10}}>
+                  <label style={lStyle}>Start Date</label>
+                  <input style={iStyle} type="date" value={builderForm.start_date} onChange={bfv('start_date')}/>
+                </div>
+                <div style={{marginBottom:0}}>
+                  <label style={lStyle}>Expiry Date</label>
+                  <input style={iStyle} type="date" value={builderForm.expires_at} onChange={bfv('expires_at')}/>
+                </div>
+              </div>
 
-              {/* Actions */}
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                <button onClick={()=>saveContract(false)} disabled={saving}
-                  style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,padding:'11px',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",color:'var(--espresso)'}}>
-                  💾 Save as Draft
-                </button>
-                <button onClick={()=>saveContract(true)} disabled={saving||!form.staff_id}
-                  style={{background:form.staff_id?'var(--matcha)':'var(--border)',color:'white',border:'none',borderRadius:9,padding:'11px',fontSize:12,fontWeight:700,cursor:form.staff_id?'pointer':'not-allowed',fontFamily:"'DM Sans',sans-serif"}}>
-                  {saving?'Saving…':'📤 Send for Signature'}
-                </button>
-                {!form.staff_id&&<div style={{fontSize:10,color:'var(--text-muted)',textAlign:'center'}}>Select an employee to send</div>}
+              {builderForm.staff_id&&(()=>{
+                const s = staff.find(x=>x.id===builderForm.staff_id)
+                if(!s) return null
+                return(
+                  <div style={{background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:13,padding:'14px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:9,marginBottom:8}}>
+                      <div style={{width:32,height:32,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'white'}}>{initials(s.first_name,s.last_name)}</div>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:700,color:'var(--matcha-dark)'}}>{s.first_name} {s.last_name}</div>
+                        <div style={{fontSize:10,color:'var(--matcha-dark)',opacity:.8}}>{s.role}</div>
+                      </div>
+                    </div>
+                    <div style={{fontSize:10,color:'var(--matcha-dark)',opacity:.7}}>✅ Clauses auto-suggested for this role and employment type</div>
+                  </div>
+                )
+              })()}
+
+              {/* Signatory info */}
+              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'14px'}}>
+                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,marginBottom:10}}>✍️ Signatories</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.8}}>
+                  <div>1️⃣ <strong>Employee</strong> signs first</div>
+                  <div>2️⃣ <strong>Alex or CJ</strong> countersigns</div>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* ── DETAIL VIEW ── */}
+        {/* ── PREVIEW ── */}
+        {view==='builder'&&preview&&(
+          <div style={{display:'grid',gridTemplateColumns:'1fr 260px',gap:14}}>
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'40px',lineHeight:1.9,fontSize:13,color:'var(--espresso)',whiteSpace:'pre-wrap',maxHeight:'calc(100vh - 160px)',overflowY:'auto',fontFamily:"'DM Sans',sans-serif"}}>
+              {buildContent()}
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              <div style={{background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:13,padding:'14px',fontSize:12,color:'var(--matcha-dark)',lineHeight:1.7}}>
+                ✅ {selectedClauses.length} clauses<br/>
+                👤 {builderForm.staff_id?staff.find(s=>s.id===builderForm.staff_id)?.first_name:'No employee'}<br/>
+                💼 {builderForm.employment_type}<br/>
+                💰 {builderForm.salary||'—'}<br/>
+                📅 {builderForm.start_date||'—'}
+              </div>
+              <button onClick={()=>setPreview(false)} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,padding:'10px',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>← Back to Builder</button>
+              <button onClick={()=>saveContract(false)} disabled={saving} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:9,padding:'10px',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>💾 Save Draft</button>
+              <button onClick={()=>saveContract(true)} disabled={saving||!builderForm.staff_id} style={{background:builderForm.staff_id?'var(--matcha)':'var(--border)',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:builderForm.staff_id?'pointer':'not-allowed',fontFamily:"'DM Sans',sans-serif"}}>📤 Send for Signature</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── DETAIL ── */}
         {view==='detail'&&selected&&(()=>{
-          const st = ss[selected.status]||ss.draft
+          const st = STATUS_STYLES[selected.status]||STATUS_STYLES.draft
           const s = selected.staff
+          const employeeSigned = selected.signed_at
+          const mgmtSigned = selected.management_signed_at
           return(
             <div style={{display:'grid',gridTemplateColumns:'1fr 300px',gap:16}}>
-              {/* Contract content */}
-              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'32px',lineHeight:1.9,fontSize:13,color:'var(--espresso)',whiteSpace:'pre-wrap',maxHeight:'calc(100vh - 160px)',overflowY:'auto',fontFamily:"'DM Sans',sans-serif"}}>
-                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:22,fontWeight:700,marginBottom:6}}>{selected.title}</div>
-                <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:24,paddingBottom:16,borderBottom:'1px solid var(--border)'}}>
-                  Created {fmtDate(selected.created_at)} · {st.label}
-                </div>
+              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'36px',lineHeight:1.9,fontSize:13,color:'var(--espresso)',whiteSpace:'pre-wrap',maxHeight:'calc(100vh - 160px)',overflowY:'auto',fontFamily:"'DM Sans',sans-serif"}}>
                 {selected.content}
               </div>
-
-              {/* Right panel */}
               <div style={{display:'flex',flexDirection:'column',gap:12}}>
                 <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px'}}>
-                  <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700,marginBottom:12}}>Contract Details</div>
-                  <div style={{fontSize:11,display:'flex',flexDirection:'column',gap:8}}>
-                    <div style={{display:'flex',justifyContent:'space-between'}}>
-                      <span style={{color:'var(--text-muted)'}}>Status</span>
-                      <span style={{fontWeight:700,padding:'2px 8px',borderRadius:6,background:st.bg,color:st.color,fontSize:10}}>{st.label}</span>
+                  <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700,marginBottom:12}}>Contract Status</div>
+                  <span style={{fontSize:11,fontWeight:700,padding:'4px 10px',borderRadius:8,background:st.bg,color:st.color}}>{st.label}</span>
+                </div>
+
+                {/* Signature tracker */}
+                <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px'}}>
+                  <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700,marginBottom:12}}>✍️ Signatures</div>
+                  <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                    <div style={{padding:'10px 12px',borderRadius:9,background:employeeSigned?'var(--matcha-pale)':'var(--surface)',border:`1px solid ${employeeSigned?'var(--matcha)':'var(--border)'}`}}>
+                      <div style={{fontSize:11,fontWeight:700,color:employeeSigned?'var(--matcha-dark)':'var(--text-muted)',marginBottom:3}}>
+                        {employeeSigned?'✅':'⏳'} Employee Signature
+                      </div>
+                      {employeeSigned?(
+                        <div style={{fontSize:10,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>{fmtDateTime(employeeSigned)}</div>
+                      ):(
+                        <div style={{fontSize:10,color:'var(--text-muted)'}}>Waiting for employee</div>
+                      )}
                     </div>
-                    <div style={{display:'flex',justifyContent:'space-between'}}>
-                      <span style={{color:'var(--text-muted)'}}>Created</span>
-                      <span style={{fontFamily:"'DM Mono',monospace"}}>{fmtDate(selected.created_at)}</span>
+                    <div style={{padding:'10px 12px',borderRadius:9,background:mgmtSigned?'var(--matcha-pale)':'var(--surface)',border:`1px solid ${mgmtSigned?'var(--matcha)':'var(--border)'}`}}>
+                      <div style={{fontSize:11,fontWeight:700,color:mgmtSigned?'var(--matcha-dark)':'var(--text-muted)',marginBottom:3}}>
+                        {mgmtSigned?'✅':'⏳'} Management Signature
+                      </div>
+                      {mgmtSigned?(
+                        <div>
+                          <div style={{fontSize:10,fontWeight:600,color:'var(--matcha-dark)'}}>{selected.management_signed_by==='alex'?'Alex (Managing Director)':'CJ (CEO)'}</div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>{fmtDateTime(mgmtSigned)}</div>
+                        </div>
+                      ):(
+                        <div style={{fontSize:10,color:'var(--text-muted)'}}>{employeeSigned?'Ready for countersign':'Waiting for employee first'}</div>
+                      )}
                     </div>
-                    {selected.sent_at&&<div style={{display:'flex',justifyContent:'space-between'}}>
-                      <span style={{color:'var(--text-muted)'}}>Sent</span>
-                      <span style={{fontFamily:"'DM Mono',monospace"}}>{fmtDate(selected.sent_at)}</span>
-                    </div>}
-                    {selected.signed_at&&<div style={{display:'flex',justifyContent:'space-between'}}>
-                      <span style={{color:'#4a7a1e',fontWeight:600}}>✅ Signed</span>
-                      <span style={{fontFamily:"'DM Mono',monospace"}}>{fmtDate(selected.signed_at)}</span>
-                    </div>}
-                    {selected.expires_at&&<div style={{display:'flex',justifyContent:'space-between'}}>
-                      <span style={{color:'var(--text-muted)'}}>Expires</span>
-                      <span style={{fontFamily:"'DM Mono',monospace",color:new Date(selected.expires_at)<new Date()?'#c0392b':'inherit'}}>{fmtDate(selected.expires_at)}</span>
-                    </div>}
                   </div>
                 </div>
 
+                {/* Actions */}
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {selected.status==='draft'&&selected.staff_id&&(
+                    <button onClick={async()=>{await supabase.from('contracts').update({status:'pending_signature',sent_at:new Date().toISOString()}).eq('id',selected.id);await notifyOne(selected.staff_id,{type:'general',title:'📄 Contract Awaiting Signature',message:`"${selected.title}" has been sent to you for signature.`});await fetchAll();setSelected(p=>({...p,status:'pending_signature'}));showToast('📤','Sent!')}}
+                      style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                      📤 Send for Signature
+                    </button>
+                  )}
+                  {employeeSigned&&!mgmtSigned&&(
+                    <button onClick={()=>setShowMgmtSign(true)}
+                      style={{background:'#EF4576',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                      ✍️ Countersign Now
+                    </button>
+                  )}
+                  <button onClick={()=>deleteContract(selected.id)}
+                    style={{background:'transparent',color:'#c0392b',border:'1px solid #f5c6c6',borderRadius:9,padding:'9px',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                    🗑 Delete Contract
+                  </button>
+                </div>
+
                 {s&&(
-                  <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px'}}>
-                    <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700,marginBottom:12}}>Employee</div>
-                    <div style={{display:'flex',alignItems:'center',gap:10}}>
-                      <div style={{width:36,height:36,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
+                  <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'14px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:9}}>
+                      <div style={{width:36,height:36,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'white'}}>{initials(s.first_name,s.last_name)}</div>
                       <div>
                         <div style={{fontWeight:600,fontSize:13}}>{s.first_name} {s.last_name}</div>
                         <div style={{fontSize:10,color:'var(--text-muted)'}}>{s.role}</div>
@@ -402,107 +678,77 @@ export default function ContractsPage() {
                     </div>
                   </div>
                 )}
-
-                {/* Signature status */}
-                {selected.status==='signed'&&(
-                  <SignaturePreview contractId={selected.id} supabase={supabase}/>
-                )}
-
-                {/* Actions */}
-                <div style={{display:'flex',flexDirection:'column',gap:7}}>
-                  {selected.status==='draft'&&selected.staff_id&&(
-                    <button onClick={async()=>{await supabase.from('contracts').update({status:'pending_signature',sent_at:new Date().toISOString()}).eq('id',selected.id);await notifyOne(selected.staff_id,{type:'general',title:'📄 Contract Awaiting Signature',message:`"${selected.title}" has been sent to you for signature.`});await fetchAll();setSelected(p=>({...p,status:'pending_signature'}));showToast('📤','Sent!')}}
-                      style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                      📤 Send for Signature
-                    </button>
-                  )}
-                  <select style={iStyle} value={selected.status} onChange={e=>updateStatus(selected.id,e.target.value)}>
-                    {Object.entries(ss).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-                  </select>
-                  <button onClick={()=>deleteContract(selected.id)}
-                    style={{background:'transparent',color:'#c0392b',border:'1px solid #f5c6c6',borderRadius:9,padding:'9px',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                    🗑 Delete Contract
-                  </button>
-                </div>
               </div>
             </div>
           )
         })()}
+      </div>
 
-        {/* ── TEMPLATES ── */}
-        {view==='templates'&&(
-          <div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:16,fontWeight:700}}>Contract Templates</div>
-              <button className="btn btn-primary" onClick={()=>setShowTplForm(!showTplForm)}>+ New Template</button>
-            </div>
-            {showTplForm&&(
-              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'20px',marginBottom:16}}>
-                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:14}}>New Template</div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
-                  <div><label style={lStyle}>Template Name *</label><input style={iStyle} placeholder="e.g. Employment Contract" value={tplForm.name} onChange={e=>setTplForm(p=>({...p,name:e.target.value}))}/></div>
-                  <div><label style={lStyle}>Description</label><input style={iStyle} placeholder="Brief description" value={tplForm.description} onChange={e=>setTplForm(p=>({...p,description:e.target.value}))}/></div>
-                </div>
-                <div style={{marginBottom:12}}>
-                  <label style={lStyle}>Template Content *</label>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:8}}>
-                    {DEFAULT_VARIABLES.map(v=>(
-                      <span key={v} onClick={()=>setTplForm(p=>({...p,content:(p.content||'')+v}))}
-                        style={{fontFamily:"'DM Mono',monospace",fontSize:10,padding:'2px 7px',background:'var(--sky-pale)',color:'var(--sky)',borderRadius:5,cursor:'pointer'}}>
-                        {v}
-                      </span>
-                    ))}
+      {/* ── MANAGEMENT COUNTERSIGN MODAL ── */}
+      {showMgmtSign&&(
+        <div onClick={e=>e.target===e.currentTarget&&setShowMgmtSign(false)}
+          style={{position:'fixed',inset:0,background:'rgba(26,18,8,.6)',backdropFilter:'blur(4px)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div style={{background:'var(--white)',borderRadius:18,padding:28,width:'100%',maxWidth:480,boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700,marginBottom:4}}>✍️ Management Countersign</div>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:20}}>"{selected?.title}"</div>
+
+            <div style={{marginBottom:14}}>
+              <label style={lStyle}>Signing As</label>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                {[['alex','Alex','Managing Director'],['cj','CJ','CEO']].map(([val,name,role])=>(
+                  <div key={val} onClick={()=>setMgmtSigner(val)}
+                    style={{padding:'10px 12px',borderRadius:9,border:`1.5px solid ${mgmtSigner===val?'var(--matcha)':'var(--border)'}`,background:mgmtSigner===val?'var(--matcha-pale)':'var(--surface)',cursor:'pointer',transition:'all .15s'}}>
+                    <div style={{fontSize:12,fontWeight:700,color:mgmtSigner===val?'var(--matcha-dark)':'var(--espresso)'}}>{name}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)'}}>{role}</div>
                   </div>
-                  <textarea style={{...iStyle,resize:'vertical',minHeight:300,lineHeight:1.8,fontSize:13}} placeholder="Write template content…" value={tplForm.content} onChange={e=>setTplForm(p=>({...p,content:e.target.value}))}/>
-                </div>
-                <div style={{display:'flex',gap:9}}>
-                  <button onClick={()=>setShowTplForm(false)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:9,padding:'9px 16px',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Cancel</button>
-                  <button onClick={saveTemplate} style={{flex:1,background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:9,fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>✓ Save Template</button>
-                </div>
+                ))}
               </div>
-            )}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:12}}>
-              {templates.map(t=>(
-                <div key={t.id} style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'18px',borderTop:'3px solid var(--matcha)'}}>
-                  <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:4}}>{t.name}</div>
-                  {t.description&&<div style={{fontSize:11,color:'var(--text-muted)',marginBottom:12,lineHeight:1.5}}>{t.description}</div>}
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:12}}>{t.content.slice(0,100)}…</div>
-                  <button onClick={()=>{setForm(p=>({...p,template_id:t.id,content:t.content,title:t.name}));setView('new')}}
-                    style={{background:'var(--matcha-pale)',color:'var(--matcha-dark)',border:'none',borderRadius:7,padding:'6px 12px',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",width:'100%'}}>
-                    Use Template
+            </div>
+
+            <div style={{marginBottom:14}}>
+              <label style={lStyle}>Signature Method</label>
+              <div style={{display:'flex',gap:7,marginBottom:12}}>
+                {[['draw','✍️ Draw'],['type','⌨️ Type']].map(([m,l])=>(
+                  <button key={m} onClick={()=>setMgmtSignMode(m)}
+                    style={{flex:1,padding:'8px',borderRadius:7,border:`1.5px solid ${mgmtSignMode===m?'#EF4576':'var(--border)'}`,background:mgmtSignMode===m?'#fdeef3':'var(--surface)',color:mgmtSignMode===m?'#EF4576':'var(--text-muted)',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                    {l}
                   </button>
+                ))}
+              </div>
+              {mgmtSignMode==='draw'&&(
+                <div>
+                  <canvas ref={mgmtCanvasRef} width={400} height={100}
+                    style={{border:'2px solid var(--border)',borderRadius:8,background:'var(--surface)',cursor:'crosshair',width:'100%',touchAction:'none'}}
+                    onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+                    onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}/>
+                  <button onClick={clearCanvas} style={{fontSize:10,color:'var(--text-muted)',background:'transparent',border:'none',cursor:'pointer',marginTop:4,fontFamily:"'DM Sans',sans-serif"}}>Clear</button>
                 </div>
-              ))}
-              {templates.length===0&&<div style={{textAlign:'center',padding:'40px',color:'var(--text-muted)',fontSize:12}}>No templates yet. Create one above.</div>}
+              )}
+              {mgmtSignMode==='type'&&(
+                <div>
+                  <input value={mgmtTypedSig} onChange={e=>setMgmtTypedSig(e.target.value)} placeholder="Type your full name…"
+                    style={{...iStyle,fontFamily:'cursive',fontSize:20,padding:'12px'}}/>
+                  {mgmtTypedSig&&<div style={{marginTop:8,padding:'12px',background:'var(--surface)',borderRadius:8,textAlign:'center',fontFamily:'cursive',fontSize:24,color:'var(--espresso)'}}>{mgmtTypedSig}</div>}
+                </div>
+              )}
+            </div>
+
+            <div style={{background:'var(--gold-pale)',border:'1px solid var(--gold)',borderRadius:9,padding:'10px 14px',marginBottom:16,fontSize:11,color:'#a06000',lineHeight:1.6}}>
+              ⚖️ By countersigning, you confirm this contract is fully executed on behalf of OHT Cafe. This action is permanent and will notify the employee.
+            </div>
+
+            <div style={{display:'flex',gap:9}}>
+              <button onClick={()=>setShowMgmtSign(false)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:9,padding:'10px 16px',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Cancel</button>
+              <button onClick={submitMgmtSignature} disabled={saving}
+                style={{flex:1,background:'#EF4576',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                {saving?'Processing…':'✍️ Countersign Contract'}
+              </button>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {toast&&<div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}><span>{toast.icon}</span><span>{toast.msg}</span></div>}
     </AuthShell>
-  )
-}
-
-function SignaturePreview({ contractId, supabase }) {
-  const [sig, setSig] = useState(null)
-  useEffect(() => {
-    supabase.from('contract_signatures').select('*').eq('contract_id',contractId).single().then(({data})=>setSig(data))
-  },[contractId])
-  if (!sig) return null
-  return (
-    <div style={{background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:13,padding:'14px'}}>
-      <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,color:'var(--matcha-dark)',marginBottom:8}}>✅ Signed</div>
-      {sig.signature_data&&sig.signature_type!=='draw'&&(
-        <div style={{fontSize:20,fontFamily:'cursive',color:'var(--espresso)',marginBottom:6}}>{sig.signature_data}</div>
-      )}
-      {sig.signature_type==='draw'&&(
-        <img src={sig.signature_data} alt="Signature" style={{maxWidth:'100%',maxHeight:60,marginBottom:6}}/>
-      )}
-      <div style={{fontSize:10,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
-        {new Date(sig.signed_at).toLocaleString('en-PH')}<br/>
-        IP: {sig.ip_address||'—'}
-      </div>
-    </div>
   )
 }
