@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
+import { notifyOne } from '../../lib/notify'
 
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
@@ -59,10 +60,23 @@ export default function JobOrderPage() {
     if (!form.title.trim()) { showToast('⚠️','Title is required'); return }
     setSaving(true)
     const payload = { title:form.title, description:form.description, priority:form.priority, assigned_to:form.assigned_to||null, due_date:form.due_date||null, status:form.status }
-    const { error } = editTask
-      ? await supabase.from('tasks').update(payload).eq('id', editTask.id)
-      : await supabase.from('tasks').insert([payload])
-    if (error) { showToast('❌',error.message); setSaving(false); return }
+    let resultData = null
+    if (editTask) {
+      const { error } = await supabase.from('tasks').update(payload).eq('id', editTask.id)
+      if (error) { showToast('❌',error.message); setSaving(false); return }
+      // Notify if assignee changed
+      if (payload.assigned_to && payload.assigned_to !== editTask.assigned_to) {
+        const { data: t } = await supabase.from('tasks').select('ticket_no,title').eq('id',editTask.id).single()
+        await notifyOne(payload.assigned_to, { type:'general', title:'📋 Job Order Assigned', message:`You have been assigned to ${t?.ticket_no||'a job order'}: "${t?.title}"` })
+      }
+    } else {
+      const { data: inserted, error } = await supabase.from('tasks').insert([payload]).select().single()
+      if (error) { showToast('❌',error.message); setSaving(false); return }
+      // Notify assignee
+      if (payload.assigned_to && inserted) {
+        await notifyOne(payload.assigned_to, { type:'general', title:'📋 New Job Order: ' + (inserted.ticket_no||''), message:`"${inserted.title}" has been assigned to you.` })
+      }
+    }
     await fetchAll()
     setShowForm(false); setEditTask(null); setForm(EMPTY_FORM); setSaving(false)
     showToast('✅', editTask ? 'Job order updated' : 'Job order created')
