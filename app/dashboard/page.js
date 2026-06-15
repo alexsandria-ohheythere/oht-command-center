@@ -89,13 +89,17 @@ export default function DashboardPage() {
 
   const QUICK_ACTIONS = [
     { icon:'📅', label:'Scheduling',    href:'/schedule',  color:'var(--matcha)'  },
-    { icon:'✅', label:'Task Board',    href:'/tasks',     color:'var(--sky)'     },
-    { icon:'📋', label:'Role Tasks',    href:'/roles',     color:'#8e44ad'        },
+    { icon:'📋', label:'Job Orders',    href:'/tasks',     color:'var(--sky)'     },
+    { icon:'🗓️', label:'Leave & Unavail.',href:'/leave',   color:'#2d7a6a'        },
+    { icon:'📝', label:'Role Tasks',    href:'/roles',     color:'#8e44ad'        },
     { icon:'✔️', label:'Daily Check-In',href:'/checkin',   color:'var(--gold)'    },
     { icon:'💸', label:'Payroll',       href:'/payroll',   color:'var(--blush)'   },
-    { icon:'📣', label:'Announcements', href:'/announce',  color:'#c0392b'        },
-    { icon:'🗓️', label:'Leave Requests',href:'/leave',     color:'#2d7a6a'        },
     { icon:'👥', label:'Staff',         href:'/staff',     color:'var(--bark)'    },
+    { icon:'📄', label:'Contracts',     href:'/contracts', color:'#4a90c4'        },
+    { icon:'📁', label:'Files · 201',   href:'/files',     color:'#c0392b'        },
+    { icon:'📊', label:'Finance',       href:'/finance',   color:'#2d7a6a'        },
+    { icon:'📣', label:'Announcements', href:'/announce',  color:'#c0392b'        },
+    { icon:'⚙️', label:'Settings',      href:'/settings',  color:'#7a6a50'        },
   ]
 
   return (
@@ -258,7 +262,7 @@ export default function DashboardPage() {
         {/* QUICK ACTIONS */}
         <div className="card fade-up" style={{marginBottom:16}}>
           <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:14}}>Quick Actions</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(8,1fr)',gap:8}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:8}}>
             {QUICK_ACTIONS.map(qa=>(
               <a key={qa.label} href={qa.href} style={{textDecoration:'none'}}>
                 <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 8px',textAlign:'center',transition:'all .15s',cursor:'pointer'}}
