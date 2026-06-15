@@ -4,15 +4,13 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '../lib/supabase'
 import Sidebar from './Sidebar'
 
-const ADMIN_EMAILS      = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
-const SUPERVISOR_EMAILS = ['richelle@ohheythere.cafe']
-const HR_EMAILS         = ['hr.ohtgroup@gmail.com']
+const ADMIN_EMAILS = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
+const HR_EMAILS    = ['hr.ohtgroup@gmail.com']
 
 function getRoleFromEmail(email) {
   if (!email) return 'staff'
-  if (ADMIN_EMAILS.includes(email.toLowerCase()))      return 'admin'
-  if (SUPERVISOR_EMAILS.includes(email.toLowerCase())) return 'supervisor'
-  if (HR_EMAILS.includes(email.toLowerCase()))         return 'hr'
+  if (ADMIN_EMAILS.includes(email.toLowerCase())) return 'admin'
+  if (HR_EMAILS.includes(email.toLowerCase()))    return 'hr'
   return 'staff'
 }
 
