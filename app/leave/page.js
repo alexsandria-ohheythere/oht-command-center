@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
+import { notifyOne } from '../../lib/notify'
 
 const LEAVE_TYPES = [
   { id:'unavailable',     label:'Unavailable',              color:'#7a6a50', bg:'#f0ede8', icon:'🚫' },
@@ -10,47 +11,27 @@ const LEAVE_TYPES = [
   { id:'sick_paid',       label:'Sick Leave (Paid)',        color:'#a06000', bg:'#fef3e2', icon:'🤒' },
   { id:'sick_unpaid',     label:'Sick Leave (Unpaid)',      color:'#8e44ad', bg:'#f5eeff', icon:'🤒' },
 ]
-
 const STATUS_STYLES = {
   pending:  { color:'#a06000', bg:'#fef3e2', border:'#d4a84344', label:'Pending'  },
   approved: { color:'#4a7a1e', bg:'#eef7e4', border:'#7ab64844', label:'Approved' },
   rejected: { color:'#c0392b', bg:'#fdeaea', border:'#f5c6c644', label:'Rejected' },
 }
-
-const ROLE_COLORS = {
-  'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4',
-  'Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843',
-  'Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b',
-  'Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e',
-}
+const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
-const initials = (f, l) => ((f||'')[0]||'').toUpperCase() + ((l||'')[0]||'').toUpperCase()
-const fmtDate = d => d ? new Date(d).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—'
-const toISO = d => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}` }
-
-const SHIFT_OPTIONS = [
-  { id:'all', label:'All Shifts',  icon:'📅' },
-  { id:'am',  label:'AM Shift',    icon:'🌅', time:'6:30AM–3:30PM' },
-  { id:'mid', label:'Mid Shift',   icon:'☀️',  time:'11:00AM–8:00PM' },
-  { id:'pm',  label:'PM Shift',    icon:'🌙', time:'3:00PM–11:00PM' },
-]
-
-const EMPTY_FORM = {
-  staff_id:'', leave_type:'unavailable',
-  date_from: toISO(new Date()), date_to: toISO(new Date()),
-  shifts: ['all'],
-  reason:'', submitted_by:'alex',
-}
-
-const iStyle = { width:'100%', background:'var(--surface)', border:'1px solid var(--border)', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'var(--text-primary)', outline:'none' }
-const lStyle = { display:'block', fontSize:9, fontWeight:700, letterSpacing:1.2, textTransform:'uppercase', color:'var(--text-muted)', marginBottom:5 }
+const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
+const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—'
+const toISO = d => { const x=new Date(d); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}` }
+const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none'}
+const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
+const EMPTY_FORM = {staff_id:'',leave_type:'unavailable',date_from:toISO(new Date()),date_to:toISO(new Date()),shifts:['all'],reason:'',submitted_by:'alex'}
+const SHIFT_OPTIONS = [{id:'all',label:'All Shifts',icon:'📅'},{id:'am',label:'AM',icon:'🌅'},{id:'mid',label:'Mid',icon:'☀️'},{id:'pm',label:'PM',icon:'🌙'}]
 
 export default function LeavePage() {
   const supabase = createClient()
   const [staff, setStaff]         = useState([])
   const [requests, setRequests]   = useState([])
   const [loading, setLoading]     = useState(true)
-  const [view, setView]           = useState('list') // list | form
+  const [view, setView]           = useState('list')
   const [form, setForm]           = useState(EMPTY_FORM)
   const [saving, setSaving]       = useState(false)
   const [filterStatus, setFilterStatus] = useState('all')
@@ -61,203 +42,142 @@ export default function LeavePage() {
 
   async function fetchAll() {
     setLoading(true)
-    const [{ data: s }, { data: r }] = await Promise.all([
+    const [{data:s},{data:r}] = await Promise.all([
       supabase.from('staff').select('*').order('last_name'),
-      supabase.from('leave_requests').select('*, staff(first_name,last_name,nickname,role)').order('created_at', { ascending:false }),
+      supabase.from('leave_requests').select('*, staff(first_name,last_name,nickname,role)').order('created_at',{ascending:false}),
     ])
-    setStaff(s || [])
-    setRequests(r || [])
-    setLoading(false)
+    setStaff(s||[]); setRequests(r||[]); setLoading(false)
   }
 
-  function showToast(icon, msg) { setToast({icon,msg}); setTimeout(()=>setToast(null),3500) }
-  const fv = k => e => setForm(prev => ({...prev,[k]:e.target.value}))
+  function showToast(icon,msg){setToast({icon,msg});setTimeout(()=>setToast(null),3500)}
+  const fv = k => e => setForm(p=>({...p,[k]:e.target.value}))
 
   async function submitRequest() {
-    if (!form.staff_id) { showToast('⚠️','Please select a staff member'); return }
-    if (!form.date_from || !form.date_to) { showToast('⚠️','Please set the dates'); return }
+    if (!form.staff_id) { showToast('⚠️','Select a staff member'); return }
     if (form.date_to < form.date_from) { showToast('⚠️','End date must be after start date'); return }
     setSaving(true)
     const { error } = await supabase.from('leave_requests').insert([{
-      staff_id: form.staff_id,
-      leave_type: form.leave_type,
-      date_from: form.date_from,
-      date_to: form.date_to,
-      shifts: form.shifts.includes('all') ? ['am','mid','pm'] : form.shifts,
-      reason: form.reason,
-      submitted_by: form.submitted_by,
-      status: 'pending',
+      staff_id:form.staff_id, leave_type:form.leave_type,
+      date_from:form.date_from, date_to:form.date_to,
+      shifts:form.shifts.includes('all')?['am','mid','pm']:form.shifts,
+      reason:form.reason, submitted_by:form.submitted_by, status:'pending'
     }])
-    if (error) { showToast('❌', error.message); setSaving(false); return }
-    await fetchAll()
-    setForm(EMPTY_FORM)
-    setView('list')
-    showToast('✅', 'Leave request submitted')
-    setSaving(false)
+    if (error) { showToast('❌',error.message); setSaving(false); return }
+    await fetchAll(); setForm(EMPTY_FORM); setView('list')
+    showToast('✅','Leave request submitted'); setSaving(false)
   }
 
   async function updateStatus(id, status, approver) {
-    const { error } = await supabase.from('leave_requests').update({
-      status,
-      approved_by: approver,
-      approved_at: new Date().toISOString(),
-    }).eq('id', id)
-    if (error) { showToast('❌', error.message); return }
-    setRequests(prev => prev.map(r => r.id===id ? {...r, status, approved_by:approver} : r))
-    showToast(status==='approved'?'✅':'❌', `Request ${status}`)
+    const { error } = await supabase.from('leave_requests').update({ status, approved_by:approver, approved_at:new Date().toISOString() }).eq('id',id)
+    if (error) { showToast('❌',error.message); return }
+    // Find the request to get staff_id and details
+    const req = requests.find(r=>r.id===id)
+    setRequests(prev=>prev.map(r=>r.id===id?{...r,status,approved_by:approver}:r))
+    // Send notification to staff member
+    if (req?.staff_id) {
+      const lt = LEAVE_TYPES.find(x=>x.id===req.leave_type)
+      await notifyOne(req.staff_id, {
+        type: status==='approved'?'leave_approved':'leave_rejected',
+        title: status==='approved' ? `${lt?.icon||''} Leave Approved` : `${lt?.icon||''} Leave Request Update`,
+        message: status==='approved'
+          ? `Your ${lt?.label} request (${fmtDate(req.date_from)}${req.date_from!==req.date_to?' – '+fmtDate(req.date_to):''}) has been approved by ${approver==='alex'?'Alex':'CJ'}.`
+          : `Your ${lt?.label} request has been rejected. Please see your manager for details.`,
+      })
+    }
+    showToast(status==='approved'?'✅':'❌',`Request ${status}`)
   }
 
   async function deleteRequest(id) {
     if (!confirm('Delete this request?')) return
-    await supabase.from('leave_requests').delete().eq('id', id)
-    setRequests(prev => prev.filter(r => r.id !== id))
-    showToast('🗑️', 'Request deleted')
+    await supabase.from('leave_requests').delete().eq('id',id)
+    setRequests(prev=>prev.filter(r=>r.id!==id))
+    showToast('🗑️','Deleted')
   }
+
+  function countDays(from,to) { return Math.round((new Date(to)-new Date(from))/(1000*60*60*24))+1 }
 
   const filtered = requests.filter(r => {
-    if (filterStatus !== 'all' && r.status !== filterStatus) return false
-    if (filterStaff && r.staff_id !== filterStaff) return false
+    if (filterStatus!=='all'&&r.status!==filterStatus) return false
+    if (filterStaff&&r.staff_id!==filterStaff) return false
     return true
   })
-
-  const pendingCount = requests.filter(r => r.status==='pending').length
-
-  // Count days between two dates
-  function countDays(from, to) {
-    const d1 = new Date(from), d2 = new Date(to)
-    return Math.round((d2-d1)/(1000*60*60*24)) + 1
-  }
+  const pendingCount = requests.filter(r=>r.status==='pending').length
 
   return (
     <AuthShell>
       <div className="topbar">
-        <div>
-          <div className="topbar-title">Leave & Unavailability</div>
-          <div className="topbar-sub">{requests.length} total requests · {pendingCount} pending approval</div>
-        </div>
-        <div style={{display:'flex',gap:9,alignItems:'center'}}>
-          {view==='form' && <button className="btn btn-secondary" onClick={()=>setView('list')}>← Back</button>}
-          {view==='list' && <button className="btn btn-primary" onClick={()=>setView('form')}>+ New Request</button>}
+        <div><div className="topbar-title">Leave & Unavailability</div><div className="topbar-sub">{requests.length} total · {pendingCount} pending</div></div>
+        <div style={{display:'flex',gap:9}}>
+          {view==='form'&&<button className="btn btn-secondary" onClick={()=>setView('list')}>← Back</button>}
+          {view==='list'&&<button className="btn btn-primary" onClick={()=>setView('form')}>+ New Request</button>}
         </div>
       </div>
-
       <div className="page-content">
-
-        {/* ── FORM ── */}
-        {view==='form' && (
+        {view==='form'&&(
           <div style={{maxWidth:560,margin:'0 auto'}}>
             <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:14,padding:'24px 28px'}}>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700,marginBottom:20}}>
-                + New Leave / Unavailability Request
-              </div>
-
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:17,fontWeight:700,marginBottom:20}}>+ New Leave / Unavailability Request</div>
               <div style={{marginBottom:14}}>
                 <label style={lStyle}>Staff Member *</label>
                 <select style={iStyle} value={form.staff_id} onChange={fv('staff_id')}>
                   <option value="">Select staff member…</option>
-                  {staff.map(s=>(
-                    <option key={s.id} value={s.id}>{s.first_name} {s.last_name} {s.nickname?`"${s.nickname}"`:''} — {s.role}</option>
-                  ))}
+                  {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}{s.nickname?' "'+s.nickname+'"':''} — {s.role}</option>)}
                 </select>
               </div>
-
               <div style={{marginBottom:14}}>
                 <label style={lStyle}>Leave Type *</label>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
                   {LEAVE_TYPES.map(lt=>(
-                    <div key={lt.id}
-                      onClick={()=>setForm(prev=>({...prev,leave_type:lt.id}))}
-                      style={{padding:'10px 12px',borderRadius:9,border:`1.5px solid ${form.leave_type===lt.id?lt.color:' var(--border)'}`,background:form.leave_type===lt.id?lt.bg:'var(--surface)',cursor:'pointer',transition:'all .15s',display:'flex',alignItems:'center',gap:8}}>
+                    <div key={lt.id} onClick={()=>setForm(p=>({...p,leave_type:lt.id}))}
+                      style={{padding:'10px 12px',borderRadius:9,border:`1.5px solid ${form.leave_type===lt.id?lt.color:'var(--border)'}`,background:form.leave_type===lt.id?lt.bg:'var(--surface)',cursor:'pointer',transition:'all .15s',display:'flex',alignItems:'center',gap:8}}>
                       <span style={{fontSize:16}}>{lt.icon}</span>
                       <span style={{fontSize:11,fontWeight:600,color:form.leave_type===lt.id?lt.color:'var(--text-muted)'}}>{lt.label}</span>
                     </div>
                   ))}
                 </div>
               </div>
-
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
-                <div>
-                  <label style={lStyle}>From *</label>
-                  <input style={iStyle} type="date" value={form.date_from} onChange={fv('date_from')} />
-                </div>
-                <div>
-                  <label style={lStyle}>To *</label>
-                  <input style={iStyle} type="date" value={form.date_to} onChange={fv('date_to')} />
-                </div>
+                <div><label style={lStyle}>From *</label><input style={iStyle} type="date" value={form.date_from} onChange={fv('date_from')}/></div>
+                <div><label style={lStyle}>To *</label><input style={iStyle} type="date" value={form.date_to} onChange={fv('date_to')}/></div>
               </div>
-
-              {form.date_from && form.date_to && form.date_to >= form.date_from && (
-                <div style={{background:'var(--sky-pale)',border:'1px solid #4a90c444',borderRadius:8,padding:'8px 12px',marginBottom:14,fontSize:11,color:'var(--sky)',fontWeight:600}}>
-                  📅 {countDays(form.date_from, form.date_to)} day{countDays(form.date_from,form.date_to)!==1?'s':''}
-                  {['vacation_paid','sick_paid'].includes(form.leave_type) && ' · Paid leave days will be deducted from leave credits'}
-                </div>
-              )}
-
               <div style={{marginBottom:14}}>
                 <label style={lStyle}>Affected Shifts</label>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:7}}>
-                  {SHIFT_OPTIONS.map(sh => {
-                    const isSelected = form.shifts.includes(sh.id)
-                    const isAllMode  = form.shifts.includes('all')
-                    const active     = sh.id==='all' ? isAllMode : (!isAllMode && isSelected)
-                    return (
-                      <div key={sh.id}
-                        onClick={() => {
-                          if (sh.id==='all') {
-                            setForm(prev=>({...prev, shifts:['all']}))
-                          } else {
-                            setForm(prev => {
-                              const cur = prev.shifts.filter(x=>x!=='all')
-                              const next = cur.includes(sh.id) ? cur.filter(x=>x!==sh.id) : [...cur, sh.id]
-                              return {...prev, shifts: next.length===0?['all']:next}
-                            })
-                          }
-                        }}
-                        style={{padding:'9px 8px',borderRadius:9,border:`1.5px solid ${active?'var(--espresso)':'var(--border)'}`,background:active?'var(--espresso)':'var(--surface)',cursor:'pointer',textAlign:'center',transition:'all .15s'}}>
+                  {SHIFT_OPTIONS.map(sh=>{
+                    const active=sh.id==='all'?form.shifts.includes('all'):(!form.shifts.includes('all')&&form.shifts.includes(sh.id))
+                    return(
+                      <div key={sh.id} onClick={()=>{
+                        if(sh.id==='all'){setForm(p=>({...p,shifts:['all']}))}
+                        else{setForm(p=>{const cur=p.shifts.filter(x=>x!=='all');const next=cur.includes(sh.id)?cur.filter(x=>x!==sh.id):[...cur,sh.id];return{...p,shifts:next.length===0?['all']:next}})}
+                      }} style={{padding:'9px 8px',borderRadius:9,border:`1.5px solid ${active?'var(--espresso)':'var(--border)'}`,background:active?'var(--espresso)':'var(--surface)',cursor:'pointer',textAlign:'center',transition:'all .15s'}}>
                         <div style={{fontSize:16,marginBottom:3}}>{sh.icon}</div>
                         <div style={{fontSize:10,fontWeight:700,color:active?'var(--cream)':'var(--text-muted)'}}>{sh.label}</div>
-                        {sh.time&&<div style={{fontSize:8,color:active?'var(--matcha-light)':'var(--border)',marginTop:2}}>{sh.time}</div>}
                       </div>
                     )
                   })}
                 </div>
-                {!form.shifts.includes('all') && (
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:5}}>
-                    Only blocked for: {form.shifts.map(s=>s==='am'?'AM':s==='mid'?'Mid':'PM').join(', ')} shift{form.shifts.length!==1?'s':''}
-                  </div>
-                )}
               </div>
-
-              <div style={{marginBottom:14}}>
-                <label style={lStyle}>Reason / Notes</label>
-                <textarea style={{...iStyle,resize:'vertical',minHeight:70,lineHeight:1.5}} value={form.reason} onChange={fv('reason')} placeholder="Optional — medical certificate, personal reason, etc." />
-              </div>
-
+              <div style={{marginBottom:14}}><label style={lStyle}>Reason / Notes</label><textarea style={{...iStyle,resize:'vertical',minHeight:70,lineHeight:1.5}} value={form.reason} onChange={fv('reason')} placeholder="Optional"/></div>
               <div style={{marginBottom:20}}>
                 <label style={lStyle}>Submitted By</label>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
                   {[['alex','Alex (MD)','#7ab648'],['cj','CJ (CEO)','#4a90c4']].map(([val,label,color])=>(
-                    <div key={val} onClick={()=>setForm(prev=>({...prev,submitted_by:val}))}
+                    <div key={val} onClick={()=>setForm(p=>({...p,submitted_by:val}))}
                       style={{padding:'9px 12px',borderRadius:9,border:`1.5px solid ${form.submitted_by===val?color:'var(--border)'}`,background:form.submitted_by===val?color+'22':'var(--surface)',cursor:'pointer',textAlign:'center',fontSize:12,fontWeight:600,color:form.submitted_by===val?color:'var(--text-muted)',transition:'all .15s'}}>
                       {label}
                     </div>
                   ))}
                 </div>
               </div>
-
               <div style={{display:'flex',gap:9}}>
                 <button className="btn btn-secondary" onClick={()=>setView('list')}>Cancel</button>
-                <button className="btn btn-primary" style={{flex:1}} onClick={submitRequest} disabled={saving}>
-                  {saving?'Submitting…':'✓ Submit Request'}
-                </button>
+                <button className="btn btn-primary" style={{flex:1}} onClick={submitRequest} disabled={saving}>{saving?'Submitting…':'✓ Submit Request'}</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* ── LIST ── */}
-        {view==='list' && <>
-          {/* Filters */}
+        {view==='list'&&<>
           <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap',alignItems:'center'}}>
             <div style={{display:'flex',gap:6}}>
               {['all','pending','approved','rejected'].map(s=>(
@@ -272,101 +192,58 @@ export default function LeavePage() {
               {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
             </select>
           </div>
-
-          {/* Pending banner */}
-          {pendingCount > 0 && (
+          {pendingCount>0&&(
             <div style={{background:'#fef3e2',border:'1px solid #d4a84366',borderRadius:10,padding:'12px 16px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
               <span style={{fontSize:18}}>⏳</span>
-              <span style={{fontSize:13,fontWeight:600,color:'#a06000'}}>{pendingCount} request{pendingCount!==1?'s':''} pending your approval</span>
-              <button onClick={()=>setFilterStatus('pending')} style={{marginLeft:'auto',background:'#a06000',color:'white',border:'none',borderRadius:7,padding:'5px 12px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                Review Now
-              </button>
+              <span style={{fontSize:13,fontWeight:600,color:'#a06000'}}>{pendingCount} request{pendingCount!==1?'s':''} pending approval</span>
+              <button onClick={()=>setFilterStatus('pending')} style={{marginLeft:'auto',background:'#a06000',color:'white',border:'none',borderRadius:7,padding:'5px 12px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Review Now</button>
             </div>
           )}
-
-          {loading ? (
-            <div style={{textAlign:'center',padding:'60px 0',color:'var(--text-muted)'}}>Loading requests…</div>
-          ) : filtered.length === 0 ? (
-            <div style={{textAlign:'center',padding:'60px 0'}}>
+          {loading?<div style={{textAlign:'center',padding:'40px',color:'var(--text-muted)'}}>Loading…</div>:filtered.length===0?(
+            <div style={{textAlign:'center',padding:'60px',background:'var(--white)',border:'1px solid var(--border)',borderRadius:13}}>
               <div style={{fontSize:40,marginBottom:12}}>📋</div>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:16,fontWeight:700,marginBottom:6}}>No requests yet</div>
-              <button className="btn btn-primary" onClick={()=>setView('form')}>+ Submit First Request</button>
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:16,fontWeight:700}}>No requests yet</div>
             </div>
-          ) : (
+          ):(
             <div style={{display:'flex',flexDirection:'column',gap:10}}>
-              {filtered.map(r => {
-                const lt = LEAVE_TYPES.find(x=>x.id===r.leave_type) || LEAVE_TYPES[0]
-                const ss = STATUS_STYLES[r.status] || STATUS_STYLES.pending
-                const s = r.staff
-                const days = r.date_from && r.date_to ? countDays(r.date_from, r.date_to) : 1
-                return (
+              {filtered.map(r=>{
+                const lt=LEAVE_TYPES.find(x=>x.id===r.leave_type)||LEAVE_TYPES[0]
+                const ss=STATUS_STYLES[r.status]||STATUS_STYLES.pending
+                const s=r.staff
+                const days=r.date_from&&r.date_to?countDays(r.date_from,r.date_to):1
+                return(
                   <div key={r.id} style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 18px',borderLeft:`4px solid ${lt.color}`}}>
                     <div style={{display:'flex',alignItems:'flex-start',gap:14}}>
-                      {/* Staff */}
                       <div style={{display:'flex',alignItems:'center',gap:10,minWidth:180}}>
-                        <div style={{width:36,height:36,borderRadius:'50%',background:getRoleColor(s?.role||''),display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'white',flexShrink:0}}>
-                          {initials(s?.first_name||'',s?.last_name||'')}
-                        </div>
+                        <div style={{width:36,height:36,borderRadius:'50%',background:getRoleColor(s?.role||''),display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'white',flexShrink:0}}>{initials(s?.first_name||'',s?.last_name||'')}</div>
                         <div>
                           <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700}}>{s?.first_name} {s?.last_name}</div>
                           {s?.nickname&&<div style={{fontSize:10,color:'var(--text-muted)'}}>"{s.nickname}"</div>}
                         </div>
                       </div>
-
-                      {/* Leave type */}
                       <div style={{flex:1}}>
                         <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:5}}>
                           <span style={{fontSize:14}}>{lt.icon}</span>
                           <span style={{fontSize:12,fontWeight:700,color:lt.color}}>{lt.label}</span>
                           <span style={{fontSize:10,fontFamily:"'DM Mono',monospace",color:'var(--text-muted)'}}>· {days} day{days!==1?'s':''}</span>
                         </div>
-                        <div style={{fontSize:12,color:'var(--espresso)',fontWeight:600}}>
-                          {fmtDate(r.date_from)}{r.date_from!==r.date_to?` → ${fmtDate(r.date_to)}`:''}
-                        </div>
-                        {/* Shift badges */}
-                        {r.shifts && r.shifts.length > 0 && !(r.shifts.length===3) && (
-                          <div style={{display:'flex',gap:5,marginTop:4,flexWrap:'wrap'}}>
-                            {r.shifts.map(sh=>(
-                              <span key={sh} style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:6,
-                                background:sh==='am'?'#eef7e4':sh==='mid'?'#fef3e2':'#e8f0fb',
-                                color:sh==='am'?'#4a7a1e':sh==='mid'?'#a06000':'#2d5a8a'}}>
-                                {sh==='am'?'AM Shift':sh==='mid'?'Mid Shift':'PM Shift'}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                        <div style={{fontSize:12,color:'var(--espresso)',fontWeight:600}}>{fmtDate(r.date_from)}{r.date_from!==r.date_to?' → '+fmtDate(r.date_to):''}</div>
                         {r.reason&&<div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>{r.reason}</div>}
-                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Submitted by {r.submitted_by==='alex'?'Alex':'CJ'} · {fmtDate(r.created_at)}</div>
+                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Submitted by {r.submitted_by==='alex'?'Alex':'CJ'}</div>
                         {r.approved_by&&<div style={{fontSize:10,color:'var(--text-muted)'}}>{r.status==='approved'?'Approved':'Rejected'} by {r.approved_by==='alex'?'Alex':'CJ'}</div>}
                       </div>
-
-                      {/* Status + actions */}
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8,flexShrink:0}}>
-                        <span style={{fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:8,background:ss.bg,color:ss.color,border:`1px solid ${ss.border}`}}>
-                          {ss.label}
-                        </span>
-                        {r.status==='pending' && (
+                        <span style={{fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:8,background:ss.bg,color:ss.color,border:`1px solid ${ss.border}`}}>{ss.label}</span>
+                        {r.status==='pending'&&(
                           <div style={{display:'flex',gap:6}}>
                             <button onClick={()=>updateStatus(r.id,'approved','alex')}
-                              style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:7,padding:'5px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                              ✓ Approve
-                            </button>
+                              style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:7,padding:'5px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>✓ Approve</button>
                             <button onClick={()=>updateStatus(r.id,'rejected','alex')}
-                              style={{background:'transparent',color:'#c0392b',border:'1px solid #f5c6c6',borderRadius:7,padding:'5px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                              ✕ Reject
-                            </button>
+                              style={{background:'transparent',color:'#c0392b',border:'1px solid #f5c6c6',borderRadius:7,padding:'5px 11px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>✕ Reject</button>
                           </div>
                         )}
-                        {r.status!=='pending' && (
-                          <button onClick={()=>updateStatus(r.id,'pending',null)}
-                            style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:7,padding:'4px 9px',fontSize:10,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                            Undo
-                          </button>
-                        )}
-                        <button onClick={()=>deleteRequest(r.id)}
-                          style={{background:'transparent',color:'var(--text-muted)',border:'none',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                          🗑
-                        </button>
+                        {r.status!=='pending'&&<button onClick={()=>updateStatus(r.id,'pending',null)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:7,padding:'4px 9px',fontSize:10,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Undo</button>}
+                        <button onClick={()=>deleteRequest(r.id)} style={{background:'transparent',color:'var(--text-muted)',border:'none',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑</button>
                       </div>
                     </div>
                   </div>
@@ -376,12 +253,7 @@ export default function LeavePage() {
           )}
         </>}
       </div>
-
-      {toast&&(
-        <div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}>
-          <span>{toast.icon}</span><span>{toast.msg}</span>
-        </div>
-      )}
+      {toast&&<div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}><span>{toast.icon}</span><span>{toast.msg}</span></div>}
     </AuthShell>
   )
 }
