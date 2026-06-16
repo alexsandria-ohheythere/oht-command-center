@@ -5,7 +5,6 @@ export const dynamic = 'force-dynamic'
 // Place at: app/staff/[id]/page.js
 // ─────────────────────────────────────────────
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
 import AuthShell from '../../../components/AuthShell'
 import { createClient } from '../../../lib/supabase'
 
@@ -48,8 +47,8 @@ function Grid({ children, cols=2 }) {
   )
 }
 
-export default function StaffProfilePage() {
-  const { id } = useParams()
+export default function StaffProfilePage({ params }) {
+  const id = params?.id
   const [staff, setStaff]         = useState(null)
   const [contracts, setContracts] = useState([])
   const [files, setFiles]         = useState([])
@@ -100,25 +99,19 @@ export default function StaffProfilePage() {
   )
 
   const roleColor = getRoleColor(staff.role)
-  const totalShifts = schedules.length
   const shiftsThisMonth = schedules.filter(s => {
     const d = new Date(s.shift_date)
     const now = new Date()
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
   }).length
-
   const latestPayroll = payroll[0]
   const pendingContracts = contracts.filter(c => c.status === 'pending_signature').length
-  const activeContracts  = contracts.filter(c => c.status === 'active').length
 
   return (
     <AuthShell>
-      {/* Topbar */}
       <div className="topbar">
         <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <a href="/staff" style={{ color:'var(--text-muted)', fontSize:13, textDecoration:'none', display:'flex', alignItems:'center', gap:4 }}>
-            ← Staff
-          </a>
+          <a href="/staff" style={{ color:'var(--text-muted)', fontSize:13, textDecoration:'none' }}>← Staff</a>
           <span style={{ color:'var(--border)' }}>/</span>
           <span style={{ fontSize:13, fontWeight:600 }}>{staff.first_name} {staff.last_name}</span>
         </div>
@@ -148,8 +141,6 @@ export default function StaffProfilePage() {
               {staff.phone && <span style={{ fontSize:12, color:'var(--text-muted)' }}>📱 {staff.phone}</span>}
             </div>
           </div>
-
-          {/* Quick stats */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, minWidth:300 }}>
             {[
               { label:'Shifts this month', value: shiftsThisMonth },
@@ -165,7 +156,7 @@ export default function StaffProfilePage() {
         </div>
 
         {/* Tabs */}
-        <div style={{ display:'flex', gap:4, marginBottom:16, borderBottom:'1px solid var(--border)', paddingBottom:0 }}>
+        <div style={{ display:'flex', gap:4, marginBottom:16, borderBottom:'1px solid var(--border)' }}>
           {TABS.map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)}
               style={{ padding:'8px 16px', fontSize:12, fontWeight: activeTab===tab?700:400, border:'none', background:'transparent', cursor:'pointer', color: activeTab===tab?'var(--text-primary)':'var(--text-muted)', borderBottom: activeTab===tab?'2px solid #EF4576':'2px solid transparent', fontFamily:"'DM Sans',sans-serif", textTransform:'capitalize', marginBottom:-1 }}>
@@ -174,7 +165,7 @@ export default function StaffProfilePage() {
           ))}
         </div>
 
-        {/* ── OVERVIEW ── */}
+        {/* OVERVIEW */}
         {activeTab === 'overview' && (
           <div>
             <Grid>
@@ -182,7 +173,7 @@ export default function StaffProfilePage() {
                 <Field label="Role" value={staff.role} />
                 <Field label="Employment type" value={staff.employment_type} />
                 <Field label="Status" value={staff.status} />
-                <Field label="Min shifts / week" value={staff.min_shifts_per_week || '—'} />
+                <Field label="Min shifts / week" value={staff.min_shifts_per_week} />
                 <Field label="Hours assigned" value={staff.hours_assigned} />
               </Section>
               <Section title="Compensation">
@@ -209,7 +200,7 @@ export default function StaffProfilePage() {
           </div>
         )}
 
-        {/* ── PERSONAL ── */}
+        {/* PERSONAL */}
         {activeTab === 'personal' && (
           <div>
             <Grid>
@@ -260,7 +251,7 @@ export default function StaffProfilePage() {
           </div>
         )}
 
-        {/* ── PAYROLL ── */}
+        {/* PAYROLL */}
         {activeTab === 'payroll' && (
           <Section title="Payroll history">
             {payroll.length === 0 ? (
@@ -294,7 +285,7 @@ export default function StaffProfilePage() {
           </Section>
         )}
 
-        {/* ── CONTRACTS ── */}
+        {/* CONTRACTS */}
         {activeTab === 'contracts' && (
           <Section title="Contracts">
             {contracts.length === 0 ? (
@@ -320,7 +311,7 @@ export default function StaffProfilePage() {
           </Section>
         )}
 
-        {/* ── FILES ── */}
+        {/* FILES */}
         {activeTab === 'files' && (
           <Section title="Files · 201">
             {files.length === 0 ? (
@@ -336,9 +327,7 @@ export default function StaffProfilePage() {
                     </div>
                     {f.file_url && (
                       <a href={f.file_url} target="_blank" rel="noreferrer"
-                        style={{ fontSize:11, color:'#4a90c4', fontWeight:600, textDecoration:'none' }}>
-                        View →
-                      </a>
+                        style={{ fontSize:11, color:'#4a90c4', fontWeight:600, textDecoration:'none' }}>View →</a>
                     )}
                   </div>
                 ))}
@@ -347,7 +336,7 @@ export default function StaffProfilePage() {
           </Section>
         )}
 
-        {/* ── SCHEDULE ── */}
+        {/* SCHEDULE */}
         {activeTab === 'schedule' && (
           <Section title="Recent shifts">
             {schedules.length === 0 ? (
