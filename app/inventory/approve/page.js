@@ -210,7 +210,12 @@ export default function CJApprovalPage() {
 
   useEffect(() => {
     const sb = createClient()
-    sb.auth.getUser().then(({ data }) => { setSupervisorId(data.user?.id ?? null); load() })
+    sb.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) return
+      const { data: staff } = await sb.from('staff').select('id').eq('email', session.user.email).single()
+      setSupervisorId(staff?.id ?? session.user.id)
+      load()
+    })
   }, [])
 
   const totalPendingValue = pending.reduce((s, l) => s + (l.est_total ?? 0), 0)
