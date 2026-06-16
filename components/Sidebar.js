@@ -14,7 +14,7 @@ export default function Sidebar({ user, userRole, onClose }) {
   const router   = useRouter()
   const pathname = usePathname()
   const role     = userRole?.role || 'staff'
-  const [navOverrides, setNavOverrides] = useState({}) // { [id]: { label, hidden } }
+  const [navOverrides, setNavOverrides] = useState({})
 
   useEffect(() => {
     const supabase = createClient()
@@ -50,36 +50,39 @@ export default function Sidebar({ user, userRole, onClose }) {
 
   const NAV_BASE = [
     { type:'section', label:'Overview' },
-    { type:'link', id:'dashboard',  href:'/dashboard',          icon:'🏠', label:'Dashboard',           show: true },
+    { type:'link', id:'dashboard',        href:'/dashboard',              icon:'🏠', label:'Dashboard',           show: true },
 
     { type:'section', label:'Operations' },
-    { type:'link', id:'schedule',   href:'/schedule',           icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
-    { type:'link', id:'tasks',      href:'/tasks',              icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
-    { type:'link', id:'leave',      href:'/leave',              icon:'🗓️', label:'Leave & Unavail.',     show: can(role,'leaveReview') },
-    { type:'link', id:'roles',      href:'/roles',              icon:'📝', label:'Role Tasks',            show: can(role,'roles') },
-    { type:'link', id:'checkin',    href:'/checkin',            icon:'✔️', label:'Daily Check-In',        show: can(role,'checkin') },
-    { type:'link', id:'payroll',    href:'/payroll',            icon:'💸', label:'Payroll',               show: can(role,'payrollUpload') },
-    { type:'link', id:'staff',      href:'/staff',              icon:'👥', label:'Staff',                 show: can(role,'staffView') },
+    { type:'link', id:'schedule',         href:'/schedule',               icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
+    { type:'link', id:'tasks',            href:'/tasks',                  icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
+    { type:'link', id:'leave',            href:'/leave',                  icon:'🗓️', label:'Leave & Unavail.',     show: can(role,'leaveReview') },
+    { type:'link', id:'roles',            href:'/roles',                  icon:'📝', label:'Role Tasks',           show: can(role,'roles') },
+    { type:'link', id:'checkin',          href:'/checkin',                icon:'✔️', label:'Daily Check-In',       show: can(role,'checkin') },
+    { type:'link', id:'payroll',          href:'/payroll',                icon:'💸', label:'Payroll',              show: can(role,'payrollUpload') },
+    { type:'link', id:'staff',            href:'/staff',                  icon:'👥', label:'Staff',                show: can(role,'staffView') },
+
+    { type:'section', label:'Inventory' },
+    { type:'link', id:'inv-support',      href:'/inventory/support',      icon:'🛒', label:'Purchase Queue',       show: can(role,'admin') },
+    { type:'link', id:'inv-approve',      href:'/inventory/approve',      icon:'✅', label:'Purchase Approvals',   show: can(role,'admin') },
 
     { type:'section', label:'Documents', show: can(role,'admin') },
-    { type:'link', id:'contracts',  href:'/contracts',          icon:'📄', label:'Contracts',             show: can(role,'admin') },
-    { type:'link', id:'files',      href:'/files',              icon:'📁', label:'Files · 201',           show: can(role,'admin') },
+    { type:'link', id:'contracts',        href:'/contracts',              icon:'📄', label:'Contracts',            show: can(role,'admin') },
+    { type:'link', id:'files',            href:'/files',                  icon:'📁', label:'Files · 201',          show: can(role,'admin') },
 
     { type:'section', label:'Finance', show: can(role,'finance') },
-    { type:'link', id:'finance',    href:'/finance',            icon:'📊', label:'Financial Statement',   show: can(role,'finance') },
-    { type:'link', id:'sales',      href:'/finance/sales',      icon:'💰', label:'Sales',                 show: can(role,'finance') },
-    { type:'link', id:'expenses',   href:'/finance/expenses',   icon:'🧾', label:'Expenses',              show: can(role,'finance') },
-    { type:'link', id:'forecast',   href:'/finance/forecast',   icon:'📈', label:'Forecast',              show: can(role,'finance') },
-    { type:'link', id:'bank',       href:'/finance/bank',       icon:'🏦', label:'Bank Records',          show: can(role,'finance') },
+    { type:'link', id:'finance',          href:'/finance',                icon:'📊', label:'Financial Statement',  show: can(role,'finance') },
+    { type:'link', id:'sales',            href:'/finance/sales',          icon:'💰', label:'Sales',                show: can(role,'finance') },
+    { type:'link', id:'expenses',         href:'/finance/expenses',       icon:'🧾', label:'Expenses',             show: can(role,'finance') },
+    { type:'link', id:'forecast',         href:'/finance/forecast',       icon:'📈', label:'Forecast',             show: can(role,'finance') },
+    { type:'link', id:'bank',             href:'/finance/bank',           icon:'🏦', label:'Bank Records',         show: can(role,'finance') },
 
     { type:'section', label:'Comms' },
-    { type:'link', id:'announce',   href:'/announce',           icon:'📣', label:'Announcements',         show: can(role,'announcements') },
+    { type:'link', id:'announce',         href:'/announce',               icon:'📣', label:'Announcements',        show: can(role,'announcements') },
 
     { type:'section', label:'Admin', show: can(role,'settings') },
-    { type:'link', id:'settings',   href:'/settings',           icon:'⚙️', label:'Settings',              show: can(role,'settings') },
+    { type:'link', id:'settings',         href:'/settings',               icon:'⚙️', label:'Settings',             show: can(role,'settings') },
   ]
 
-  // Apply label renames and hidden flags from Settings
   const NAV = NAV_BASE.map(item => {
     if (item.type !== 'link' || !item.id) return item
     const override = navOverrides[item.id]
