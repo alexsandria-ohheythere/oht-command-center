@@ -1,24 +1,16 @@
 'use client'
 export const dynamic = 'force-dynamic'
-// ─────────────────────────────────────────────
-// OHT Admin — Inventory / CJ Approval View
-// Place at: app/inventory/approve/page.js
-// ─────────────────────────────────────────────
 import { useState, useEffect, useCallback } from 'react'
+import AuthShell from '../../../components/AuthShell'
 import { createClient } from '../../../lib/supabase'
-import {
-  getPurchaseLists,
-  supervisorApproveList,
-  supervisorRejectList,
-  markListPurchased,
-} from '../../../lib/inventory'
+import { getPurchaseLists, supervisorApproveList, supervisorRejectList, markListPurchased } from '../../../lib/inventory'
 
 const LIST_STATUS_STYLE = {
-  pending_supervisor: 'bg-amber-100 text-amber-700',
-  approved:           'bg-green-100 text-green-700',
-  rejected:           'bg-red-100 text-red-700',
-  purchased:          'bg-teal-100 text-teal-700',
-  closed:             'bg-gray-100 text-gray-600',
+  pending_supervisor: { bg:'#fef3c7', color:'#92400e' },
+  approved:           { bg:'#dcfce7', color:'#166534' },
+  rejected:           { bg:'#fee2e2', color:'#991b1b' },
+  purchased:          { bg:'#ccfbf1', color:'#065f46' },
+  closed:             { bg:'#f3f4f6', color:'#4b5563' },
 }
 const LIST_STATUS_LABEL = {
   pending_supervisor: 'Awaiting approval',
@@ -31,7 +23,7 @@ const LIST_STATUS_LABEL = {
 function Toast({ msg, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t) }, [])
   return (
-    <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${type === 'error' ? 'bg-red-600' : 'bg-gray-900'}`}>
+    <div style={{ position:'fixed', bottom:24, right:24, zIndex:9999, padding:'12px 18px', borderRadius:12, background:type==='error'?'#dc2626':'#111', color:'white', fontSize:13, fontWeight:500, boxShadow:'0 4px 20px rgba(0,0,0,.2)' }}>
       {msg}
     </div>
   )
@@ -56,94 +48,74 @@ function PurchaseListCard({ list, supervisorId, onAction, showToast }) {
 
   const handleApprove = async () => {
     setLoading(true)
-    try {
-      await supervisorApproveList(list.id, supervisorId, notes || undefined)
-      showToast(`${list.list_number} approved — support dispatched`)
-      onAction()
-    } catch (e) { showToast(e.message, 'error') }
+    try { await supervisorApproveList(list.id, supervisorId, notes || undefined); showToast(`${list.list_number} approved — support dispatched`); onAction() }
+    catch (e) { showToast(e.message, 'error') }
     finally { setLoading(false) }
   }
 
   const handleReject = async () => {
     if (!rejectReason.trim()) return showToast('Add a reason', 'error')
     setLoading(true)
-    try {
-      await supervisorRejectList(list.id, supervisorId, rejectReason.trim())
-      showToast(`${list.list_number} returned to support`)
-      onAction()
-    } catch (e) { showToast(e.message, 'error') }
+    try { await supervisorRejectList(list.id, supervisorId, rejectReason.trim()); showToast(`${list.list_number} returned to support`); onAction() }
+    catch (e) { showToast(e.message, 'error') }
     finally { setLoading(false) }
   }
 
   const handleMarkPurchased = async () => {
     if (!actualTotal) return showToast('Enter the actual total spent', 'error')
     setLoading(true)
-    try {
-      await markListPurchased(list.id, supervisorId, parseFloat(actualTotal))
-      showToast(`${list.list_number} marked as purchased`)
-      onAction()
-    } catch (e) { showToast(e.message, 'error') }
+    try { await markListPurchased(list.id, supervisorId, parseFloat(actualTotal)); showToast(`${list.list_number} marked as purchased`); onAction() }
+    catch (e) { showToast(e.message, 'error') }
     finally { setLoading(false) }
   }
 
   const variance = list.actual_total != null && list.est_total != null
-    ? ((list.actual_total - list.est_total) / list.est_total) * 100
-    : null
+    ? ((list.actual_total - list.est_total) / list.est_total) * 100 : null
+
+  const st = LIST_STATUS_STYLE[list.status] ?? LIST_STATUS_STYLE.closed
 
   return (
-    <div className={`bg-white border rounded-xl overflow-hidden ${list.status === 'pending_supervisor' ? 'border-amber-300 shadow-sm' : 'border-gray-200'}`}>
-      <div className="flex items-center justify-between p-4 cursor-pointer" onClick={() => setExpanded(v => !v)}>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-mono text-gray-400">{list.list_number}</span>
-            <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${LIST_STATUS_STYLE[list.status]}`}>
-              {LIST_STATUS_LABEL[list.status]}
-            </span>
+    <div style={{ background:'white', border: list.status==='pending_supervisor' ? '1px solid #fbbf24' : '1px solid #e5e7eb', borderRadius:12, overflow:'hidden', marginBottom:12 }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px', cursor:'pointer' }} onClick={() => setExpanded(v => !v)}>
+        <div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+            <span style={{ fontSize:11, fontFamily:'monospace', color:'#9ca3af' }}>{list.list_number}</span>
+            <span style={{ padding:'2px 10px', borderRadius:20, fontSize:11, fontWeight:600, background:st.bg, color:st.color }}>{LIST_STATUS_LABEL[list.status]}</span>
           </div>
-          <p className="text-sm font-medium text-gray-900 mt-0.5">{list.title}</p>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <p style={{ fontSize:14, fontWeight:600, color:'#111', margin:'3px 0 0' }}>{list.title}</p>
+          <p style={{ fontSize:12, color:'#9ca3af', margin:'2px 0 0' }}>
             {list.items?.length ?? 0} items
-            {list.est_total != null && ` · Est. ₱ ${list.est_total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
+            {list.est_total != null && ` · Est. ₱ ${list.est_total.toLocaleString('en-PH',{minimumFractionDigits:2})}`}
           </p>
         </div>
-        <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
+        <span style={{ color:'#9ca3af', fontSize:12 }}>{expanded ? '▲' : '▼'}</span>
       </div>
 
       {expanded && (
-        <div className="border-t border-gray-100 space-y-4 p-4">
-          {list.supervisor_notes && (
-            <div className="text-xs bg-gray-50 rounded-lg px-3 py-2 text-gray-500 italic">"{list.supervisor_notes}"</div>
-          )}
+        <div style={{ borderTop:'1px solid #f3f4f6', padding:'12px 16px' }}>
+          {list.supervisor_notes && <p style={{ fontSize:12, color:'#6b7280', fontStyle:'italic', background:'#f9fafb', borderRadius:8, padding:'8px 12px', marginBottom:12 }}>"{list.supervisor_notes}"</p>}
 
-          <div className="rounded-lg border border-gray-100 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  {['Item', 'Qty', 'Store', 'Requested by', 'Est.'].map(h => (
-                    <th key={h} className={`px-3 py-2 text-xs font-medium text-gray-500 ${h === 'Est.' ? 'text-right' : 'text-left'}`}>{h}</th>
-                  ))}
-                </tr>
+          <div style={{ border:'1px solid #f3f4f6', borderRadius:10, overflow:'hidden', marginBottom:12 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+              <thead style={{ background:'#f9fafb', borderBottom:'1px solid #f3f4f6' }}>
+                <tr>{['Item','Qty','Store','Requested by','Est.'].map(h => <th key={h} style={{ textAlign:h==='Est.'?'right':'left', padding:'8px 12px', fontSize:11, fontWeight:600, color:'#6b7280' }}>{h}</th>)}</tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody>
                 {list.items?.map(item => (
-                  <tr key={item.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2.5 font-medium text-gray-800">{item.item_name}</td>
-                    <td className="px-3 py-2.5 text-gray-500">{item.quantity} {item.unit}</td>
-                    <td className="px-3 py-2.5 text-gray-500 text-xs">{item.preferred_store ?? '—'}</td>
-                    <td className="px-3 py-2.5 text-gray-400 text-xs">{item.requested_by_name ?? '—'}</td>
-                    <td className="px-3 py-2.5 text-right text-gray-700">
-                      {item.est_total != null ? `₱ ${item.est_total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}
-                    </td>
+                  <tr key={item.id} style={{ borderBottom:'1px solid #f9fafb' }}>
+                    <td style={{ padding:'8px 12px', fontWeight:600, color:'#1f2937' }}>{item.item_name}</td>
+                    <td style={{ padding:'8px 12px', color:'#6b7280' }}>{item.quantity} {item.unit}</td>
+                    <td style={{ padding:'8px 12px', color:'#6b7280', fontSize:11 }}>{item.preferred_store ?? '—'}</td>
+                    <td style={{ padding:'8px 12px', color:'#9ca3af', fontSize:11 }}>{item.requested_by_name ?? '—'}</td>
+                    <td style={{ padding:'8px 12px', textAlign:'right', color:'#374151' }}>{item.est_total != null ? `₱ ${item.est_total.toLocaleString('en-PH',{minimumFractionDigits:2})}` : '—'}</td>
                   </tr>
                 ))}
               </tbody>
               {list.est_total != null && (
-                <tfoot className="border-t border-gray-100 bg-gray-50">
+                <tfoot style={{ borderTop:'1px solid #e5e7eb', background:'#f9fafb' }}>
                   <tr>
-                    <td colSpan={4} className="px-3 py-2 text-sm font-medium text-gray-700">Total</td>
-                    <td className="px-3 py-2 text-right font-semibold text-gray-900">
-                      ₱ {list.est_total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                    </td>
+                    <td colSpan={4} style={{ padding:'8px 12px', fontWeight:600, color:'#374151' }}>Total</td>
+                    <td style={{ padding:'8px 12px', textAlign:'right', fontWeight:700 }}>₱ {list.est_total.toLocaleString('en-PH',{minimumFractionDigits:2})}</td>
                   </tr>
                 </tfoot>
               )}
@@ -151,60 +123,42 @@ function PurchaseListCard({ list, supervisorId, onAction, showToast }) {
           </div>
 
           {list.status === 'purchased' && list.actual_total != null && (
-            <div className="flex items-center justify-between bg-teal-50 rounded-lg px-4 py-3">
-              <span className="text-sm text-teal-800">
-                Actual spent: <strong>₱ {list.actual_total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong>
-              </span>
-              {variance != null && (
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${Math.abs(variance) < 5 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                  {variance > 0 ? '+' : ''}{variance.toFixed(1)}% vs estimate
-                </span>
-              )}
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:'#f0fdf4', borderRadius:10, padding:'10px 14px', marginBottom:12 }}>
+              <span style={{ fontSize:13, color:'#166534' }}>Actual spent: <strong>₱ {list.actual_total.toLocaleString('en-PH',{minimumFractionDigits:2})}</strong></span>
+              {variance != null && <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:20, background: Math.abs(variance)<5?'#dcfce7':'#fef3c7', color: Math.abs(variance)<5?'#166534':'#92400e' }}>{variance>0?'+':''}{variance.toFixed(1)}% vs estimate</span>}
             </div>
           )}
 
           {list.status === 'pending_supervisor' && !showReject && (
-            <div className="space-y-1">
-              <label className="text-xs text-gray-500">Note for support (optional)</label>
-              <input type="text" value={notes} onChange={e => setNotes(e.target.value)}
-                placeholder="Any reminders before they go..."
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
+            <div style={{ marginBottom:12 }}>
+              <label style={{ fontSize:11, color:'#6b7280' }}>Note for support (optional)</label>
+              <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any reminders before they go..."
+                style={{ width:'100%', border:'1px solid #e5e7eb', borderRadius:8, padding:'8px 12px', fontSize:13, outline:'none', boxSizing:'border-box', marginTop:4 }} />
             </div>
           )}
 
           {showReject && (
-            <div className="space-y-2">
-              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
-                rows={2} placeholder="Reason for returning to support…"
-                className="w-full border border-red-200 rounded-lg px-3 py-2 text-sm focus:outline-none resize-none"
-              />
-              <div className="flex gap-2 justify-end">
-                <button onClick={() => setShowReject(false)}
-                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
-                <button onClick={handleReject} disabled={loading}
-                  className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50">
-                  Return to support
-                </button>
+            <div style={{ marginBottom:12 }}>
+              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={2} placeholder="Reason for returning to support…"
+                style={{ width:'100%', border:'1px solid #fca5a5', borderRadius:8, padding:'8px 12px', fontSize:13, outline:'none', resize:'none', boxSizing:'border-box' }} />
+              <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+                <button onClick={() => setShowReject(false)} style={{ padding:'6px 14px', fontSize:12, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer' }}>Cancel</button>
+                <button onClick={handleReject} disabled={loading} style={{ padding:'6px 14px', fontSize:12, border:'none', borderRadius:8, background:'#dc2626', color:'white', cursor:'pointer', opacity:loading?0.5:1 }}>Return to support</button>
               </div>
             </div>
           )}
 
           {showPurchased && (
-            <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 space-y-2">
-              <p className="text-sm font-medium text-teal-800">Mark as purchased</p>
-              <div className="flex items-center border border-teal-300 rounded-lg overflow-hidden bg-white">
-                <span className="px-3 text-sm text-gray-500 bg-gray-50 border-r border-teal-200 py-2">₱</span>
-                <input type="number" value={actualTotal} onChange={e => setActualTotal(e.target.value)}
-                  placeholder="Actual total spent"
-                  className="flex-1 px-3 py-2 text-sm focus:outline-none"
-                />
+            <div style={{ background:'#f0fdf4', border:'1px solid #86efac', borderRadius:10, padding:12, marginBottom:12 }}>
+              <p style={{ fontSize:13, fontWeight:600, color:'#166534', marginBottom:8 }}>Mark as purchased</p>
+              <div style={{ display:'flex', border:'1px solid #86efac', borderRadius:8, overflow:'hidden', background:'white' }}>
+                <span style={{ padding:'8px 12px', background:'#f9fafb', fontSize:13, color:'#6b7280', borderRight:'1px solid #86efac' }}>₱</span>
+                <input type="number" value={actualTotal} onChange={e => setActualTotal(e.target.value)} placeholder="Actual total spent"
+                  style={{ flex:1, border:'none', padding:'8px 12px', fontSize:13, outline:'none' }} />
               </div>
-              <div className="flex gap-2 justify-end">
-                <button onClick={() => setShowPurchased(false)}
-                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
-                <button onClick={handleMarkPurchased} disabled={loading}
-                  className="px-3 py-1.5 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50">
+              <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+                <button onClick={() => setShowPurchased(false)} style={{ padding:'6px 14px', fontSize:12, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer' }}>Cancel</button>
+                <button onClick={handleMarkPurchased} disabled={loading} style={{ padding:'6px 14px', fontSize:12, border:'none', borderRadius:8, background:'#16a34a', color:'white', cursor:'pointer', opacity:loading?0.5:1 }}>
                   {loading ? 'Saving…' : 'Confirm purchased'}
                 </button>
               </div>
@@ -212,22 +166,17 @@ function PurchaseListCard({ list, supervisorId, onAction, showToast }) {
           )}
 
           {!showReject && !showPurchased && (
-            <div className="flex justify-end gap-2">
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
               {list.status === 'pending_supervisor' && (
                 <>
-                  <button onClick={() => setShowReject(true)}
-                    className="px-3 py-1.5 text-xs border border-red-200 text-red-600 rounded-lg hover:bg-red-50">
-                    ✕ Return to support
-                  </button>
-                  <button onClick={handleApprove} disabled={loading}
-                    className="px-4 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium">
+                  <button onClick={() => setShowReject(true)} style={{ padding:'7px 14px', fontSize:12, border:'1px solid #fca5a5', borderRadius:8, background:'white', color:'#dc2626', cursor:'pointer' }}>✕ Return to support</button>
+                  <button onClick={handleApprove} disabled={loading} style={{ padding:'7px 16px', fontSize:12, fontWeight:600, border:'none', borderRadius:8, background:'#16a34a', color:'white', cursor:'pointer', opacity:loading?0.5:1 }}>
                     {loading ? 'Approving…' : '✓ Approve — dispatch support'}
                   </button>
                 </>
               )}
               {list.status === 'approved' && (
-                <button onClick={() => setShowPurchased(true)}
-                  className="px-4 py-1.5 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium">
+                <button onClick={() => setShowPurchased(true)} style={{ padding:'7px 16px', fontSize:12, fontWeight:600, border:'none', borderRadius:8, background:'#0d9488', color:'white', cursor:'pointer' }}>
                   Mark as purchased
                 </button>
               )}
@@ -248,75 +197,76 @@ export default function CJApprovalPage() {
   const { show: showToast, el: toastEl } = useToast()
 
   const load = useCallback(async () => {
-    const [pend, appr, hist] = await Promise.all([
-      getPurchaseLists(['pending_supervisor']),
-      getPurchaseLists(['approved']),
-      getPurchaseLists(['purchased', 'closed']),
-    ])
-    setPending(pend)
-    setApproved(appr)
-    setHistory(hist)
-    setLoading(false)
+    try {
+      const [pend, appr, hist] = await Promise.all([
+        getPurchaseLists(['pending_supervisor']),
+        getPurchaseLists(['approved']),
+        getPurchaseLists(['purchased', 'closed']),
+      ])
+      setPending(pend); setApproved(appr); setHistory(hist)
+    } catch(e) { console.error(e) }
+    finally { setLoading(false) }
   }, [])
 
   useEffect(() => {
     const sb = createClient()
-    sb.auth.getUser().then(({ data }) => {
-      setSupervisorId(data.user?.id ?? null)
-      load()
-    })
+    sb.auth.getUser().then(({ data }) => { setSupervisorId(data.user?.id ?? null); load() })
   }, [])
 
   const totalPendingValue = pending.reduce((s, l) => s + (l.est_total ?? 0), 0)
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-6">
+    <AuthShell>
       {toastEl}
-      <div>
-        <h1 className="text-xl font-semibold text-gray-900">Purchase approvals</h1>
-        <p className="text-sm text-gray-500">Review consolidated purchase lists from ops support</p>
+      <div className="topbar">
+        <div>
+          <div className="topbar-title">Purchase Approvals</div>
+          <div className="topbar-sub">Review consolidated purchase lists from ops support</div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: 'Pending your approval', value: pending.length, color: 'text-amber-600' },
-          { label: 'Approved — on errand', value: approved.length, color: 'text-green-600' },
-          { label: 'Pending value', value: `₱ ${totalPendingValue.toLocaleString('en-PH')}`, color: 'text-gray-900' },
-        ].map(s => (
-          <div key={s.label} className="bg-white border border-gray-200 rounded-xl p-4">
-            <p className="text-xs text-gray-500">{s.label}</p>
-            <p className={`text-2xl font-semibold mt-1 ${s.color}`}>{s.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {loading ? <p className="text-center text-sm text-gray-400 py-12">Loading…</p> : (
-        <>
-          {pending.length > 0 && (
-            <section className="space-y-3">
-              <h2 className="text-sm font-medium text-gray-700 uppercase tracking-wide">Awaiting your approval</h2>
-              {pending.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
-            </section>
-          )}
-          {approved.length > 0 && (
-            <section className="space-y-3">
-              <h2 className="text-sm font-medium text-gray-700 uppercase tracking-wide">Approved — support on errand</h2>
-              {approved.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
-            </section>
-          )}
-          {history.length > 0 && (
-            <section className="space-y-3">
-              <h2 className="text-sm font-medium text-gray-700 uppercase tracking-wide">Recent history</h2>
-              {history.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
-            </section>
-          )}
-          {pending.length === 0 && approved.length === 0 && history.length === 0 && (
-            <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-              <p className="text-sm text-gray-400">No purchase lists yet</p>
+      <div style={{ padding:'24px', maxWidth:760 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
+          {[
+            { label:'Pending your approval', value: pending.length, color:'#d97706' },
+            { label:'Approved — on errand', value: approved.length, color:'#16a34a' },
+            { label:'Pending value', value:`₱ ${totalPendingValue.toLocaleString('en-PH')}`, color:'#111' },
+          ].map(s => (
+            <div key={s.label} style={{ background:'white', border:'1px solid #e5e7eb', borderRadius:12, padding:16 }}>
+              <p style={{ fontSize:11, color:'#6b7280', margin:0 }}>{s.label}</p>
+              <p style={{ fontSize:24, fontWeight:700, color:s.color, margin:'4px 0 0' }}>{s.value}</p>
             </div>
-          )}
-        </>
-      )}
-    </div>
+          ))}
+        </div>
+
+        {loading ? <p style={{ color:'#9ca3af', fontSize:13, textAlign:'center', padding:40 }}>Loading…</p> : (
+          <>
+            {pending.length > 0 && (
+              <div style={{ marginBottom:32 }}>
+                <p style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:'#9ca3af', marginBottom:12 }}>Awaiting your approval</p>
+                {pending.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
+              </div>
+            )}
+            {approved.length > 0 && (
+              <div style={{ marginBottom:32 }}>
+                <p style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:'#9ca3af', marginBottom:12 }}>Approved — support on errand</p>
+                {approved.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
+              </div>
+            )}
+            {history.length > 0 && (
+              <div>
+                <p style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:'#9ca3af', marginBottom:12 }}>Recent history</p>
+                {history.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
+              </div>
+            )}
+            {pending.length === 0 && approved.length === 0 && history.length === 0 && (
+              <div style={{ textAlign:'center', padding:60, background:'#f9fafb', borderRadius:12, border:'1px dashed #e5e7eb' }}>
+                <p style={{ color:'#9ca3af', fontSize:13 }}>No purchase lists yet</p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </AuthShell>
   )
 }
