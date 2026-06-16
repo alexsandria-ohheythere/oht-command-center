@@ -65,7 +65,10 @@ export default function Sidebar({ user, userRole, onClose }) {
     { type:'link', id:'inv-catalog',      href:'/inventory/catalog',      icon:'📦', label:'Catalog',              show: can(role,'admin') },
     { type:'link', id:'inv-support',      href:'/inventory/support',      icon:'🛒', label:'Purchase Queue',       show: can(role,'admin') },
     { type:'link', id:'inv-approve',      href:'/inventory/approve',      icon:'✅', label:'Purchase Approvals',   show: can(role,'admin') },
-
+    { type:'link', id:'inv-templates', href:'/inventory/templates',            icon:'📝', label:'Templates',           show: can(role,'admin') },
+    { type:'link', id:'inv-reports',   href:'/inventory/reports',              icon:'📊', label:'Inventory Reports',    show: can(role,'admin') },
+    { type:'link', id:'inv-approvals', href:'/inventory/inventory-approvals',  icon:'✅', label:'Inventory Approvals',  show: can(role,'admin') },
+    
     { type:'section', label:'Documents', show: can(role,'admin') },
     { type:'link', id:'contracts',        href:'/contracts',              icon:'📄', label:'Contracts',            show: can(role,'admin') },
     { type:'link', id:'files',            href:'/files',                  icon:'📁', label:'Files · 201',          show: can(role,'admin') },
