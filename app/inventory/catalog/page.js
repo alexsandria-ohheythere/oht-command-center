@@ -1,8 +1,8 @@
 'use client'
 export const dynamic = 'force-dynamic'
 import { useState, useEffect, useCallback } from 'react'
-import AuthShell from '../../components/AuthShell'
-import { createClient } from '../../lib/supabase'
+import AuthShell from '../../../components/AuthShell'
+import { createClient } from '../../../lib/supabase'
 
 const CATEGORIES = ['Dairy','Coffee','Packaging','Cleaning','Food','Beverage','Equipment','Other']
 const UNITS = ['pcs','kg','g','bottle','sleeve','pack','roll','box','bag','liter','ml']
