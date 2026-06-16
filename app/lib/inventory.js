@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────
 // OHT Inventory — Supabase queries
-// Place at: app/lib/inventory.js
+// Place at: lib/inventory.js
 // ─────────────────────────────────────────────
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { createClient } from './supabase'
 
-const sb = () => createClientComponentClient()
+const sb = () => createClient()
 
 // ─── Catalog ──────────────────────────────────
 
