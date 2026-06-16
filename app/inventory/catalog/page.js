@@ -179,100 +179,103 @@ export default function CatalogPage() {
         </button>
       </div>
 
-      <div style={{ padding:'24px', maxWidth:900 }}>
+      <div style={{ flex:1, overflowY:'auto', padding:'24px' }}>
+        <div style={{ maxWidth:900 }}>
 
-        {/* Stats */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
-          {[
-            { label:'Total items',  value: items.length,                      color:'#111'    },
-            { label:'Active',       value: items.filter(i => i.is_active).length,  color:'#16a34a' },
-            { label:'Inactive',     value: items.filter(i => !i.is_active).length, color:'#9ca3af' },
-          ].map(s => (
-            <div key={s.label} style={{ background:'white', border:'1px solid #e5e7eb', borderRadius:12, padding:16 }}>
-              <p style={{ fontSize:11, color:'#6b7280', margin:0 }}>{s.label}</p>
-              <p style={{ fontSize:24, fontWeight:700, color:s.color, margin:'4px 0 0' }}>{s.value}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Add form */}
-        {showAdd && (
-          <ItemForm initial={blank()} onSave={handleAdd} onCancel={() => setShowAdd(false)} saving={saving} />
-        )}
-
-        {/* Filters */}
-        <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap', alignItems:'center' }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search items, suppliers…"
-            style={{ ...iStyle, width:220, fontSize:12 }} />
-          <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ ...iStyle, width:140, fontSize:12 }}>
-            <option value="All">All categories</option>
-            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <div style={{ display:'flex', gap:6 }}>
-            {[['active','Active'],['inactive','Inactive'],['all','All']].map(([val, label]) => (
-              <button key={val} onClick={() => setFilterActive(val)}
-                style={{ padding:'6px 14px', fontSize:11, fontWeight:600, borderRadius:8, border:'none', cursor:'pointer',
-                  background: filterActive === val ? '#EF4576' : 'white',
-                  color:      filterActive === val ? 'white'   : '#6b7280',
-                  boxShadow:  filterActive === val ? 'none' : '0 0 0 1px #e5e7eb',
-                }}>
-                {label}
-              </button>
+          {/* Stats */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
+            {[
+              { label:'Total items',  value: items.length,                           color:'#111'    },
+              { label:'Active',       value: items.filter(i => i.is_active).length,  color:'#16a34a' },
+              { label:'Inactive',     value: items.filter(i => !i.is_active).length, color:'#9ca3af' },
+            ].map(s => (
+              <div key={s.label} style={{ background:'white', border:'1px solid #e5e7eb', borderRadius:12, padding:16 }}>
+                <p style={{ fontSize:11, color:'#6b7280', margin:0 }}>{s.label}</p>
+                <p style={{ fontSize:24, fontWeight:700, color:s.color, margin:'4px 0 0' }}>{s.value}</p>
+              </div>
             ))}
           </div>
-        </div>
 
-        {/* List */}
-        {loading ? (
-          <p style={{ textAlign:'center', color:'#9ca3af', padding:40 }}>Loading…</p>
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign:'center', padding:60, background:'#f9fafb', borderRadius:12, border:'1px dashed #e5e7eb' }}>
-            <p style={{ color:'#9ca3af', fontSize:13 }}>No items found</p>
-          </div>
-        ) : (
-          Object.entries(grouped).map(([cat, catItems]) => (
-            <div key={cat} style={{ marginBottom:28 }}>
-              <p style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:'#9ca3af', marginBottom:10 }}>{cat}</p>
-              <div style={{ background:'white', border:'1px solid #e5e7eb', borderRadius:12, overflow:'hidden' }}>
-                {catItems.map((item, idx) => (
-                  <div key={item.id}>
-                    {editId === item.id ? (
-                      <div style={{ padding:16 }}>
-                        <ItemForm initial={{ ...item, avg_price: item.avg_price?.toString() ?? '' }} onSave={handleEdit} onCancel={() => setEditId(null)} saving={saving} />
-                      </div>
-                    ) : (
-                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', borderBottom: idx < catItems.length - 1 ? '1px solid #f3f4f6' : 'none', opacity: item.is_active ? 1 : 0.5 }}>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
-                            <span style={{ fontSize:13, fontWeight:600, color:'#1f2937' }}>{item.name}</span>
-                            {item.sku && <span style={{ fontSize:10, fontFamily:'monospace', color:'#9ca3af', background:'#f3f4f6', padding:'1px 6px', borderRadius:4 }}>{item.sku}</span>}
-                            {!item.is_active && <span style={{ fontSize:10, fontWeight:600, color:'#9ca3af', background:'#f3f4f6', padding:'1px 8px', borderRadius:20 }}>Inactive</span>}
-                          </div>
-                          <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
-                            <span style={{ fontSize:11, color:'#6b7280' }}>Unit: <strong>{item.unit}</strong></span>
-                            {item.avg_price != null && <span style={{ fontSize:11, color:'#6b7280' }}>Avg: <strong>₱ {Number(item.avg_price).toLocaleString('en-PH', { minimumFractionDigits:2 })}</strong></span>}
-                            {item.preferred_store && <span style={{ fontSize:11, color:'#6b7280' }}>Store: <strong>{item.preferred_store}</strong></span>}
-                            {item.notes && <span style={{ fontSize:11, color:'#9ca3af', fontStyle:'italic' }}>{item.notes}</span>}
-                          </div>
-                        </div>
-                        <div style={{ display:'flex', gap:6, flexShrink:0, marginLeft:12 }}>
-                          <button onClick={() => { setEditId(item.id); setShowAdd(false) }}
-                            style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color:'#374151' }}>
-                            Edit
-                          </button>
-                          <button onClick={() => toggleActive(item)}
-                            style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color: item.is_active ? '#9ca3af' : '#16a34a' }}>
-                            {item.is_active ? 'Deactivate' : 'Reactivate'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+          {/* Add form */}
+          {showAdd && (
+            <ItemForm initial={blank()} onSave={handleAdd} onCancel={() => setShowAdd(false)} saving={saving} />
+          )}
+
+          {/* Filters */}
+          <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap', alignItems:'center' }}>
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search items, suppliers…"
+              style={{ ...iStyle, width:220, fontSize:12 }} />
+            <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ ...iStyle, width:140, fontSize:12 }}>
+              <option value="All">All categories</option>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <div style={{ display:'flex', gap:6 }}>
+              {[['active','Active'],['inactive','Inactive'],['all','All']].map(([val, label]) => (
+                <button key={val} onClick={() => setFilterActive(val)}
+                  style={{ padding:'6px 14px', fontSize:11, fontWeight:600, borderRadius:8, border:'none', cursor:'pointer',
+                    background: filterActive === val ? '#EF4576' : 'white',
+                    color:      filterActive === val ? 'white'   : '#6b7280',
+                    boxShadow:  filterActive === val ? 'none' : '0 0 0 1px #e5e7eb',
+                  }}>
+                  {label}
+                </button>
+              ))}
             </div>
-          ))
-        )}
+          </div>
+
+          {/* List */}
+          {loading ? (
+            <p style={{ textAlign:'center', color:'#9ca3af', padding:40 }}>Loading…</p>
+          ) : filtered.length === 0 ? (
+            <div style={{ textAlign:'center', padding:60, background:'#f9fafb', borderRadius:12, border:'1px dashed #e5e7eb' }}>
+              <p style={{ color:'#9ca3af', fontSize:13 }}>No items found</p>
+            </div>
+          ) : (
+            Object.entries(grouped).map(([cat, catItems]) => (
+              <div key={cat} style={{ marginBottom:28 }}>
+                <p style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:'#9ca3af', marginBottom:10 }}>{cat}</p>
+                <div style={{ background:'white', border:'1px solid #e5e7eb', borderRadius:12, overflow:'hidden' }}>
+                  {catItems.map((item, idx) => (
+                    <div key={item.id}>
+                      {editId === item.id ? (
+                        <div style={{ padding:16 }}>
+                          <ItemForm initial={{ ...item, avg_price: item.avg_price?.toString() ?? '' }} onSave={handleEdit} onCancel={() => setEditId(null)} saving={saving} />
+                        </div>
+                      ) : (
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', borderBottom: idx < catItems.length - 1 ? '1px solid #f3f4f6' : 'none', opacity: item.is_active ? 1 : 0.5 }}>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
+                              <span style={{ fontSize:13, fontWeight:600, color:'#1f2937' }}>{item.name}</span>
+                              {item.sku && <span style={{ fontSize:10, fontFamily:'monospace', color:'#9ca3af', background:'#f3f4f6', padding:'1px 6px', borderRadius:4 }}>{item.sku}</span>}
+                              {!item.is_active && <span style={{ fontSize:10, fontWeight:600, color:'#9ca3af', background:'#f3f4f6', padding:'1px 8px', borderRadius:20 }}>Inactive</span>}
+                            </div>
+                            <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+                              <span style={{ fontSize:11, color:'#6b7280' }}>Unit: <strong>{item.unit}</strong></span>
+                              {item.avg_price != null && <span style={{ fontSize:11, color:'#6b7280' }}>Avg: <strong>₱ {Number(item.avg_price).toLocaleString('en-PH', { minimumFractionDigits:2 })}</strong></span>}
+                              {item.preferred_store && <span style={{ fontSize:11, color:'#6b7280' }}>Store: <strong>{item.preferred_store}</strong></span>}
+                              {item.notes && <span style={{ fontSize:11, color:'#9ca3af', fontStyle:'italic' }}>{item.notes}</span>}
+                            </div>
+                          </div>
+                          <div style={{ display:'flex', gap:6, flexShrink:0, marginLeft:12 }}>
+                            <button onClick={() => { setEditId(item.id); setShowAdd(false) }}
+                              style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color:'#374151' }}>
+                              Edit
+                            </button>
+                            <button onClick={() => toggleActive(item)}
+                              style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color: item.is_active ? '#9ca3af' : '#16a34a' }}>
+                              {item.is_active ? 'Deactivate' : 'Reactivate'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+
+        </div>
       </div>
     </AuthShell>
   )
