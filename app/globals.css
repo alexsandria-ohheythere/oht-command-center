@@ -127,3 +127,143 @@ body {
 
 @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
 .fade-up { animation: fadeUp .3s ease both; }
+
+
+/* ─── MOBILE RESPONSIVE ─────────────────────────────────────── */
+@media (max-width: 768px) {
+
+  /* Sidebar hidden off-screen by default on mobile */
+  .app-shell {
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Sidebar slides in as overlay */
+  .app-shell > div:first-child {
+    position: fixed !important;
+    top: 0; left: 0;
+    height: 100vh;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    width: 260px !important;
+  }
+
+  .app-shell.sidebar-open > div:first-child {
+    transform: translateX(0);
+  }
+
+  /* Overlay backdrop */
+  .app-shell.sidebar-open::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.4);
+    z-index: 199;
+  }
+
+  /* Main area fills screen */
+  .main-area {
+    width: 100% !important;
+    height: 100vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Topbar */
+  .topbar {
+    flex-wrap: wrap;
+    gap: 10px !important;
+    padding: 12px 14px !important;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--white);
+  }
+
+  .topbar-title { font-size: 16px !important; }
+  .topbar-sub   { font-size: 10px !important; }
+
+  /* Page content padding */
+  .page-content {
+    padding: 12px 14px !important;
+  }
+
+  /* KPI grid — 2 columns on mobile */
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+  }
+
+  .kpi-value { font-size: 18px !important; }
+  .kpi-label { font-size: 9px !important; }
+
+  /* Cards full width */
+  .card { padding: 14px !important; }
+
+  /* Tables — horizontal scroll */
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+
+  /* Buttons — bigger tap targets */
+  .btn {
+    padding: 10px 16px !important;
+    font-size: 12px !important;
+    min-height: 40px;
+  }
+
+  /* Forms — full width inputs */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="date"],
+  select, textarea {
+    font-size: 16px !important; /* prevents iOS zoom on focus */
+    min-height: 44px;
+  }
+
+  /* Grid layouts — stack on mobile */
+  [style*="gridTemplateColumns: '2fr 1fr'"],
+  [style*="gridTemplateColumns: repeat(3"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Finance strip stack */
+  [style*="repeat(3,1fr)"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Quick actions — 4 per row on mobile */
+  [style*="repeat(auto-fill,minmax(72px"] {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+
+  /* Hide non-essential table columns */
+  .hide-mobile { display: none !important; }
+
+  /* Hamburger button — shown on mobile */
+  .hamburger {
+    display: flex !important;
+  }
+}
+
+/* Hamburger hidden on desktop */
+.hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 18px;
+  flex-shrink: 0;
+}
