@@ -272,7 +272,7 @@ export default function SchedulePage() {
               const needsShifts=s.min_shifts_per_week===5
               return (
                 <div key={s.id} draggable
-                  onDragStart={e=>{setDragStaffId(s.id);setDragSource(null);e.dataTransfer.effectAllowed='copy'}}
+                  onDragStart={e=>{setDragStaffId(s.id);setDragSource(null);e.dataTransfer.effectAllowed='copy';e.dataTransfer.setData('staffId',s.id)}}
                   onDragEnd={()=>setDragStaffId(null)}
                   style={{background:'rgba(0,0,0,.2)',border:'1px solid rgba(255,255,255,.08)',borderRadius:9,padding:'7px 9px',marginBottom:5,cursor:'grab',userSelect:'none',opacity:dragStaffId===s.id?.4:1,transition:'all .15s'}}
                   onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,0,0,.3)';e.currentTarget.style.borderColor=getRoleColor(s.role)+'88'}}
@@ -375,19 +375,17 @@ export default function SchedulePage() {
                               e.preventDefault()
                               e.currentTarget.style.background=''
                               e.currentTarget.style.outline=''
-                              if(!dragStaffId)return
-                              // Warn if wrong role
-                              const member=staff.find(x=>x.id===dragStaffId)
-                              if(member&&!roleMatches(member.role,row.role)){
-                                showToast('⚠️',`${member.first_name} is ${member.role} — this row is for ${row.role}`)
-                                // still allow — soft warning only
-                              }
-                              if(isOnLeave(dragStaffId,dayIdx,row.shiftId)){
+                              // Read from dataTransfer as fallback — dragStaffId can be null on drop in some browsers
+                              const sid = dragStaffId || e.dataTransfer.getData('staffId')
+                              const src = dragSource || (e.dataTransfer.getData('sourceDate') ? { date:e.dataTransfer.getData('sourceDate'), shiftType:e.dataTransfer.getData('sourceShift') } : null)
+                              if(!sid){ setDragStaffId(null); setDragSource(null); return }
+                              const member=staff.find(x=>x.id===sid)
+                              if(isOnLeave(sid,dayIdx,row.shiftId)){
                                 showToast('🚫','On approved leave for this date')
-                              } else if(dragSource){
-                                moveAssignment(dragSource.date,dragSource.shiftType,dragStaffId,dayIdx,row.shiftId)
+                              } else if(src){
+                                moveAssignment(src.date,src.shiftType,sid,dayIdx,row.shiftId)
                               } else {
-                                addAssignment(dayIdx,row.shiftId,dragStaffId)
+                                addAssignment(dayIdx,row.shiftId,sid)
                               }
                               setDragStaffId(null);setDragSource(null)
                             }}
@@ -417,6 +415,9 @@ export default function SchedulePage() {
                                     setDragStaffId(m.id)
                                     setDragSource({date:dateISO,shiftType:row.shiftId})
                                     e.dataTransfer.effectAllowed='move'
+                                    e.dataTransfer.setData('staffId',m.id)
+                                    e.dataTransfer.setData('sourceDate',dateISO)
+                                    e.dataTransfer.setData('sourceShift',row.shiftId)
                                     e.stopPropagation()
                                   }}
                                   style={{display:'flex',alignItems:'center',gap:4,borderRadius:6,padding:'4px 6px',marginBottom:3,cursor:'grab',
