@@ -21,9 +21,7 @@ const ROLE_ROWS = [
   // MID
   { shiftId:'mid', role:'Cafe Supervisor',          label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'mid', role:'Cafe Operations Support',  label:'Cafe Support',      group:'front' },
-  { shiftId:'mid', role:'Executive Chef',           label:'Executive Chef',    group:'kitchen', divider:true },
-  { shiftId:'mid', role:'Sous Chef',                label:'Sous Chef',         group:'kitchen' },
-  { shiftId:'mid', role:'Senior Barista',           label:'Senior Barista',    group:'kitchen' },
+  { shiftId:'mid', role:'Sous Chef',                label:'Sous Chef',         group:'kitchen', divider:true },
   { shiftId:'mid', role:'Junior Barista',           label:'Junior Barista',    group:'kitchen' },
   // PM
   { shiftId:'pm', role:'Cafe Supervisor',           label:'Cafe Supervisor',   group:'front', shiftBreak:true },
