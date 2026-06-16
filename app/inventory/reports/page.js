@@ -39,12 +39,14 @@ function ReportCard({ report, supervisorId, onAction, showToast }) {
   }, {})
 
   const handleForward = async () => {
+    if (!supervisorId) return showToast('Session error — please refresh', 'error')
     setLoading(true)
     const sb = createClient()
 
-    // Save corrections
     for (const [itemId, qty] of Object.entries(corrections)) {
-      await sb.from('inventory_report_items').update({ supervisor_corrected_qty: parseFloat(qty) }).eq('id', itemId)
+      if (qty !== '') {
+        await sb.from('inventory_report_items').update({ supervisor_corrected_qty: parseFloat(qty) }).eq('id', itemId)
+      }
     }
 
     const { error } = await sb.from('inventory_reports').update({
@@ -61,6 +63,7 @@ function ReportCard({ report, supervisorId, onAction, showToast }) {
 
   const handleReject = async () => {
     if (!rejectReason.trim()) return showToast('Add a reason', 'error')
+    if (!supervisorId) return showToast('Session error — please refresh', 'error')
     setLoading(true)
     const sb = createClient()
     const { error } = await sb.from('inventory_reports').update({
@@ -94,30 +97,31 @@ function ReportCard({ report, supervisorId, onAction, showToast }) {
       {expanded && (
         <div style={{ borderTop:'1px solid #f3f4f6', padding:'12px 16px' }}>
 
-          {/* Needs Restocking highlight */}
           {flagged.length > 0 && (
             <div style={{ background:'#fef3c7', border:'1px solid #fcd34d', borderRadius:12, padding:14, marginBottom:16 }}>
               <div style={{ fontSize:12, fontWeight:700, color:'#92400e', marginBottom:10 }}>🚩 Needs Restocking</div>
               <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:'6px 12px', alignItems:'center' }}>
                 <span style={{ fontSize:10, fontWeight:700, color:'#9ca3af', textTransform:'uppercase' }}>Item</span>
                 <span style={{ fontSize:10, fontWeight:700, color:'#9ca3af', textTransform:'uppercase' }}>Count</span>
-                <span style={{ fontSize:10, fontWeight:700, color:'#9ca3af', textTransform:'uppercase' }}>Correct</span>
+                <span style={{ fontSize:10, fontWeight:700, color:'#9ca3af', textTransform:'uppercase' }}>Correct (optional)</span>
                 {flagged.map(item => (
                   <>
-                    <span key={`n-${item.id}`} style={{ fontSize:12, fontWeight:600, color:'#92400e' }}>{item.item_name} <span style={{ fontWeight:400, fontSize:10, padding:'1px 6px', borderRadius:4, background: item.flag==='86'?'#fee2e2':'#fef3c7', color: item.flag==='86'?'#991b1b':'#92400e' }}>{item.flag.toUpperCase()}</span></span>
+                    <span key={`n-${item.id}`} style={{ fontSize:12, fontWeight:600, color:'#92400e' }}>
+                      {item.item_name}{' '}
+                      <span style={{ fontWeight:400, fontSize:10, padding:'1px 6px', borderRadius:4, background:item.flag==='86'?'#fee2e2':'#fef3c7', color:item.flag==='86'?'#991b1b':'#92400e' }}>{item.flag.toUpperCase()}</span>
+                    </span>
                     <span key={`q-${item.id}`} style={{ fontSize:12, color:'#92400e', textAlign:'right' }}>{item.actual_qty} {item.unit}</span>
                     <input key={`c-${item.id}`} type="number" min="0"
                       value={corrections[item.id] ?? ''}
                       onChange={e => setCorrections(prev => ({ ...prev, [item.id]: e.target.value }))}
                       placeholder="—"
-                      style={{ width:60, border:'1px solid #fcd34d', borderRadius:6, padding:'4px 6px', fontSize:12, outline:'none', textAlign:'center', background:'white' }} />
+                      style={{ width:70, border:'1px solid #fcd34d', borderRadius:6, padding:'4px 6px', fontSize:12, outline:'none', textAlign:'center', background:'white' }} />
                   </>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Full inventory by section */}
           <div style={{ marginBottom:14 }}>
             <div style={{ fontSize:11, fontWeight:700, color:'#6b7280', marginBottom:10 }}>Full Inventory Report</div>
             {Object.entries(sections).map(([section, sectionItems]) => (
@@ -127,12 +131,12 @@ function ReportCard({ report, supervisorId, onAction, showToast }) {
                   <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
                     <tbody>
                       {sectionItems.map((item, idx) => (
-                        <tr key={item.id} style={{ borderBottom: idx < sectionItems.length-1 ? '1px solid #f9fafb' : 'none', background: item.flag!=='ok' ? '#fffbeb' : 'white' }}>
-                          <td style={{ padding:'7px 12px', color:'#1f2937', fontWeight: item.flag!=='ok'?600:400 }}>{item.item_name}</td>
+                        <tr key={item.id} style={{ borderBottom:idx < sectionItems.length-1?'1px solid #f9fafb':'none', background:item.flag!=='ok'?'#fffbeb':'white' }}>
+                          <td style={{ padding:'7px 12px', color:'#1f2937', fontWeight:item.flag!=='ok'?600:400 }}>{item.item_name}</td>
                           <td style={{ padding:'7px 12px', color:'#6b7280', textAlign:'right' }}>{item.actual_qty} {item.unit}</td>
                           <td style={{ padding:'7px 12px', width:50 }}>
                             {item.flag !== 'ok' && (
-                              <span style={{ fontSize:10, fontWeight:700, padding:'1px 6px', borderRadius:4, background: item.flag==='86'?'#fee2e2':'#fef3c7', color: item.flag==='86'?'#991b1b':'#92400e' }}>
+                              <span style={{ fontSize:10, fontWeight:700, padding:'1px 6px', borderRadius:4, background:item.flag==='86'?'#fee2e2':'#fef3c7', color:item.flag==='86'?'#991b1b':'#92400e' }}>
                                 {item.flag.toUpperCase()}
                               </span>
                             )}
@@ -170,7 +174,7 @@ function ReportCard({ report, supervisorId, onAction, showToast }) {
               {!showReject && (
                 <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
                   <button onClick={() => setShowReject(true)} style={{ padding:'7px 14px', fontSize:12, border:'1px solid #fca5a5', borderRadius:8, background:'white', color:'#dc2626', cursor:'pointer' }}>✕ Return to staff</button>
-                  <button onClick={handleForward} disabled={loading} style={{ padding:'7px 16px', fontSize:12, fontWeight:600, border:'none', borderRadius:8, background:'#EF4576', color:'white', cursor:'pointer', opacity:loading?0.5:1 }}>
+                  <button onClick={handleForward} disabled={loading || !supervisorId} style={{ padding:'7px 16px', fontSize:12, fontWeight:600, border:'none', borderRadius:8, background:'#EF4576', color:'white', cursor:'pointer', opacity:(loading||!supervisorId)?0.5:1 }}>
                     {loading ? 'Forwarding…' : '→ Forward to CEO'}
                   </button>
                 </div>
@@ -191,25 +195,23 @@ export default function SupervisorReportsPage() {
   const [dateFilter, setDateFilter] = useState(new Date().toISOString().split('T')[0])
   const { show: showToast, el: toastEl } = useToast()
 
-  const load = useCallback(async () => {
+  const fetchReports = useCallback(async (date) => {
     const sb = createClient()
-    try {
-      const [pend, hist] = await Promise.all([
-        sb.from('inventory_reports')
-          .select('*, items:inventory_report_items(*), submitted_by_staff:staff!submitted_by(id, first_name, last_name)')
-          .eq('status', 'submitted')
-          .order('created_at', { ascending: false }),
-        sb.from('inventory_reports')
-          .select('*, items:inventory_report_items(*), submitted_by_staff:staff!submitted_by(id, first_name, last_name)')
-          .in('status', ['reviewed', 'approved', 'rejected'])
-          .eq('report_date', dateFilter)
-          .order('created_at', { ascending: false }),
-      ])
-      setPending(pend.data ?? [])
-      setHistory(hist.data ?? [])
-    } catch(e) { console.error(e) }
-    finally { setLoading(false) }
-  }, [dateFilter])
+    const [pend, hist] = await Promise.all([
+      sb.from('inventory_reports')
+        .select('*, items:inventory_report_items(*), submitted_by_staff:staff!submitted_by(id, first_name, last_name)')
+        .eq('status', 'submitted')
+        .order('created_at', { ascending: false }),
+      sb.from('inventory_reports')
+        .select('*, items:inventory_report_items(*), submitted_by_staff:staff!submitted_by(id, first_name, last_name)')
+        .in('status', ['reviewed', 'approved', 'rejected'])
+        .eq('report_date', date)
+        .order('created_at', { ascending: false }),
+    ])
+    setPending(pend.data ?? [])
+    setHistory(hist.data ?? [])
+    setLoading(false)
+  }, [])
 
   useEffect(() => {
     const sb = createClient()
@@ -218,25 +220,13 @@ export default function SupervisorReportsPage() {
       const { data: staff } = await sb.from('staff').select('id').eq('email', session.user.email).single()
       const id = staff?.id ?? session.user.id
       setSupervisorId(id)
-      // Load with the id directly instead of relying on state
-      const [pend, hist] = await Promise.all([
-        sb.from('inventory_reports')
-          .select('*, items:inventory_report_items(*), submitted_by_staff:staff!submitted_by(id, first_name, last_name)')
-          .eq('status', 'submitted')
-          .order('created_at', { ascending: false }),
-        sb.from('inventory_reports')
-          .select('*, items:inventory_report_items(*), submitted_by_staff:staff!submitted_by(id, first_name, last_name)')
-          .in('status', ['reviewed', 'approved', 'rejected'])
-          .eq('report_date', dateFilter)
-          .order('created_at', { ascending: false }),
-      ])
-      setPending(pend.data ?? [])
-      setHistory(hist.data ?? [])
-      setLoading(false)
+      fetchReports(new Date().toISOString().split('T')[0])
     })
   }, [])
 
-  useEffect(() => { load() }, [dateFilter])
+  useEffect(() => {
+    if (supervisorId) fetchReports(dateFilter)
+  }, [dateFilter])
 
   const STATUS_BADGE = {
     reviewed: { label:'Forwarded to CEO', bg:'#fef3c7', color:'#92400e' },
@@ -256,7 +246,6 @@ export default function SupervisorReportsPage() {
 
       <div style={{ flex:1, overflowY:'auto', padding:'24px' }}>
         <div style={{ maxWidth:800 }}>
-
           <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
             {[
               { label:'Awaiting review', value: pending.length, color:'#d97706' },
@@ -270,18 +259,24 @@ export default function SupervisorReportsPage() {
             ))}
           </div>
 
-          {/* Pending */}
           {pending.length > 0 && (
             <div style={{ marginBottom:32 }}>
               <p style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:'#d97706', marginBottom:12 }}>
-                Awaiting your review {pending.length > 0 && <span style={{ background:'#fef3c7', color:'#92400e', padding:'2px 8px', borderRadius:20, marginLeft:8 }}>{pending.length}</span>}
+                Awaiting your review <span style={{ background:'#fef3c7', color:'#92400e', padding:'2px 8px', borderRadius:20, marginLeft:8 }}>{pending.length}</span>
               </p>
-              {loading ? <p style={{ color:'#9ca3af', fontSize:13, textAlign:'center', padding:40 }}>Loading…</p>
-                : pending.map(r => <ReportCard key={r.id} report={r} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
+              {loading
+                ? <p style={{ color:'#9ca3af', fontSize:13, textAlign:'center', padding:40 }}>Loading…</p>
+                : pending.map(r => <ReportCard key={r.id} report={r} supervisorId={supervisorId} onAction={() => fetchReports(dateFilter)} showToast={showToast} />)
+              }
             </div>
           )}
 
-          {/* History by date */}
+          {pending.length === 0 && !loading && (
+            <div style={{ textAlign:'center', padding:40, background:'#f9fafb', borderRadius:12, border:'1px dashed #e5e7eb', marginBottom:24 }}>
+              <p style={{ color:'#9ca3af', fontSize:13 }}>No reports awaiting review</p>
+            </div>
+          )}
+
           <div>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
               <p style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:'#9ca3af', margin:0 }}>Reports by date</p>
@@ -291,7 +286,7 @@ export default function SupervisorReportsPage() {
             {history.length === 0
               ? <div style={{ textAlign:'center', padding:40, background:'#f9fafb', borderRadius:12, border:'1px dashed #e5e7eb' }}><p style={{ color:'#9ca3af', fontSize:13 }}>No reports for this date</p></div>
               : history.map(r => {
-                  const sb = STATUS_BADGE[r.status] ?? { label:r.status, bg:'#f3f4f6', color:'#6b7280' }
+                  const badge = STATUS_BADGE[r.status] ?? { label:r.status, bg:'#f3f4f6', color:'#6b7280' }
                   const flagged = r.items?.filter(i => i.flag !== 'ok') ?? []
                   return (
                     <div key={r.id} style={{ background:'white', border:'1px solid #e5e7eb', borderRadius:12, padding:'12px 16px', marginBottom:8, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
@@ -299,7 +294,7 @@ export default function SupervisorReportsPage() {
                         <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
                           <span>{DEPT_ICON[r.department]}</span>
                           <span style={{ fontSize:13, fontWeight:600, color:'#111' }}>{DEPT_LABEL[r.department]} — {r.shift?.toUpperCase()}</span>
-                          <span style={{ fontSize:10, fontWeight:600, padding:'2px 8px', borderRadius:20, background:sb.bg, color:sb.color }}>{sb.label}</span>
+                          <span style={{ fontSize:10, fontWeight:600, padding:'2px 8px', borderRadius:20, background:badge.bg, color:badge.color }}>{badge.label}</span>
                         </div>
                         <div style={{ fontSize:11, color:'#9ca3af' }}>
                           {[r.submitted_by_staff?.first_name, r.submitted_by_staff?.last_name].filter(Boolean).join(' ')}
