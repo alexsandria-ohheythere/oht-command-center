@@ -205,6 +205,31 @@ export default function SchedulePage() {
     return {...s,count,missing:5-count}
   }).filter(s=>s.missing>0)
 
+  // Critical role coverage check — flag any day missing Senior Barista or Executive Chef in AM/PM
+  const CRITICAL_ROLES = ['Senior Barista', 'Executive Chef']
+  const CRITICAL_SHIFTS = ['am', 'pm'] // MID doesn't have these roles
+  const coverageGaps = []
+  weekDates.forEach((date, di) => {
+    const iso = toISO(date)
+    CRITICAL_SHIFTS.forEach(shiftId => {
+      const shift = SHIFTS.find(s => s.id === shiftId)
+      CRITICAL_ROLES.forEach(role => {
+        // Check if this role row exists in ROLE_ROWS for this shift
+        const rowExists = ROLE_ROWS.some(r => r.shiftId === shiftId && r.role === role)
+        if (!rowExists) return
+        // Find any staff assigned to this shift on this date who match this role
+        const assigned = schedules.filter(sc => sc.shift_date === iso && sc.shift_type === shiftId)
+        const hasCoverage = assigned.some(sc => {
+          const s = staff.find(st => st.id === sc.staff_id)
+          return s && (s.role === role || (role === 'Senior Barista' && s.role === 'Senior Barista'))
+        })
+        if (!assigned.length || !hasCoverage) {
+          coverageGaps.push({ date, iso, day: DAYS[di], shiftId, shiftLabel: shift.label, role })
+        }
+      })
+    })
+  })
+
   const ROW_H = 68 // cell height px
 
   return (
@@ -253,6 +278,26 @@ export default function SchedulePage() {
             </div>
           </div>
         )
+      )}
+
+      {/* CRITICAL COVERAGE ALERT */}
+      {coverageGaps.length > 0 && (
+        <div style={{background:'#fff0f0',borderBottom:'1px solid #f5c6c6',padding:'7px 20px',display:'flex',alignItems:'flex-start',gap:10,flexShrink:0,flexWrap:'wrap'}}>
+          <span style={{fontSize:14,flexShrink:0,marginTop:1}}>🚨</span>
+          <div style={{flex:1,minWidth:0}}>
+            <span style={{fontSize:11,fontWeight:700,color:'#c0392b',display:'block',marginBottom:4}}>
+              Critical role uncovered — {coverageGaps.length} gap{coverageGaps.length!==1?'s':''} this week:
+            </span>
+            <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+              {coverageGaps.map((g,i)=>(
+                <span key={i} style={{background:'white',border:'1px solid #f5c6c6',borderRadius:7,padding:'2px 9px',fontSize:11,fontWeight:600,color:'var(--espresso)',whiteSpace:'nowrap'}}>
+                  <span style={{color:'#c0392b',fontFamily:"'DM Mono',monospace",fontWeight:700}}>{g.shiftLabel} {g.day}</span>
+                  {' '}— no {g.role}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* MAIN */}
@@ -393,16 +438,25 @@ export default function SchedulePage() {
                               borderLeft:'1px solid var(--border)',
                               padding:4,
                               minHeight:ROW_H,
-                              background:isToday?shift.bg+'66':'var(--white)',
+                              background: assignments.length===0 && CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId)
+                                ? (isToday ? '#ffe0e088' : '#fff0f0')
+                                : (isToday ? shift.bg+'66' : 'var(--white)'),
                               position:'relative',
                               transition:'background .1s',
                             }}>
 
                             {assignments.length===0 && (
                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
-                                <div style={{width:20,height:20,borderRadius:'50%',border:`1.5px dashed ${shift.border}44`,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                                  <span style={{fontSize:10,color:shift.border+'66',lineHeight:1}}>+</span>
-                                </div>
+                                {CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId) ? (
+                                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                                    <span style={{fontSize:12}}>🚨</span>
+                                    <span style={{fontSize:8,fontWeight:700,color:'#c0392b',textAlign:'center',lineHeight:1.2,fontFamily:"'DM Sans',sans-serif"}}>Required</span>
+                                  </div>
+                                ) : (
+                                  <div style={{width:20,height:20,borderRadius:'50%',border:`1.5px dashed ${shift.border}44`,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                                    <span style={{fontSize:10,color:shift.border+'66',lineHeight:1}}>+</span>
+                                  </div>
+                                )}
                               </div>
                             )}
 
