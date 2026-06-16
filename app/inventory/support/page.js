@@ -1,19 +1,35 @@
-
 'use client'
+export const dynamic = 'force-dynamic'
 // ─────────────────────────────────────────────
 // OHT Admin — Inventory / Support Review Queue
 // Place at: app/inventory/support/page.js
 // ─────────────────────────────────────────────
 import { useState, useEffect, useCallback } from 'react'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { createClient } from '../../../lib/supabase'
 import {
   getSubmittedRequests, getQueuedRequests,
   supportQueueRequest, supportRejectRequest,
   createPurchaseList, sendListToSupervisor,
-} from '@/app/lib/inventory'
-import { toast } from 'sonner'
+} from '../../../lib/inventory'
 
 const URGENCY_DOT = { low: 'bg-gray-300', normal: 'bg-green-500', high: 'bg-red-500' }
+
+function Toast({ msg, type, onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t) }, [])
+  return (
+    <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${type === 'error' ? 'bg-red-600' : 'bg-gray-900'}`}>
+      {msg}
+    </div>
+  )
+}
+
+function useToast() {
+  const [toast, setToast] = useState(null)
+  const show = (msg, type = 'success') => setToast({ msg, type })
+  const hide = () => setToast(null)
+  const el = toast ? <Toast msg={toast.msg} type={toast.type} onClose={hide} /> : null
+  return { show, el }
+}
 
 function ItemPriceEditor({ item, onChange }) {
   const [price, setPrice] = useState(item.est_unit_price?.toString() ?? '')
@@ -44,7 +60,7 @@ function ItemPriceEditor({ item, onChange }) {
   )
 }
 
-function RequestCard({ req, supportId, onAction }) {
+function RequestCard({ req, supportId, onAction, showToast }) {
   const [expanded, setExpanded] = useState(true)
   const [rejectReason, setRejectReason] = useState('')
   const [showReject, setShowReject] = useState(false)
@@ -57,7 +73,7 @@ function RequestCard({ req, supportId, onAction }) {
   const allPriced = req.items?.every(i => itemPrices[i.id]?.price && itemPrices[i.id]?.store)
 
   const handleQueue = async () => {
-    if (!allPriced) return toast.error('Add est. price and store for every item')
+    if (!allPriced) return showToast('Add est. price and store for every item', 'error')
     setLoading(true)
     try {
       const items = req.items.map(i => ({
@@ -66,20 +82,20 @@ function RequestCard({ req, supportId, onAction }) {
         preferred_store: itemPrices[i.id].store,
       }))
       await supportQueueRequest(req.id, supportId, items)
-      toast.success(`${req.pr_number} added to purchase list`)
+      showToast(`${req.pr_number} added to purchase list`)
       onAction()
-    } catch (e) { toast.error(e.message) }
+    } catch (e) { showToast(e.message, 'error') }
     finally { setLoading(false) }
   }
 
   const handleReject = async () => {
-    if (!rejectReason.trim()) return toast.error('Add a reason for returning')
+    if (!rejectReason.trim()) return showToast('Add a reason for returning', 'error')
     setLoading(true)
     try {
       await supportRejectRequest(req.id, supportId, rejectReason.trim())
-      toast.success(`${req.pr_number} returned to staff`)
+      showToast(`${req.pr_number} returned to staff`)
       onAction()
-    } catch (e) { toast.error(e.message) }
+    } catch (e) { showToast(e.message, 'error') }
     finally { setLoading(false) }
   }
 
@@ -88,10 +104,7 @@ function RequestCard({ req, supportId, onAction }) {
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-      <div
-        className="flex items-center justify-between p-4 cursor-pointer"
-        onClick={() => setExpanded(v => !v)}
-      >
+      <div className="flex items-center justify-between p-4 cursor-pointer" onClick={() => setExpanded(v => !v)}>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-xs font-mono text-gray-400">{req.pr_number}</span>
@@ -105,7 +118,7 @@ function RequestCard({ req, supportId, onAction }) {
             {req.submitted_by_staff?.full_name ?? 'Staff'}
           </p>
         </div>
-        <span className="text-gray-400 text-sm">{expanded ? '▲' : '▼'}</span>
+        <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
       </div>
 
       {expanded && (
@@ -113,7 +126,6 @@ function RequestCard({ req, supportId, onAction }) {
           {req.notes && (
             <p className="text-xs text-gray-500 italic bg-gray-50 rounded-lg px-3 py-2">"{req.notes}"</p>
           )}
-
           <div className="space-y-3">
             {req.items?.map(item => (
               <div key={item.id} className="bg-gray-50 rounded-lg p-3">
@@ -140,8 +152,7 @@ function RequestCard({ req, supportId, onAction }) {
 
           {showReject && (
             <div className="space-y-2">
-              <textarea
-                value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
                 rows={2} placeholder="Reason for returning to staff…"
                 className="w-full border border-red-200 rounded-lg px-3 py-2 text-sm focus:outline-none resize-none"
               />
@@ -177,7 +188,6 @@ function RequestCard({ req, supportId, onAction }) {
 }
 
 export default function SupportQueuePage() {
-  const supabase = createClientComponentClient()
   const [supportId, setSupportId] = useState(null)
   const [incoming, setIncoming] = useState([])
   const [queued, setQueued] = useState([])
@@ -185,6 +195,7 @@ export default function SupportQueuePage() {
   const [sendingList, setSendingList] = useState(false)
   const [listTitle, setListTitle] = useState('')
   const [showListForm, setShowListForm] = useState(false)
+  const { show: showToast, el: toastEl } = useToast()
 
   const load = useCallback(async () => {
     const [inc, q] = await Promise.all([getSubmittedRequests(), getQueuedRequests()])
@@ -194,24 +205,25 @@ export default function SupportQueuePage() {
   }, [])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    const sb = createClient()
+    sb.auth.getUser().then(({ data }) => {
       setSupportId(data.user?.id ?? null)
       load()
     })
   }, [])
 
   const handleSendToCJ = async () => {
-    if (!listTitle.trim()) return toast.error('Give the purchase list a title')
-    if (queued.length === 0) return toast.error('No items queued yet')
+    if (!listTitle.trim()) return showToast('Give the purchase list a title', 'error')
+    if (queued.length === 0) return showToast('No items queued yet', 'error')
     setSendingList(true)
     try {
       const list = await createPurchaseList(supportId, listTitle.trim(), queued.map(r => r.id))
       await sendListToSupervisor(list.id, supportId)
-      toast.success(`"${listTitle}" sent to CJ`)
+      showToast(`"${listTitle}" sent to CJ`)
       setListTitle('')
       setShowListForm(false)
       load()
-    } catch (e) { toast.error(e.message) }
+    } catch (e) { showToast(e.message, 'error') }
     finally { setSendingList(false) }
   }
 
@@ -220,6 +232,7 @@ export default function SupportQueuePage() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
+      {toastEl}
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Support review queue</h1>
         <p className="text-sm text-gray-500">Review staff requests, price them up, then send to CJ</p>
@@ -245,7 +258,6 @@ export default function SupportQueuePage() {
             <span className="ml-2 bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full">{incoming.length}</span>
           )}
         </h2>
-
         {loading ? (
           <p className="text-sm text-gray-400 text-center py-8">Loading…</p>
         ) : incoming.length === 0 ? (
@@ -254,7 +266,7 @@ export default function SupportQueuePage() {
           </div>
         ) : (
           incoming.map(req => (
-            <RequestCard key={req.id} req={req} supportId={supportId} onAction={load} />
+            <RequestCard key={req.id} req={req} supportId={supportId} onAction={load} showToast={showToast} />
           ))
         )}
       </div>
@@ -301,22 +313,19 @@ export default function SupportQueuePage() {
             <div className="flex justify-end">
               <button onClick={() => setShowListForm(true)}
                 className="px-5 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">
-                ✈ Send to CJ for approval
+                Send to CJ for approval →
               </button>
             </div>
           ) : (
             <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
               <p className="text-sm font-medium text-gray-700">Name this purchase run</p>
-              <input
-                type="text" value={listTitle} onChange={e => setListTitle(e.target.value)}
+              <input type="text" value={listTitle} onChange={e => setListTitle(e.target.value)}
                 placeholder="e.g. June 16 AM run"
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               />
               <div className="flex gap-2 justify-end">
                 <button onClick={() => setShowListForm(false)}
-                  className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
-                  Cancel
-                </button>
+                  className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
                 <button onClick={handleSendToCJ} disabled={sendingList}
                   className="px-5 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50">
                   {sendingList ? 'Sending…' : 'Send to CJ'}
