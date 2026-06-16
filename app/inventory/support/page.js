@@ -9,8 +9,6 @@ import {
   createPurchaseList, sendListToSupervisor,
 } from '../../../lib/inventory'
 
-const URGENCY_DOT = { low: 'bg-gray-300', normal: 'bg-green-500', high: 'bg-red-500' }
-
 function Toast({ msg, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t) }, [])
   return (
@@ -43,6 +41,12 @@ function ItemPriceEditor({ item, onChange }) {
       </div>
     </div>
   )
+}
+
+function staffName(s) {
+  if (!s) return 'Staff'
+  if (s.full_name) return s.full_name
+  return [s.first_name, s.last_name].filter(Boolean).join(' ') || 'Staff'
 }
 
 function RequestCard({ req, supportId, onAction, showToast }) {
@@ -88,7 +92,7 @@ function RequestCard({ req, supportId, onAction, showToast }) {
             {req.urgency === 'high' && <span style={{ padding:'2px 8px', background:'#fee2e2', color:'#b91c1c', fontSize:11, borderRadius:20, fontWeight:600 }}>Urgent</span>}
           </div>
           <p style={{ fontSize:14, fontWeight:600, color:'#111', margin:'3px 0 0' }}>{req.title}</p>
-          <p style={{ fontSize:12, color:'#9ca3af', margin:'2px 0 0' }}>{req.submitted_by_staff?.full_name ?? 'Staff'}</p>
+          <p style={{ fontSize:12, color:'#9ca3af', margin:'2px 0 0' }}>{staffName(req.submitted_by_staff)}</p>
         </div>
         <span style={{ color:'#9ca3af', fontSize:12 }}>{expanded ? '▲' : '▼'}</span>
       </div>
@@ -126,7 +130,7 @@ function RequestCard({ req, supportId, onAction, showToast }) {
           {!showReject && (
             <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:12 }}>
               <button onClick={() => setShowReject(true)} style={{ padding:'6px 14px', fontSize:12, border:'1px solid #fca5a5', borderRadius:8, background:'white', color:'#dc2626', cursor:'pointer' }}>✕ Return to staff</button>
-              <button onClick={handleQueue} disabled={loading || !allPriced} style={{ padding:'6px 14px', fontSize:12, border:'none', borderRadius:8, background:'#4f46e5', color:'white', cursor:'pointer', opacity:(loading||!allPriced)?0.5:1 }}>
+              <button onClick={handleQueue} disabled={loading || !allPriced} style={{ padding:'6px 14px', fontSize:12, border:'none', borderRadius:8, background:'#EF4576', color:'white', cursor:'pointer', opacity:(loading||!allPriced)?0.5:1 }}>
                 {loading ? 'Saving…' : '✓ Add to purchase list'}
               </button>
             </div>
@@ -139,9 +143,9 @@ function RequestCard({ req, supportId, onAction, showToast }) {
 
 export default function SupportQueuePage() {
   const [supportId, setSupportId] = useState(null)
-  const [incoming, setIncoming] = useState([])
-  const [queued, setQueued] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [incoming, setIncoming]   = useState([])
+  const [queued, setQueued]       = useState([])
+  const [loading, setLoading]     = useState(true)
   const [sendingList, setSendingList] = useState(false)
   const [listTitle, setListTitle] = useState('')
   const [showListForm, setShowListForm] = useState(false)
@@ -158,7 +162,13 @@ export default function SupportQueuePage() {
 
   useEffect(() => {
     const sb = createClient()
-    sb.auth.getUser().then(({ data }) => { setSupportId(data.user?.id ?? null); load() })
+    sb.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) return
+      // Look up staff row by email to get the correct staff.id
+      const { data: staff } = await sb.from('staff').select('id').eq('email', session.user.email).single()
+      setSupportId(staff?.id ?? session.user.id)
+      load()
+    })
   }, [])
 
   const handleSendToCJ = async () => {
@@ -181,7 +191,7 @@ export default function SupportQueuePage() {
       {toastEl}
       <div className="topbar">
         <div>
-          <div className="topbar-title">Support Review Queue</div>
+          <div className="topbar-title">Purchase Queue</div>
           <div className="topbar-sub">Review staff requests, price them up, then send to CJ</div>
         </div>
       </div>
@@ -189,9 +199,9 @@ export default function SupportQueuePage() {
       <div style={{ padding:'24px', maxWidth:760 }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
           {[
-            { label:'Needs review', value: incoming.length, color:'#d97706' },
-            { label:'Queued for CJ', value: queued.length, color:'#4f46e5' },
-            { label:'Est. total', value:`₱ ${queuedEstTotal.toLocaleString('en-PH')}`, color:'#111' },
+            { label:'Needs review',  value: incoming.length, color:'#d97706' },
+            { label:'Queued for CJ', value: queued.length,   color:'#EF4576' },
+            { label:'Est. total',    value:`₱ ${queuedEstTotal.toLocaleString('en-PH')}`, color:'#111' },
           ].map(s => (
             <div key={s.label} style={{ background:'white', border:'1px solid #e5e7eb', borderRadius:12, padding:16 }}>
               <p style={{ fontSize:11, color:'#6b7280', margin:0 }}>{s.label}</p>
@@ -204,7 +214,8 @@ export default function SupportQueuePage() {
           Incoming from staff {incoming.length > 0 && <span style={{ background:'#fef3c7', color:'#92400e', padding:'2px 8px', borderRadius:20, marginLeft:8 }}>{incoming.length}</span>}
         </p>
 
-        {loading ? <p style={{ color:'#9ca3af', fontSize:13, textAlign:'center', padding:40 }}>Loading…</p>
+        {loading
+          ? <p style={{ color:'#9ca3af', fontSize:13, textAlign:'center', padding:40 }}>Loading…</p>
           : incoming.length === 0
             ? <div style={{ textAlign:'center', padding:40, background:'#f9fafb', borderRadius:12, border:'1px dashed #e5e7eb' }}><p style={{ color:'#9ca3af', fontSize:13 }}>No pending requests</p></div>
             : incoming.map(req => <RequestCard key={req.id} req={req} supportId={supportId} onAction={load} showToast={showToast} />)
@@ -224,7 +235,7 @@ export default function SupportQueuePage() {
                       <td style={{ padding:'10px 14px', fontWeight:600, color:'#1f2937' }}>{item.item_name}</td>
                       <td style={{ padding:'10px 14px', color:'#6b7280' }}>{item.quantity} {item.unit}</td>
                       <td style={{ padding:'10px 14px', color:'#6b7280' }}>{item.preferred_store ?? '—'}</td>
-                      <td style={{ padding:'10px 14px', color:'#9ca3af', fontSize:11 }}>{req.submitted_by_staff?.full_name ?? 'Staff'}</td>
+                      <td style={{ padding:'10px 14px', color:'#9ca3af', fontSize:11 }}>{staffName(req.submitted_by_staff)}</td>
                       <td style={{ padding:'10px 14px', textAlign:'right', color:'#374151' }}>{item.est_total != null ? `₱ ${item.est_total.toLocaleString('en-PH',{minimumFractionDigits:2})}` : '—'}</td>
                     </tr>
                   )) ?? [])}
