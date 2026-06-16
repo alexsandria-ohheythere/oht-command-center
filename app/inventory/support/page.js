@@ -2,7 +2,7 @@
 // OHT Inventory — Supabase queries
 // Place at: lib/inventory.js
 // ─────────────────────────────────────────────
-import { createClient } from './supabase'
+import { createClient } from '../../../lib/supabase'
 
 const sb = () => createClient()
 
