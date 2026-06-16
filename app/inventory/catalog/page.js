@@ -261,10 +261,20 @@ export default function CatalogPage() {
                               style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color:'#374151' }}>
                               Edit
                             </button>
-                            <button onClick={() => toggleActive(item)}
-                              style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color: item.is_active ? '#9ca3af' : '#16a34a' }}>
-                              {item.is_active ? 'Deactivate' : 'Reactivate'}
-                            </button>
+                           <button onClick={() => toggleActive(item)}
+  style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color: item.is_active ? '#9ca3af' : '#16a34a' }}>
+  {item.is_active ? 'Deactivate' : 'Reactivate'}
+</button>
+<button onClick={async () => {
+  if (!confirm(`Delete "${item.name}"? This cannot be undone.`)) return
+  const sb = createClient()
+  await sb.from('inventory_catalog').delete().eq('id', item.id)
+  showToast('Item deleted')
+  load()
+}}
+  style={{ padding:'5px 12px', fontSize:11, border:'1px solid #fca5a5', borderRadius:8, background:'white', cursor:'pointer', color:'#dc2626' }}>
+  Delete
+</button>
                           </div>
                         </div>
                       )}
