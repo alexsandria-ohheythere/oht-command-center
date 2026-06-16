@@ -5,6 +5,7 @@ import { createClient } from '../../lib/supabase'
 
 const SHIFTS = [
   { id:'am',  label:'AM',  time:'6:30AM–3:30PM',  paid:8, color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648' },
+  { id:'ops', label:'OPS', time:'8:00AM–5:00PM',  paid:8, color:'#7a3a8a', bg:'#f5eeff', border:'#b06af5' },
   { id:'mid', label:'MID', time:'11AM–8PM',        paid:8, color:'#a06000', bg:'#fef3e2', border:'#d4a843' },
   { id:'pm',  label:'PM',  time:'3PM–11PM',        paid:7, color:'#2d5a8a', bg:'#e8f0fb', border:'#4a90c4' },
 ]
@@ -18,6 +19,9 @@ const ROLE_ROWS = [
   { shiftId:'am', role:'Sous Chef',                 label:'Sous Chef / Kitchen Staff', group:'kitchen' },
   { shiftId:'am', role:'Senior Barista',            label:'Senior Barista',     group:'kitchen' },
   { shiftId:'am', role:'Junior Barista',            label:'Junior Barista',     group:'kitchen' },
+  // OPS
+  { shiftId:'ops', role:'Cafe Supervisor',         label:'Cafe Supervisor',   group:'front', shiftBreak:true },
+  { shiftId:'ops', role:'Cafe Operations Support', label:'Cafe Support',      group:'front' },
   // MID
   { shiftId:'mid', role:'Cafe Supervisor',          label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'mid', role:'Cafe Operations Support',  label:'Cafe Support',      group:'front' },
