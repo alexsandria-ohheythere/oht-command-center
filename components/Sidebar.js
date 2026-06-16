@@ -2,6 +2,7 @@
 import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '../lib/supabase'
 import { can } from '../lib/auth'
+import { useState, useEffect } from 'react'
 
 const ROLE_PROFILES = {
   'ohheythere.matcha@gmail.com': { name:'Alex',     role:'Managing Director', color:'#7ab648', initials:'A' },
@@ -9,10 +10,24 @@ const ROLE_PROFILES = {
   'hr.ohtgroup@gmail.com':       { name:'Richelle', role:'Human Resources',   color:'#e8845a', initials:'R'  },
 }
 
-export default function Sidebar({ user, userRole }) {
+export default function Sidebar({ user, userRole, onClose }) {
   const router   = useRouter()
   const pathname = usePathname()
   const role     = userRole?.role || 'staff'
+  const [navOverrides, setNavOverrides] = useState({}) // { [id]: { label, hidden } }
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.from('settings').select('value').eq('key','sidebar_nav').single()
+      .then(({ data }) => {
+        if (data?.value) {
+          const saved = JSON.parse(data.value)
+          const map = {}
+          saved.forEach(item => { map[item.id] = item })
+          setNavOverrides(map)
+        }
+      })
+  }, [])
 
   const profile = ROLE_PROFILES[user?.email] || {
     name: user?.email?.split('@')[0] || 'User',
@@ -33,36 +48,48 @@ export default function Sidebar({ user, userRole }) {
     return pathname.startsWith(href)
   }
 
-  const NAV = [
+  const NAV_BASE = [
     { type:'section', label:'Overview' },
-    { type:'link', href:'/dashboard',          icon:'🏠', label:'Dashboard',           show: true },
+    { type:'link', id:'dashboard',  href:'/dashboard',          icon:'🏠', label:'Dashboard',           show: true },
 
     { type:'section', label:'Operations' },
-    { type:'link', href:'/schedule',           icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
-    { type:'link', href:'/tasks',              icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
-    { type:'link', href:'/leave',              icon:'🗓️', label:'Leave & Unavail.',     show: can(role,'leaveReview') },
-    { type:'link', href:'/roles',              icon:'📝', label:'Role Tasks',            show: can(role,'roles') },
-    { type:'link', href:'/checkin',            icon:'✔️', label:'Daily Check-In',        show: can(role,'checkin') },
-    { type:'link', href:'/payroll',            icon:'💸', label:'Payroll',               show: can(role,'payrollUpload') },
-    { type:'link', href:'/staff',              icon:'👥', label:'Staff',                 show: can(role,'staffView') },
+    { type:'link', id:'schedule',   href:'/schedule',           icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
+    { type:'link', id:'tasks',      href:'/tasks',              icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
+    { type:'link', id:'leave',      href:'/leave',              icon:'🗓️', label:'Leave & Unavail.',     show: can(role,'leaveReview') },
+    { type:'link', id:'roles',      href:'/roles',              icon:'📝', label:'Role Tasks',            show: can(role,'roles') },
+    { type:'link', id:'checkin',    href:'/checkin',            icon:'✔️', label:'Daily Check-In',        show: can(role,'checkin') },
+    { type:'link', id:'payroll',    href:'/payroll',            icon:'💸', label:'Payroll',               show: can(role,'payrollUpload') },
+    { type:'link', id:'staff',      href:'/staff',              icon:'👥', label:'Staff',                 show: can(role,'staffView') },
 
     { type:'section', label:'Documents', show: can(role,'admin') },
-    { type:'link', href:'/contracts',          icon:'📄', label:'Contracts',             show: can(role,'admin') },
-    { type:'link', href:'/files',              icon:'📁', label:'Files · 201',           show: can(role,'admin') },
+    { type:'link', id:'contracts',  href:'/contracts',          icon:'📄', label:'Contracts',             show: can(role,'admin') },
+    { type:'link', id:'files',      href:'/files',              icon:'📁', label:'Files · 201',           show: can(role,'admin') },
 
     { type:'section', label:'Finance', show: can(role,'finance') },
-    { type:'link', href:'/finance',            icon:'📊', label:'Financial Statement',   show: can(role,'finance') },
-    { type:'link', href:'/finance/sales',      icon:'💰', label:'Sales',                 show: can(role,'finance') },
-    { type:'link', href:'/finance/expenses',   icon:'🧾', label:'Expenses',              show: can(role,'finance') },
-    { type:'link', href:'/finance/forecast',   icon:'📈', label:'Forecast',              show: can(role,'finance') },
-    { type:'link', href:'/finance/bank',       icon:'🏦', label:'Bank Records',          show: can(role,'finance') },
+    { type:'link', id:'finance',    href:'/finance',            icon:'📊', label:'Financial Statement',   show: can(role,'finance') },
+    { type:'link', id:'sales',      href:'/finance/sales',      icon:'💰', label:'Sales',                 show: can(role,'finance') },
+    { type:'link', id:'expenses',   href:'/finance/expenses',   icon:'🧾', label:'Expenses',              show: can(role,'finance') },
+    { type:'link', id:'forecast',   href:'/finance/forecast',   icon:'📈', label:'Forecast',              show: can(role,'finance') },
+    { type:'link', id:'bank',       href:'/finance/bank',       icon:'🏦', label:'Bank Records',          show: can(role,'finance') },
 
     { type:'section', label:'Comms' },
-    { type:'link', href:'/announce',           icon:'📣', label:'Announcements',         show: can(role,'announcements') },
+    { type:'link', id:'announce',   href:'/announce',           icon:'📣', label:'Announcements',         show: can(role,'announcements') },
 
     { type:'section', label:'Admin', show: can(role,'settings') },
-    { type:'link', href:'/settings',           icon:'⚙️', label:'Settings',              show: can(role,'settings') },
+    { type:'link', id:'settings',   href:'/settings',           icon:'⚙️', label:'Settings',              show: can(role,'settings') },
   ]
+
+  // Apply label renames and hidden flags from Settings
+  const NAV = NAV_BASE.map(item => {
+    if (item.type !== 'link' || !item.id) return item
+    const override = navOverrides[item.id]
+    if (!override) return item
+    return {
+      ...item,
+      label: override.label || item.label,
+      show: override.hidden ? false : item.show,
+    }
+  })
 
   return (
     <div style={{ width:220, flexShrink:0, background:'#EF4576', display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden', fontFamily:"'DM Sans',sans-serif" }}>
