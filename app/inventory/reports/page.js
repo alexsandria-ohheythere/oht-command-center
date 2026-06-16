@@ -216,8 +216,23 @@ export default function SupervisorReportsPage() {
     sb.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) return
       const { data: staff } = await sb.from('staff').select('id').eq('email', session.user.email).single()
-      setSupervisorId(staff?.id ?? session.user.id)
-      load()
+      const id = staff?.id ?? session.user.id
+      setSupervisorId(id)
+      // Load with the id directly instead of relying on state
+      const [pend, hist] = await Promise.all([
+        sb.from('inventory_reports')
+          .select('*, items:inventory_report_items(*), submitted_by_staff:staff!submitted_by(id, first_name, last_name)')
+          .eq('status', 'submitted')
+          .order('created_at', { ascending: false }),
+        sb.from('inventory_reports')
+          .select('*, items:inventory_report_items(*), submitted_by_staff:staff!submitted_by(id, first_name, last_name)')
+          .in('status', ['reviewed', 'approved', 'rejected'])
+          .eq('report_date', dateFilter)
+          .order('created_at', { ascending: false }),
+      ])
+      setPending(pend.data ?? [])
+      setHistory(hist.data ?? [])
+      setLoading(false)
     })
   }, [])
 
