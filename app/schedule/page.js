@@ -15,19 +15,19 @@ const ROLE_ROWS = [
   { shiftId:'am', role:'Cafe Supervisor',          label:'Cafe Supervisor',    group:'front' },
   { shiftId:'am', role:'Cafe Operations Support',  label:'Cafe Support',       group:'front' },
   { shiftId:'am', role:'Executive Chef',            label:'Executive Chef',     group:'kitchen', divider:true },
-  { shiftId:'am', role:'Sous Chef',                 label:'Sous Chef',          group:'kitchen' },
+  { shiftId:'am', role:'Sous Chef',                 label:'Sous Chef / Kitchen Staff', group:'kitchen' },
   { shiftId:'am', role:'Senior Barista',            label:'Senior Barista',     group:'kitchen' },
   { shiftId:'am', role:'Junior Barista',            label:'Junior Barista',     group:'kitchen' },
   // MID
   { shiftId:'mid', role:'Cafe Supervisor',          label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'mid', role:'Cafe Operations Support',  label:'Cafe Support',      group:'front' },
-  { shiftId:'mid', role:'Sous Chef',                label:'Sous Chef',         group:'kitchen', divider:true },
+  { shiftId:'mid', role:'Sous Chef',                label:'Sous Chef / Kitchen Staff', group:'kitchen', divider:true },
   { shiftId:'mid', role:'Junior Barista',           label:'Junior Barista',    group:'kitchen' },
   // PM
   { shiftId:'pm', role:'Cafe Supervisor',           label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'pm', role:'Cafe Operations Support',   label:'Cafe Support',      group:'front' },
   { shiftId:'pm', role:'Executive Chef',            label:'Executive Chef',    group:'kitchen', divider:true },
-  { shiftId:'pm', role:'Sous Chef',                 label:'Sous Chef',         group:'kitchen' },
+  { shiftId:'pm', role:'Sous Chef',                 label:'Sous Chef / Kitchen Staff', group:'kitchen' },
   { shiftId:'pm', role:'Senior Barista',            label:'Senior Barista',    group:'kitchen' },
   { shiftId:'pm', role:'Junior Barista',            label:'Junior Barista',    group:'kitchen' },
 ]
@@ -64,6 +64,7 @@ function roleMatches(staffRole, rowRole) {
   if (!staffRole) return false
   if (staffRole === rowRole) return true
   if (rowRole === 'Junior Barista' && staffRole.startsWith('Junior Barista')) return true
+  if (rowRole === 'Sous Chef' && staffRole === 'Kitchen Staff') return true
   return false
 }
 
