@@ -1,17 +1,17 @@
 'use client'
+export const dynamic = 'force-dynamic'
 // ─────────────────────────────────────────────
 // OHT Admin — Inventory / CJ Approval View
 // Place at: app/inventory/approve/page.js
 // ─────────────────────────────────────────────
 import { useState, useEffect, useCallback } from 'react'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { createClient } from '../../../lib/supabase'
 import {
   getPurchaseLists,
   supervisorApproveList,
   supervisorRejectList,
   markListPurchased,
-} from '@/app/lib/inventory'
-import { toast } from 'sonner'
+} from '../../../lib/inventory'
 
 const LIST_STATUS_STYLE = {
   pending_supervisor: 'bg-amber-100 text-amber-700',
@@ -28,7 +28,24 @@ const LIST_STATUS_LABEL = {
   closed:             'Closed',
 }
 
-function PurchaseListCard({ list, supervisorId, onAction }) {
+function Toast({ msg, type, onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t) }, [])
+  return (
+    <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${type === 'error' ? 'bg-red-600' : 'bg-gray-900'}`}>
+      {msg}
+    </div>
+  )
+}
+
+function useToast() {
+  const [toast, setToast] = useState(null)
+  const show = (msg, type = 'success') => setToast({ msg, type })
+  const hide = () => setToast(null)
+  const el = toast ? <Toast msg={toast.msg} type={toast.type} onClose={hide} /> : null
+  return { show, el }
+}
+
+function PurchaseListCard({ list, supervisorId, onAction, showToast }) {
   const [expanded, setExpanded] = useState(list.status === 'pending_supervisor')
   const [loading, setLoading] = useState(false)
   const [showReject, setShowReject] = useState(false)
@@ -41,31 +58,31 @@ function PurchaseListCard({ list, supervisorId, onAction }) {
     setLoading(true)
     try {
       await supervisorApproveList(list.id, supervisorId, notes || undefined)
-      toast.success(`${list.list_number} approved — support dispatched`)
+      showToast(`${list.list_number} approved — support dispatched`)
       onAction()
-    } catch (e) { toast.error(e.message) }
+    } catch (e) { showToast(e.message, 'error') }
     finally { setLoading(false) }
   }
 
   const handleReject = async () => {
-    if (!rejectReason.trim()) return toast.error('Add a reason')
+    if (!rejectReason.trim()) return showToast('Add a reason', 'error')
     setLoading(true)
     try {
       await supervisorRejectList(list.id, supervisorId, rejectReason.trim())
-      toast.success(`${list.list_number} returned to support`)
+      showToast(`${list.list_number} returned to support`)
       onAction()
-    } catch (e) { toast.error(e.message) }
+    } catch (e) { showToast(e.message, 'error') }
     finally { setLoading(false) }
   }
 
   const handleMarkPurchased = async () => {
-    if (!actualTotal) return toast.error('Enter the actual total spent')
+    if (!actualTotal) return showToast('Enter the actual total spent', 'error')
     setLoading(true)
     try {
       await markListPurchased(list.id, supervisorId, parseFloat(actualTotal))
-      toast.success(`${list.list_number} marked as purchased`)
+      showToast(`${list.list_number} marked as purchased`)
       onAction()
-    } catch (e) { toast.error(e.message) }
+    } catch (e) { showToast(e.message, 'error') }
     finally { setLoading(false) }
   }
 
@@ -89,7 +106,7 @@ function PurchaseListCard({ list, supervisorId, onAction }) {
             {list.est_total != null && ` · Est. ₱ ${list.est_total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
           </p>
         </div>
-        <span className="text-gray-400">{expanded ? '▲' : '▼'}</span>
+        <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
       </div>
 
       {expanded && (
@@ -166,7 +183,9 @@ function PurchaseListCard({ list, supervisorId, onAction }) {
                 <button onClick={() => setShowReject(false)}
                   className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
                 <button onClick={handleReject} disabled={loading}
-                  className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50">Return to support</button>
+                  className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50">
+                  Return to support
+                </button>
               </div>
             </div>
           )}
@@ -209,7 +228,7 @@ function PurchaseListCard({ list, supervisorId, onAction }) {
               {list.status === 'approved' && (
                 <button onClick={() => setShowPurchased(true)}
                   className="px-4 py-1.5 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium">
-                  🛒 Mark as purchased
+                  Mark as purchased
                 </button>
               )}
             </div>
@@ -221,12 +240,12 @@ function PurchaseListCard({ list, supervisorId, onAction }) {
 }
 
 export default function CJApprovalPage() {
-  const supabase = createClientComponentClient()
   const [supervisorId, setSupervisorId] = useState(null)
   const [pending, setPending]   = useState([])
   const [approved, setApproved] = useState([])
   const [history, setHistory]   = useState([])
   const [loading, setLoading]   = useState(true)
+  const { show: showToast, el: toastEl } = useToast()
 
   const load = useCallback(async () => {
     const [pend, appr, hist] = await Promise.all([
@@ -241,7 +260,8 @@ export default function CJApprovalPage() {
   }, [])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    const sb = createClient()
+    sb.auth.getUser().then(({ data }) => {
       setSupervisorId(data.user?.id ?? null)
       load()
     })
@@ -251,6 +271,7 @@ export default function CJApprovalPage() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
+      {toastEl}
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Purchase approvals</h1>
         <p className="text-sm text-gray-500">Review consolidated purchase lists from ops support</p>
@@ -274,19 +295,19 @@ export default function CJApprovalPage() {
           {pending.length > 0 && (
             <section className="space-y-3">
               <h2 className="text-sm font-medium text-gray-700 uppercase tracking-wide">Awaiting your approval</h2>
-              {pending.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} />)}
+              {pending.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
             </section>
           )}
           {approved.length > 0 && (
             <section className="space-y-3">
               <h2 className="text-sm font-medium text-gray-700 uppercase tracking-wide">Approved — support on errand</h2>
-              {approved.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} />)}
+              {approved.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
             </section>
           )}
           {history.length > 0 && (
             <section className="space-y-3">
               <h2 className="text-sm font-medium text-gray-700 uppercase tracking-wide">Recent history</h2>
-              {history.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} />)}
+              {history.map(list => <PurchaseListCard key={list.id} list={list} supervisorId={supervisorId} onAction={load} showToast={showToast} />)}
             </section>
           )}
           {pending.length === 0 && approved.length === 0 && history.length === 0 && (
@@ -299,4 +320,3 @@ export default function CJApprovalPage() {
     </div>
   )
 }
-
