@@ -62,6 +62,7 @@ export default function Sidebar({ user, userRole, onClose }) {
     { type:'link', id:'staff',            href:'/staff',                  icon:'👥', label:'Staff',                show: can(role,'staffView') },
 
     { type:'section', label:'Inventory' },
+    { type:'link', id:'inv-catalog',      href:'/inventory/catalog',      icon:'📦', label:'Catalog',              show: can(role,'admin') },
     { type:'link', id:'inv-support',      href:'/inventory/support',      icon:'🛒', label:'Purchase Queue',       show: can(role,'admin') },
     { type:'link', id:'inv-approve',      href:'/inventory/approve',      icon:'✅', label:'Purchase Approvals',   show: can(role,'admin') },
 
