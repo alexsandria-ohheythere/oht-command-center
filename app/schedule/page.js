@@ -249,6 +249,52 @@ export default function SchedulePage() {
         {isPublished && <span style={{marginLeft:'auto',fontSize:10,fontWeight:700,color:'var(--matcha-dark)',background:'var(--matcha-pale)',padding:'3px 9px',borderRadius:8}}>✓ Published this week</span>}
       </div>
 
+      {/* ── SHIFT REQUIREMENT ALERT ── */}
+      {(() => {
+        const required = staff.filter(s => s.min_shifts_per_week === 5)
+        if (!required.length) return null
+        const shortfall = required.map(s => {
+          const count = weekDates.reduce((n, d) => {
+            const iso = toISO(d)
+            const assigned = SHIFTS.some(sh => schedules.find(sc => sc.staff_id===s.id && sc.shift_date===iso && sc.shift_type===sh.id))
+            return assigned ? n+1 : n
+          }, 0)
+          return { ...s, count, missing: 5 - count }
+        }).filter(s => s.missing > 0)
+
+        if (!shortfall.length) return (
+          <div style={{background:'var(--matcha-pale)',borderBottom:'1px solid var(--matcha)',padding:'7px 24px',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+            <span style={{fontSize:13}}>✅</span>
+            <span style={{fontSize:11,fontWeight:600,color:'var(--matcha-dark)'}}>All required staff have 5 shifts this week</span>
+          </div>
+        )
+
+        return (
+          <div style={{background:'#fef3e2',borderBottom:'1px solid #d4a84366',padding:'8px 24px',display:'flex',alignItems:'center',gap:12,flexShrink:0,flexWrap:'wrap'}}>
+            <span style={{fontSize:14}}>⚠️</span>
+            <span style={{fontSize:11,fontWeight:700,color:'#a06000',flexShrink:0}}>
+              {shortfall.length} staff below 5-shift minimum:
+            </span>
+            <div style={{display:'flex',gap:7,flexWrap:'wrap',flex:1}}>
+              {shortfall.map(s => (
+                <div key={s.id} style={{display:'flex',alignItems:'center',gap:5,background:'white',border:'1px solid #d4a84388',borderRadius:8,padding:'3px 10px',fontSize:11}}>
+                  <div style={{width:18,height:18,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'white',flexShrink:0}}>
+                    {initials(s.first_name,s.last_name)}
+                  </div>
+                  <span style={{fontWeight:600,color:'var(--espresso)'}}>{s.first_name} {s.last_name}</span>
+                  <span style={{color:'#c0392b',fontWeight:700,fontFamily:"'DM Mono',monospace",fontSize:10}}>
+                    {s.count}/5
+                  </span>
+                  <span style={{fontSize:9,color:'#a06000',fontWeight:600}}>
+                    ({s.missing} missing)
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* MAIN LAYOUT */}
       <div style={{display:'flex',flex:1,overflow:'hidden',height:'calc(100vh - 116px)'}}>
 
