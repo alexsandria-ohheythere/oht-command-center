@@ -212,10 +212,10 @@ export default function StaffPage() {
                             <input style={{...iStyle,width:70}} value={editForm.nickname} onChange={ef('nickname')} placeholder="Nickname"/>
                           </div>
                         ) : (
-                          <div>
-                            <div style={{fontWeight:600}}>{s.first_name} {s.last_name}</div>
+                          <a href={`/staff/${s.id}`} style={{textDecoration:'none',color:'inherit'}}>
+                            <div style={{fontWeight:600,color:'var(--text-primary)'}}>{s.first_name} {s.last_name}</div>
                             {s.nickname && <div style={{fontSize:10,color:'var(--text-muted)'}}>"{s.nickname}"</div>}
-                          </div>
+                          </a>
                         )}
                       </td>
 
