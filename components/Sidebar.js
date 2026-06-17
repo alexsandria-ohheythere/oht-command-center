@@ -71,6 +71,7 @@ export default function Sidebar({ user, userRole, onClose }) {
 
     { type:'section', label:'Reports', show: can(role,'incidentReports') },
     { type:'link', id:'reports-incident', href:'/reports',                icon:'⚠️', label:'Incident Reports',     show: can(role,'incidentReports') },
+    { type:'link', id:'reports-wastage',  href:'/reports/wastage',        icon:'🗑️', label:'Wastage Reports',       show: can(role,'incidentReports') },
 
     { type:'section', label:'Documents', show: can(role,'admin') },
     { type:'link', id:'contracts',        href:'/contracts',              icon:'📄', label:'Contracts',            show: can(role,'admin') },
