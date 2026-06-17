@@ -4,6 +4,9 @@ import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 
+// Only Managing Director (Alex) and CEO (CJ) may view incident reports
+const INCIDENT_AUTHORIZED = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
+
 const STATUS_STYLE = {
   pending:  { bg:'#fef3e2', color:'#a06000', label:'Pending' },
   reviewed: { bg:'#e8f0fb', color:'#2d5a8a', label:'Reviewed' },
@@ -29,6 +32,7 @@ const fmtDate = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-PH', {
 const fmtCreated = s => s ? new Date(s).toLocaleDateString('en-PH', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }) : '—'
 
 export default function ReportsPage() {
+  const [userEmail, setUserEmail]   = useState(null)
   const [reports, setReports]       = useState([])
   const [filtered, setFiltered]     = useState([])
   const [loading, setLoading]       = useState(true)
@@ -47,6 +51,8 @@ export default function ReportsPage() {
     setLoading(true)
     try {
       const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user?.email) setUserEmail(session.user.email.toLowerCase())
       const { data } = await supabase
         .from('incident_reports')
         .select('*, staff(first_name, last_name, nickname, role)')
@@ -102,6 +108,15 @@ export default function ReportsPage() {
 
   return (
     <AuthShell>
+      {userEmail !== null && !INCIDENT_AUTHORIZED.includes(userEmail) ? (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:12, fontFamily:"'DM Sans',sans-serif" }}>
+          <div style={{ fontSize:40 }}>🔒</div>
+          <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:16, fontWeight:700, color:'#1a1208' }}>Access Restricted</div>
+          <div style={{ fontSize:13, color:'#7a6a50', textAlign:'center', maxWidth:320, lineHeight:1.6 }}>
+            Incident reports are only accessible to the Managing Director and CEO.
+          </div>
+        </div>
+      ) : (
       <div style={{ display:'flex', flexDirection:'column', height:'100%', overflow:'hidden', fontFamily:"'DM Sans',sans-serif" }}>
 
         {/* Page header */}
@@ -328,6 +343,7 @@ export default function ReportsPage() {
         <div style={{ position:'fixed', bottom:20, left:'50%', transform:'translateX(-50%)', background:'#1a1208', color:'white', borderRadius:10, padding:'10px 18px', fontSize:12, fontWeight:600, zIndex:999, display:'flex', gap:8, alignItems:'center', whiteSpace:'nowrap', boxShadow:'0 4px 20px rgba(0,0,0,.3)' }}>
           <span>{toast.icon}</span><span>{toast.msg}</span>
         </div>
+      )}
       )}
     </AuthShell>
   )
