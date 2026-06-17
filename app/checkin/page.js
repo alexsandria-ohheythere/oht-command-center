@@ -58,6 +58,18 @@ export default function CheckinPage() {
     setView('overview')
     setSelectedStaff(null)
     fetchAll()
+
+    const channel = supabase
+      .channel(`checkin-realtime-${dateISO}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'role_tasks' }, () => {
+        fetchAll()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_task_assignments', filter: `shift_date=eq.${dateISO}` }, () => {
+        fetchAll()
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   }, [dateISO])
 
   async function fetchAll() {
