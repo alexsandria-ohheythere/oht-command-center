@@ -11,6 +11,7 @@ const ROLES = [
 
 const SHIFTS = [
   { id:'am',  label:'AM Shift',  time:'6:30AM–3:30PM',  color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648' },
+  { id:'ops', label:'OPS Shift', time:'8:00AM–5:00PM',  color:'#7a3a8a', bg:'#f5eeff', border:'#b06af5' },
   { id:'mid', label:'Mid Shift', time:'11:00AM–8:00PM', color:'#a06000', bg:'#fef3e2', border:'#d4a843' },
   { id:'pm',  label:'PM Shift',  time:'3:00PM–11:00PM', color:'#2d5a8a', bg:'#e8f0fb', border:'#4a90c4' },
 ]
@@ -257,7 +258,7 @@ export default function RolesPage() {
             <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:12,color:'var(--espresso)'}}>
               All Shifts Overview — {selectedRole}
             </div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
               {SHIFTS.map(sh => {
                 const shiftTasks = tasks.filter(t=>t.role===selectedRole&&t.shift_type===sh.id&&t.is_active)
                 return (
