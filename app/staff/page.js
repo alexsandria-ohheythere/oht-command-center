@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 
@@ -13,6 +13,34 @@ const iStyle = {background:'var(--surface)',border:'1px solid var(--border)',bor
 
 const EMPTY = {first_name:'',last_name:'',nickname:'',role:'Senior Barista',employment_type:'Full-time',email:'',phone:'',min_shifts_per_week:0}
 
+// Sortable column header
+function SortTh({ label, colKey, sortKey, sortDir, onSort, style }) {
+  const active = sortKey === colKey
+  return (
+    <th
+      onClick={() => onSort(colKey)}
+      style={{
+        padding:'11px 12px',
+        textAlign:'left',
+        fontSize:9,
+        fontWeight:700,
+        letterSpacing:1.5,
+        textTransform:'uppercase',
+        color: active ? 'white' : 'var(--matcha-light)',
+        cursor:'pointer',
+        userSelect:'none',
+        whiteSpace:'nowrap',
+        ...style
+      }}
+    >
+      {label}
+      <span style={{marginLeft:5, opacity: active ? 1 : 0.4, fontSize:10}}>
+        {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+      </span>
+    </th>
+  )
+}
+
 export default function StaffPage() {
   const supabase = createClient()
   const [staff, setStaff]           = useState([])
@@ -24,21 +52,28 @@ export default function StaffPage() {
   const [addForm, setAddForm]       = useState(EMPTY)
   const [search, setSearch]         = useState('')
   const [toast, setToast]           = useState(null)
-  const [showOnboard, setShowOnboard] = useState(null) // staff object
+  const [showOnboard, setShowOnboard] = useState(null)
   const [onboardPass, setOnboardPass] = useState('')
   const [onboarding, setOnboarding]   = useState(false)
+  const [sortKey, setSortKey]         = useState('last_name')
+  const [sortDir, setSortDir]         = useState('asc')
   const fileRef = useRef()
 
   useEffect(() => { fetchStaff() }, [])
 
   async function fetchStaff() {
     setLoading(true)
-    const { data } = await supabase.from('staff').select('*').order('last_name')
+    const { data } = await supabase.from('staff').select('*')
     setStaff(data || [])
     setLoading(false)
   }
 
   function showToast(icon, msg) { setToast({icon,msg}); setTimeout(()=>setToast(null),3500) }
+
+  function handleSort(key) {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
 
   // ── INLINE EDIT ──
   function startEdit(s) {
@@ -80,13 +115,11 @@ export default function StaffPage() {
     setSaving(false)
   }
 
-  // ── ONBOARD (create Supabase Auth account) ──
+  // ── ONBOARD ──
   async function onboardStaff() {
     if (!showOnboard?.email) { showToast('⚠️','Staff must have an email address'); return }
     if (!onboardPass || onboardPass.length < 6) { showToast('⚠️','Password must be at least 6 characters'); return }
     setOnboarding(true)
-    // Call Supabase Admin API via our edge function or service role
-    // Since we can't use service role on client, we'll use signUp which creates the user
     const { error } = await supabase.auth.signUp({
       email: showOnboard.email,
       password: onboardPass,
@@ -124,9 +157,33 @@ export default function StaffPage() {
     reader.readAsText(file); e.target.value=''
   }
 
-  const filtered = staff.filter(s => `${s.first_name} ${s.last_name} ${s.nickname||''} ${s.role}`.toLowerCase().includes(search.toLowerCase()))
+  // ── FILTER + SORT ──
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    const results = staff.filter(s =>
+      `${s.first_name} ${s.last_name} ${s.nickname||''} ${s.role}`.toLowerCase().includes(q)
+    )
+    return [...results].sort((a, b) => {
+      let av, bv
+      if (sortKey === 'name') {
+        av = `${a.last_name} ${a.first_name}`.toLowerCase()
+        bv = `${b.last_name} ${b.first_name}`.toLowerCase()
+      } else if (sortKey === 'min_shifts_per_week') {
+        av = a.min_shifts_per_week || 0
+        bv = b.min_shifts_per_week || 0
+      } else {
+        av = (a[sortKey] || '').toLowerCase()
+        bv = (b[sortKey] || '').toLowerCase()
+      }
+      const cmp = typeof av === 'number' ? av - bv : av.localeCompare(bv)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [staff, search, sortKey, sortDir])
+
   const ef = k => e => setEditForm(p=>({...p,[k]:e.target.value}))
   const af = k => e => setAddForm(p=>({...p,[k]:e.target.value}))
+
+  const thBase = {padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}
 
   return (
     <AuthShell>
@@ -186,9 +243,14 @@ export default function StaffPage() {
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
               <thead>
                 <tr style={{background:'var(--espresso)'}}>
-                  {['','Name','Role','Type','Email','Phone','Min Shifts','Actions'].map(h=>(
-                    <th key={h} style={{padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}}>{h}</th>
-                  ))}
+                  <th style={{...thBase,width:36}}></th>
+                  <SortTh label="Name"       colKey="name"               sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="Role"       colKey="role"               sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="Type"       colKey="employment_type"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th style={thBase}>Email</th>
+                  <th style={thBase}>Phone</th>
+                  <SortTh label="Min Shifts" colKey="min_shifts_per_week" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th style={thBase}>Actions</th>
                 </tr>
               </thead>
               <tbody>
