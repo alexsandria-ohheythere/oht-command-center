@@ -7,6 +7,7 @@ import { createClient } from '../../lib/supabase'
 // Managing Director (Alex), CEO (CJ), and HR (Richelle) may view incident reports
 // HR may NOT see reports involving a Cafe Supervisor
 const INCIDENT_AUTHORIZED = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com', 'hr.ohtgroup@gmail.com']
+const DELETE_AUTHORIZED   = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
 const HR_EMAIL = 'hr.ohtgroup@gmail.com'
 
 const STATUS_STYLE = {
@@ -44,7 +45,9 @@ export default function ReportsPage() {
   const [filterStatus, setFilter]   = useState('all')
   const [filterDept, setFilterDept] = useState('all')
   const [search, setSearch]         = useState('')
-  const [adminNotes, setAdminNotes] = useState('')
+  const [adminNotes, setAdminNotes]       = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting]           = useState(false)
 
   useEffect(() => { fetchReports() }, [])
   useEffect(() => { applyFilters() }, [reports, filterStatus, filterDept, search])
@@ -103,6 +106,22 @@ export default function ReportsPage() {
     } catch(e) { showToast('❌', 'Update failed') }
     setSaving(false)
   }
+
+  async function deleteReport(id) {
+    setDeleting(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from('incident_reports').delete().eq('id', id)
+      if (error) { showToast('❌', error.message); setDeleting(false); return }
+      setSelected(null)
+      setConfirmDelete(false)
+      await fetchReports()
+      showToast('🗑️', 'Report deleted')
+    } catch(e) { showToast('❌', 'Delete failed') }
+    setDeleting(false)
+  }
+
+  const canDelete = DELETE_AUTHORIZED.includes(userEmail)
 
   const DEPTS = ['Operations', 'Creatives', 'Cafe Bar', 'Commissary']
 
@@ -249,6 +268,12 @@ export default function ReportsPage() {
                       📁 View 201
                     </a>
                   )}
+                  {canDelete && (
+                    <button onClick={() => setConfirmDelete(true)}
+                      style={{ background:'#fff0f0', color:'#c0392b', border:'1px solid #f5b8ca', borderRadius:7, padding:'4px 10px', fontSize:10, fontWeight:700, cursor:'pointer' }}>
+                      🗑️ Delete
+                    </button>
+                  )}
                   <button onClick={() => setSelected(null)}
                     style={{ background:'#f0ede8', border:'none', borderRadius:7, width:28, height:28, cursor:'pointer', fontSize:14 }}>✕</button>
                 </div>
@@ -340,6 +365,32 @@ export default function ReportsPage() {
           )}
         </div>
       </div>
+
+      {confirmDelete && selected && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.45)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div style={{ background:'white', borderRadius:14, padding:'28px 28px 24px', width:340, boxShadow:'0 8px 40px rgba(0,0,0,.25)', fontFamily:"'DM Sans',sans-serif" }}>
+            <div style={{ fontSize:28, marginBottom:12, textAlign:'center' }}>🗑️</div>
+            <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:15, fontWeight:700, color:'#1a1208', textAlign:'center', marginBottom:8 }}>Delete this report?</div>
+            <div style={{ fontSize:12, color:'#7a6a50', textAlign:'center', lineHeight:1.6, marginBottom:20 }}>
+              <strong>{selected.incident_type}</strong> — {selected.reported_by}<br />
+              This action cannot be undone.
+            </div>
+            <div style={{ display:'flex', gap:10 }}>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                style={{ flex:1, background:'#f0ede8', color:'#3a2a1a', border:'none', borderRadius:8, padding:'10px', fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteReport(selected.id)}
+                disabled={deleting}
+                style={{ flex:1, background:'#c0392b', color:'white', border:'none', borderRadius:8, padding:'10px', fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                {deleting ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div style={{ position:'fixed', bottom:20, left:'50%', transform:'translateX(-50%)', background:'#1a1208', color:'white', borderRadius:10, padding:'10px 18px', fontSize:12, fontWeight:600, zIndex:999, display:'flex', gap:8, alignItems:'center', whiteSpace:'nowrap', boxShadow:'0 4px 20px rgba(0,0,0,.3)' }}>
