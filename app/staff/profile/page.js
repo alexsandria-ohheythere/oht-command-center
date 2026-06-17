@@ -184,9 +184,11 @@ export default function StaffProfilePage() {
                 <Field label="Hours assigned" value={staff.hours_assigned} />
               </Section>
               <Section title="Compensation">
-                <Field label="Daily rate" value={fmtPeso(staff.daily_rate)} />
-                <Field label="Monthly rate" value={fmtPeso(staff.monthly_rate)} />
-                <Field label="Monthly pay" value={fmtPeso(staff.monthly_pay)} />
+                {(staff.employment_type === 'Part-time' || staff.employment_type === 'Freelancer') ? (
+                  <Field label="Daily rate" value={fmtPeso(staff.daily_rate)} />
+                ) : (
+                  <Field label="Monthly pay" value={fmtPeso(staff.monthly_pay)} />
+                )}
                 <Field label="Service charge eligible" value={staff.service_charge_eligible ? 'Yes' : 'No'} />
               </Section>
             </Grid>
