@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 
-// Only Managing Director (Alex) and CEO (CJ) may view incident reports
-const INCIDENT_AUTHORIZED = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
+// Managing Director (Alex), CEO (CJ), and HR (Richelle) may view incident reports
+// HR may NOT see reports involving a Cafe Supervisor
+const INCIDENT_AUTHORIZED = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com', 'hr.ohtgroup@gmail.com']
+const HR_EMAIL = 'hr.ohtgroup@gmail.com'
 
 const STATUS_STYLE = {
   pending:  { bg:'#fef3e2', color:'#a06000', label:'Pending' },
@@ -57,7 +59,13 @@ export default function ReportsPage() {
         .from('incident_reports')
         .select('*, staff(first_name, last_name, nickname, role)')
         .order('created_at', { ascending: false })
-      setReports(data || [])
+      const isHR = session?.user?.email?.toLowerCase() === HR_EMAIL
+      let allReports = data || []
+      // HR cannot see reports involving a Cafe Supervisor
+      if (isHR) {
+        allReports = allReports.filter(r => r.staff?.role !== 'supervisor')
+      }
+      setReports(allReports)
     } catch(e) { console.error(e) }
     setLoading(false)
   }
@@ -120,7 +128,7 @@ export default function ReportsPage() {
           <div style={{ fontSize:40 }}>🔒</div>
           <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:16, fontWeight:700, color:'#1a1208' }}>Access Restricted</div>
           <div style={{ fontSize:13, color:'#7a6a50', textAlign:'center', maxWidth:320, lineHeight:1.6 }}>
-            Incident reports are only accessible to the Managing Director and CEO.
+            Incident reports are only accessible to the Managing Director, CEO, and HR.
           </div>
         </div>
       </AuthShell>
