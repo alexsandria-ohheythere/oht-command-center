@@ -24,27 +24,28 @@ const ROLE_COLORS = {
 }
 
 const iStyle = { width:'100%', background:'var(--surface)', border:'1px solid var(--border)', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'var(--text-primary)', outline:'none' }
-const lStyle = { display:'block', fontSize:9, fontWeight:700, letterSpacing:1.2, textTransform:'uppercase', color:'var(--text-muted)', marginBottom:5 }
 
 export default function RolesPage() {
   const supabase = createClient()
-  const [tasks, setTasks]           = useState([])
-  const [loading, setLoading]       = useState(true)
+  const [tasks, setTasks]               = useState([])
+  const [loading, setLoading]           = useState(true)
   const [selectedRole, setSelectedRole] = useState(ROLES[0])
   const [selectedShift, setSelectedShift] = useState('am')
-  const [newTask, setNewTask]       = useState('')
-  const [adding, setAdding]         = useState(false)
-  const [editingId, setEditingId]   = useState(null)
-  const [editText, setEditText]     = useState('')
-  const [toast, setToast]           = useState(null)
-  const [dragOver, setDragOver]     = useState(null)
-  const [dragItem, setDragItem]     = useState(null)
+  const [newTask, setNewTask]           = useState('')
+  const [newCategory, setNewCategory]   = useState('General')
+  const [adding, setAdding]             = useState(false)
+  const [editingId, setEditingId]       = useState(null)
+  const [editText, setEditText]         = useState('')
+  const [editCategory, setEditCategory] = useState('')
+  const [toast, setToast]               = useState(null)
+  const [dragOver, setDragOver]         = useState(null)
+  const [dragItem, setDragItem]         = useState(null)
 
   useEffect(() => { fetchTasks() }, [])
 
   async function fetchTasks() {
     setLoading(true)
-    const { data } = await supabase.from('role_tasks').select('*').order('role').order('shift_type').order('task_order')
+    const { data } = await supabase.from('role_tasks').select('*').order('role').order('shift_type').order('category').order('task_order')
     setTasks(data || [])
     setLoading(false)
   }
@@ -53,13 +54,17 @@ export default function RolesPage() {
 
   const currentTasks = tasks.filter(t => t.role === selectedRole && t.shift_type === selectedShift && t.is_active)
 
+  // Get unique categories for current shift/role
+  const categories = [...new Set(currentTasks.map(t => t.category || 'General'))]
+
   async function addTask() {
     if (!newTask.trim()) return
     setAdding(true)
     const order = currentTasks.length
     const { data, error } = await supabase.from('role_tasks').insert([{
       role: selectedRole, shift_type: selectedShift,
-      task_name: newTask.trim(), task_order: order, is_active: true
+      task_name: newTask.trim(), task_order: order, is_active: true,
+      category: newCategory.trim() || 'General'
     }]).select().single()
     if (error) { showToast('❌', error.message); setAdding(false); return }
     setTasks(prev => [...prev, data])
@@ -69,15 +74,17 @@ export default function RolesPage() {
   }
 
   async function deleteTask(id) {
+    const today = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`
     await supabase.from('role_tasks').update({ is_active: false }).eq('id', id)
+    await supabase.from('shift_task_assignments').delete().eq('task_id', id).eq('shift_date', today)
     setTasks(prev => prev.filter(t => t.id !== id))
     showToast('🗑️', 'Task removed')
   }
 
   async function saveEdit(id) {
     if (!editText.trim()) return
-    await supabase.from('role_tasks').update({ task_name: editText.trim() }).eq('id', id)
-    setTasks(prev => prev.map(t => t.id === id ? {...t, task_name: editText.trim()} : t))
+    await supabase.from('role_tasks').update({ task_name: editText.trim(), category: editCategory.trim() || 'General' }).eq('id', id)
+    setTasks(prev => prev.map(t => t.id === id ? {...t, task_name: editText.trim(), category: editCategory.trim() || 'General'} : t))
     setEditingId(null)
     showToast('✅', 'Task updated')
   }
@@ -90,27 +97,23 @@ export default function RolesPage() {
     const reordered = [...list]
     const [moved] = reordered.splice(fromIdx, 1)
     reordered.splice(toIdx, 0, moved)
-    // Update order in state
     const updated = tasks.map(t => {
       const idx = reordered.findIndex(r => r.id === t.id)
       return idx !== -1 ? {...t, task_order: idx} : t
     })
     setTasks(updated)
-    // Save to DB
     await Promise.all(reordered.map((t, i) => supabase.from('role_tasks').update({ task_order: i }).eq('id', t.id)))
   }
 
-  // Copy tasks from another shift
   async function copyFromShift(fromShift) {
     const source = tasks.filter(t => t.role === selectedRole && t.shift_type === fromShift && t.is_active)
     if (!source.length) { showToast('⚠️', 'No tasks in that shift to copy'); return }
-    const inserts = source.map((t, i) => ({ role: selectedRole, shift_type: selectedShift, task_name: t.task_name, task_order: currentTasks.length + i, is_active: true }))
+    const inserts = source.map((t, i) => ({ role: selectedRole, shift_type: selectedShift, task_name: t.task_name, category: t.category || 'General', task_order: currentTasks.length + i, is_active: true }))
     const { data } = await supabase.from('role_tasks').insert(inserts).select()
     setTasks(prev => [...prev, ...(data||[])])
     showToast('📋', `${source.length} tasks copied`)
   }
 
-  // Task count per role
   function getTaskCount(role) {
     return tasks.filter(t => t.role === role && t.is_active).length
   }
@@ -183,9 +186,8 @@ export default function RolesPage() {
             </div>
           )}
 
-          {/* Task list */}
+          {/* Task list grouped by category */}
           <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden',marginBottom:14}}>
-            {/* Header */}
             <div style={{background:shift.bg,padding:'12px 16px',borderBottom:`1px solid ${shift.border}33`,display:'flex',alignItems:'center',gap:8}}>
               <span style={{fontSize:12,fontWeight:700,color:shift.color}}>{shift.label} Tasks</span>
               <span style={{fontSize:11,color:shift.color,opacity:.7}}>· {shift.time}</span>
@@ -198,54 +200,79 @@ export default function RolesPage() {
               <div style={{padding:'30px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No tasks yet — add one below</div>
             ) : (
               <div>
-                {currentTasks.map((task, idx) => (
-                  <div key={task.id}
-                    draggable
-                    onDragStart={() => setDragItem(task.id)}
-                    onDragOver={e => { e.preventDefault(); setDragOver(task.id) }}
-                    onDragLeave={() => setDragOver(null)}
-                    onDrop={() => { reorderTasks(dragItem, task.id); setDragOver(null); setDragItem(null) }}
-                    style={{display:'flex',alignItems:'center',gap:12,padding:'11px 16px',borderBottom:'1px solid var(--cream-dark)',background:dragOver===task.id?shift.bg:'var(--white)',cursor:'grab',transition:'background .1s'}}>
-                    <span style={{color:'var(--border)',fontSize:14,cursor:'grab'}}>⠿</span>
-                    <div style={{width:20,height:20,borderRadius:'50%',border:`2px solid ${shift.border}`,background:shift.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:shift.color,flexShrink:0}}>{idx+1}</div>
-                    {editingId === task.id ? (
-                      <input
-                        autoFocus
-                        value={editText}
-                        onChange={e=>setEditText(e.target.value)}
-                        onKeyDown={e=>{ if(e.key==='Enter') saveEdit(task.id); if(e.key==='Escape') setEditingId(null) }}
-                        style={{...iStyle,flex:1,padding:'5px 9px'}}
-                      />
-                    ) : (
-                      <span style={{flex:1,fontSize:12,color:'var(--espresso)',fontWeight:500}}>{task.task_name}</span>
-                    )}
-                    <div style={{display:'flex',gap:6,flexShrink:0}}>
-                      {editingId===task.id ? (
-                        <>
-                          <button onClick={()=>saveEdit(task.id)} style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:6,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Save</button>
-                          <button onClick={()=>setEditingId(null)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Cancel</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={()=>{setEditingId(task.id);setEditText(task.task_name)}} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>✏️</button>
-                          <button onClick={()=>deleteTask(task.id)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑</button>
-                        </>
-                      )}
+                {categories.map(cat => {
+                  const catTasks = currentTasks.filter(t => (t.category || 'General') === cat)
+                  return (
+                    <div key={cat}>
+                      {/* Category header */}
+                      <div style={{padding:'8px 16px',background:'var(--surface)',borderBottom:'1px solid var(--cream-dark)',display:'flex',alignItems:'center',gap:8}}>
+                        <div style={{width:3,height:14,borderRadius:2,background:shift.border}}></div>
+                        <span style={{fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:shift.color}}>{cat}</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:4}}>{catTasks.length} task{catTasks.length!==1?'s':''}</span>
+                      </div>
+                      {catTasks.map((task, idx) => (
+                        <div key={task.id}
+                          draggable
+                          onDragStart={() => setDragItem(task.id)}
+                          onDragOver={e => { e.preventDefault(); setDragOver(task.id) }}
+                          onDragLeave={() => setDragOver(null)}
+                          onDrop={() => { reorderTasks(dragItem, task.id); setDragOver(null); setDragItem(null) }}
+                          style={{display:'flex',alignItems:'center',gap:12,padding:'11px 16px',borderBottom:'1px solid var(--cream-dark)',background:dragOver===task.id?shift.bg:'var(--white)',cursor:'grab',transition:'background .1s'}}>
+                          <span style={{color:'var(--border)',fontSize:14,cursor:'grab'}}>⠿</span>
+                          <div style={{width:20,height:20,borderRadius:'50%',border:`2px solid ${shift.border}`,background:shift.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:shift.color,flexShrink:0}}>{idx+1}</div>
+                          {editingId === task.id ? (
+                            <div style={{flex:1,display:'flex',gap:8,flexDirection:'column'}}>
+                              <input autoFocus value={editText} onChange={e=>setEditText(e.target.value)}
+                                onKeyDown={e=>{ if(e.key==='Enter') saveEdit(task.id); if(e.key==='Escape') setEditingId(null) }}
+                                style={{...iStyle,padding:'5px 9px'}} placeholder="Task name"/>
+                              <input value={editCategory} onChange={e=>setEditCategory(e.target.value)}
+                                style={{...iStyle,padding:'5px 9px'}} placeholder="Category (e.g. Opening, Cleaning)"/>
+                            </div>
+                          ) : (
+                            <span style={{flex:1,fontSize:12,color:'var(--espresso)',fontWeight:500}}>{task.task_name}</span>
+                          )}
+                          <div style={{display:'flex',gap:6,flexShrink:0}}>
+                            {editingId===task.id ? (
+                              <>
+                                <button onClick={()=>saveEdit(task.id)} style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:6,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Save</button>
+                                <button onClick={()=>setEditingId(null)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Cancel</button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={()=>{setEditingId(task.id);setEditText(task.task_name);setEditCategory(task.category||'General')}} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>✏️</button>
+                                <button onClick={()=>deleteTask(task.id)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑</button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
             {/* Add task input */}
             <div style={{padding:'12px 16px',background:'var(--surface)',display:'flex',gap:9,alignItems:'center'}}>
-              <input
-                style={{...iStyle,flex:1}}
-                placeholder={`Add task for ${selectedRole} · ${shift.label}…`}
-                value={newTask}
-                onChange={e=>setNewTask(e.target.value)}
-                onKeyDown={e=>e.key==='Enter'&&addTask()}
-              />
+              <div style={{flex:1,display:'flex',gap:8}}>
+                <input
+                  style={{...iStyle,flex:'0 0 160px'}}
+                  placeholder="Category (e.g. Opening)"
+                  value={newCategory}
+                  onChange={e=>setNewCategory(e.target.value)}
+                  list="category-suggestions"
+                />
+                <datalist id="category-suggestions">
+                  {categories.map(c=><option key={c} value={c}/>)}
+                </datalist>
+                <input
+                  style={{...iStyle,flex:1}}
+                  placeholder={`Task name…`}
+                  value={newTask}
+                  onChange={e=>setNewTask(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&addTask()}
+                />
+              </div>
               <button onClick={addTask} disabled={adding||!newTask.trim()}
                 style={{background:newTask.trim()?'var(--matcha)':'var(--border)',color:'white',border:'none',borderRadius:8,padding:'9px 16px',fontSize:12,fontWeight:700,cursor:newTask.trim()?'pointer':'default',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap',transition:'all .15s'}}>
                 {adding?'Adding…':'+ Add Task'}
@@ -261,19 +288,23 @@ export default function RolesPage() {
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
               {SHIFTS.map(sh => {
                 const shiftTasks = tasks.filter(t=>t.role===selectedRole&&t.shift_type===sh.id&&t.is_active)
+                const shiftCats = [...new Set(shiftTasks.map(t=>t.category||'General'))]
                 return (
                   <div key={sh.id} style={{background:sh.bg,border:`1px solid ${sh.border}44`,borderRadius:10,padding:'12px 14px'}}>
                     <div style={{fontSize:11,fontWeight:700,color:sh.color,marginBottom:8}}>{sh.label} <span style={{opacity:.7}}>· {sh.time}</span></div>
                     {shiftTasks.length===0 ? (
                       <div style={{fontSize:11,color:sh.color,opacity:.5,fontStyle:'italic'}}>No tasks yet</div>
-                    ) : (
-                      shiftTasks.map((t,i)=>(
-                        <div key={t.id} style={{display:'flex',alignItems:'flex-start',gap:6,padding:'3px 0',fontSize:11,color:'var(--espresso)'}}>
-                          <span style={{color:sh.color,fontWeight:700,flexShrink:0}}>{i+1}.</span>
-                          <span>{t.task_name}</span>
-                        </div>
-                      ))
-                    )}
+                    ) : shiftCats.map(cat => (
+                      <div key={cat} style={{marginBottom:8}}>
+                        <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:sh.color,opacity:.7,marginBottom:3}}>{cat}</div>
+                        {shiftTasks.filter(t=>(t.category||'General')===cat).map((t,i)=>(
+                          <div key={t.id} style={{display:'flex',alignItems:'flex-start',gap:6,padding:'2px 0',fontSize:11,color:'var(--espresso)'}}>
+                            <span style={{color:sh.color,fontWeight:700,flexShrink:0}}>{i+1}.</span>
+                            <span>{t.task_name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
                   </div>
                 )
               })}
