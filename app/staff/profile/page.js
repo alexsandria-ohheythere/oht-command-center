@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import AuthShell from '../../../components/AuthShell'
 import { createClient } from '../../../lib/supabase'
+import { getDailyRate } from '../../../lib/payroll'
 
 const ROLE_COLORS = {
   'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4',
@@ -54,6 +55,7 @@ export default function StaffProfilePage() {
   const [files, setFiles]         = useState([])
   const [payroll, setPayroll]     = useState([])
   const [schedules, setSchedules] = useState([])
+  const [rateOverrides, setRateOverrides] = useState(null)
   const [loading, setLoading]     = useState(true)
   const [activeTab, setActiveTab] = useState('overview')
 
@@ -87,6 +89,10 @@ export default function StaffProfilePage() {
       setFiles(f || [])
       setPayroll(p || [])
       setSchedules(sc || [])
+
+      // Load saved rate overrides from settings
+      const { data: rateRow } = await supabase.from('settings').select('value').eq('key', 'payroll_rates').single()
+      if (rateRow?.value) { try { setRateOverrides(JSON.parse(rateRow.value)) } catch(e) {} }
     } catch(e) { console.error(e) }
     setLoading(false)
   }
@@ -185,9 +191,13 @@ export default function StaffProfilePage() {
               </Section>
               <Section title="Compensation">
                 {(staff.employment_type === 'Part-time' || staff.employment_type === 'Freelancer') ? (
-                  <Field label="Daily rate" value={fmtPeso(staff.daily_rate)} />
+                  <Field label="Daily rate" value={fmtPeso(getDailyRate(staff.employment_type, staff.role, rateOverrides))} />
                 ) : (
-                  <Field label="Monthly pay" value={fmtPeso(staff.monthly_pay)} />
+                  <Field label="Monthly pay" value={
+                    staff.monthly_pay
+                      ? fmtPeso(staff.monthly_pay)
+                      : (() => { const r = rateOverrides?.[staff.employment_type]?.[staff.role]; return r?.type === 'monthly' && r.amount ? fmtPeso(r.amount) : '—' })()
+                  } />
                 )}
                 <Field label="Service charge eligible" value={staff.service_charge_eligible ? 'Yes' : 'No'} />
               </Section>
