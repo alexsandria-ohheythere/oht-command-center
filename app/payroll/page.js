@@ -50,10 +50,18 @@ export default function PayrollPage() {
   const [toast, setToast]                   = useState(null)
   const [sortKey, setSortKey]               = useState('name')
   const [sortDir, setSortDir]               = useState('asc')
+  const [rateOverrides, setRateOverrides]   = useState(null)
   const fileRef = useRef()
 
-  useEffect(() => { fetchStaff() }, [])
+  useEffect(() => { fetchStaff(); fetchRateOverrides() }, [])
   useEffect(() => { fetchSavedRuns() }, [selectedCutoff])
+
+  async function fetchRateOverrides() {
+    const { data } = await supabase.from('settings').select('value').eq('key', 'payroll_rates').single()
+    if (data?.value) {
+      try { setRateOverrides(JSON.parse(data.value)) } catch(e) {}
+    }
+  }
 
   async function fetchStaff() {
     setLoading(true)
@@ -94,13 +102,13 @@ export default function PayrollPage() {
         const tsKey = Object.keys(timesheetData).find(k => { const ts = timesheetData[k]; return matchStaff([s], ts.lastName, ts.firstName) !== undefined })
         const ts = tsKey ? timesheetData[tsKey] : null
         const periodShifts = ts ? filterShiftsByPeriod(ts.shifts, selectedCutoff.start, selectedCutoff.end) : []
-        const pay = computeCutoffPayroll(s, periodShifts)
+        const pay = computeCutoffPayroll(s, periodShifts, rateOverrides)
         return { staff:s, ts, periodShifts, pay, hasTimesheet:!!ts, saved, isLive:true }
       } else if (saved) {
         const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, hourlyRate:getDailyRate(s.employment_type||'Full-time',s.role)/8 }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
-        return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[]), hasTimesheet:false, saved:null, isLive:false }
+        return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides), hasTimesheet:false, saved:null, isLive:false }
       }
     })
   }
