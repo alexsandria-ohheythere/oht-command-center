@@ -3,285 +3,339 @@ import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 
-const ROLES = [
-  'Cafe Supervisor','Cafe Operations Support','Senior Barista',
-  'Junior Barista - Milk Station','Junior Barista - Cashier',
-  'Executive Chef','Sous Chef','Kitchen Staff',
-]
-
 const SHIFTS = [
-  { id:'am',  label:'AM Shift',  time:'6:30AM–3:30PM',  color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648' },
-  { id:'ops', label:'OPS Shift', time:'8:00AM–5:00PM',  color:'#7a3a8a', bg:'#f5eeff', border:'#b06af5' },
-  { id:'mid', label:'Mid Shift', time:'11:00AM–8:00PM', color:'#a06000', bg:'#fef3e2', border:'#d4a843' },
-  { id:'pm',  label:'PM Shift',  time:'3:00PM–11:00PM', color:'#2d5a8a', bg:'#e8f0fb', border:'#4a90c4' },
+  { id:'am',  label:'AM',  time:'6:30AM–3:30PM',  color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648', emoji:'🌅' },
+  { id:'ops', label:'OPS', time:'8:00AM–5:00PM',  color:'#7a3a8a', bg:'#f5eeff', border:'#b06af5', emoji:'🟣' },
+  { id:'mid', label:'MID', time:'11:00AM–8:00PM', color:'#a06000', bg:'#fef3e2', border:'#d4a843', emoji:'☀️'  },
+  { id:'pm',  label:'PM',  time:'3:00PM–11:00PM', color:'#2d5a8a', bg:'#e8f0fb', border:'#4a90c4', emoji:'🌙' },
 ]
+const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
+const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
+const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
+const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+const fmtTime = ts => ts ? new Date(ts).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : ''
 
-const ROLE_COLORS = {
-  'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4',
-  'Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843',
-  'Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b',
-  'Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e',
+function ScoreRing({ pct, color, size=56 }) {
+  const r = (size - 8) / 2
+  const circ = 2 * Math.PI * r
+  const offset = circ - (pct / 100) * circ
+  return (
+    <svg width={size} height={size} style={{ transform:'rotate(-90deg)', flexShrink:0 }}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#f0ede8" strokeWidth={5}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={pct===100?'#7ab648':color} strokeWidth={5}
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+        style={{ transition:'stroke-dashoffset .5s ease' }}/>
+      <text x={size/2} y={size/2} textAnchor="middle" dominantBaseline="middle"
+        style={{ fontSize:11, fontWeight:700, fill:pct===100?'#4a7a1e':color, fontFamily:"'Montserrat',sans-serif", transform:`rotate(90deg)`, transformOrigin:`${size/2}px ${size/2}px` }}>
+        {pct}%
+      </text>
+    </svg>
+  )
 }
 
-const iStyle = { width:'100%', background:'var(--surface)', border:'1px solid var(--border)', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'var(--text-primary)', outline:'none' }
-const lStyle = { display:'block', fontSize:9, fontWeight:700, letterSpacing:1.2, textTransform:'uppercase', color:'var(--text-muted)', marginBottom:5 }
-
-export default function RolesPage() {
+export default function CheckinPage() {
   const supabase = createClient()
-  const [tasks, setTasks]           = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [selectedRole, setSelectedRole] = useState(ROLES[0])
+  const todayISO = toISO(new Date())
+
+  const [viewDate, setViewDate]           = useState(new Date())
+  const [staff, setStaff]                 = useState([])
   const [selectedShift, setSelectedShift] = useState('am')
-  const [newTask, setNewTask]       = useState('')
-  const [adding, setAdding]         = useState(false)
-  const [editingId, setEditingId]   = useState(null)
-  const [editText, setEditText]     = useState('')
-  const [toast, setToast]           = useState(null)
-  const [dragOver, setDragOver]     = useState(null)
-  const [dragItem, setDragItem]     = useState(null)
+  const [assignments, setAssignments]     = useState([])
+  const [tasks, setTasks]                 = useState([])
+  const [checkIns, setCheckIns]           = useState([])
+  const [loading, setLoading]             = useState(true)
+  const [selectedStaff, setSelectedStaff] = useState(null)
+  const [view, setView]                   = useState('overview')
+  const [saving, setSaving]               = useState(null)
+  const [toast, setToast]                 = useState(null)
 
-  useEffect(() => { fetchTasks() }, [])
+  const dateISO   = toISO(viewDate)
+  const isToday   = dateISO === todayISO
+  const isPast    = dateISO < todayISO
+  const dateLabel = viewDate.toLocaleDateString('en-PH',{weekday:'long',month:'long',day:'numeric',year:'numeric'})
 
-  async function fetchTasks() {
+  useEffect(() => {
+    setView('overview')
+    setSelectedStaff(null)
+    fetchAll()
+
+    const channel = supabase
+      .channel(`checkin-realtime-${dateISO}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'role_tasks' }, () => { fetchAll() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_task_assignments', filter: `shift_date=eq.${dateISO}` }, () => { fetchAll() })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [dateISO])
+
+  async function fetchAll() {
     setLoading(true)
-    const { data } = await supabase.from('role_tasks').select('*').order('role').order('shift_type').order('task_order')
-    setTasks(data || [])
-    setLoading(false)
+    try {
+      const [{ data: s, error: e1 }, { data: sch, error: e2 }, { data: t, error: e3 }, { data: ci, error: e4 }] = await Promise.all([
+        supabase.from('staff').select('*').order('last_name'),
+        supabase.from('schedules').select('*').eq('shift_date', dateISO),
+        supabase.from('role_tasks').select('*').eq('is_active', true).order('task_order'),
+        supabase.from('shift_task_assignments').select('*, role_tasks!shift_task_assignments_task_id_fkey(task_name)').eq('shift_date', dateISO),
+      ])
+      if (e1) console.error('staff fetch error:', e1)
+      if (e2) console.error('schedules fetch error:', e2)
+      if (e3) console.error('role_tasks fetch error:', e3)
+      if (e4) console.error('shift_task_assignments fetch error:', e4)
+      setStaff(s||[])
+      setAssignments(sch||[])
+      setTasks(t||[])
+      setCheckIns(ci||[])
+    } catch (err) {
+      console.error('fetchAll failed:', err)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  function showToast(icon, msg) { setToast({icon,msg}); setTimeout(()=>setToast(null),3000) }
-
-  const currentTasks = tasks.filter(t => t.role === selectedRole && t.shift_type === selectedShift && t.is_active)
-
-  async function addTask() {
-    if (!newTask.trim()) return
-    setAdding(true)
-    const order = currentTasks.length
-    const { data, error } = await supabase.from('role_tasks').insert([{
-      role: selectedRole, shift_type: selectedShift,
-      task_name: newTask.trim(), task_order: order, is_active: true
-    }]).select().single()
-    if (error) { showToast('❌', error.message); setAdding(false); return }
-    setTasks(prev => [...prev, data])
-    setNewTask('')
-    setAdding(false)
-    showToast('✅', 'Task added')
+  function goToPrevDay() {
+    const d = new Date(viewDate)
+    d.setDate(d.getDate() - 1)
+    setViewDate(d)
   }
 
-  async function deleteTask(id) {
-    const today = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`
-    await supabase.from('role_tasks').update({ is_active: false }).eq('id', id)
-    await supabase.from('shift_task_assignments').delete().eq('task_id', id).eq('shift_date', today)
-    setTasks(prev => prev.filter(t => t.id !== id))
-    showToast('🗑️', 'Task removed')
+  function goToNextDay() {
+    if (isToday) return
+    const d = new Date(viewDate)
+    d.setDate(d.getDate() + 1)
+    setViewDate(d)
   }
 
-  async function saveEdit(id) {
-    if (!editText.trim()) return
-    await supabase.from('role_tasks').update({ task_name: editText.trim() }).eq('id', id)
-    setTasks(prev => prev.map(t => t.id === id ? {...t, task_name: editText.trim()} : t))
-    setEditingId(null)
-    showToast('✅', 'Task updated')
+  function goToToday() { setViewDate(new Date()) }
+
+  function showToast(icon,msg){setToast({icon,msg});setTimeout(()=>setToast(null),3000)}
+
+  function getScheduledStaff(shiftId) {
+    return assignments.filter(a=>a.shift_type===shiftId).map(a=>staff.find(s=>s.id===a.staff_id)).filter(Boolean)
   }
 
-  async function reorderTasks(fromId, toId) {
-    const list = [...currentTasks]
-    const fromIdx = list.findIndex(t => t.id === fromId)
-    const toIdx   = list.findIndex(t => t.id === toId)
-    if (fromIdx === -1 || toIdx === -1) return
-    const reordered = [...list]
-    const [moved] = reordered.splice(fromIdx, 1)
-    reordered.splice(toIdx, 0, moved)
-    // Update order in state
-    const updated = tasks.map(t => {
-      const idx = reordered.findIndex(r => r.id === t.id)
-      return idx !== -1 ? {...t, task_order: idx} : t
-    })
-    setTasks(updated)
-    // Save to DB
-    await Promise.all(reordered.map((t, i) => supabase.from('role_tasks').update({ task_order: i }).eq('id', t.id)))
+  function getStaffTasks(staffId, shiftId) {
+    return checkIns.filter(ci => ci.staff_id===staffId && ci.shift_type===shiftId)
   }
 
-  // Copy tasks from another shift
-  async function copyFromShift(fromShift) {
-    const source = tasks.filter(t => t.role === selectedRole && t.shift_type === fromShift && t.is_active)
-    if (!source.length) { showToast('⚠️', 'No tasks in that shift to copy'); return }
-    const inserts = source.map((t, i) => ({ role: selectedRole, shift_type: selectedShift, task_name: t.task_name, task_order: currentTasks.length + i, is_active: true }))
-    const { data } = await supabase.from('role_tasks').insert(inserts).select()
-    setTasks(prev => [...prev, ...(data||[])])
-    showToast('📋', `${source.length} tasks copied`)
+  function getScore(staffId, shiftId) {
+    const all = getStaffTasks(staffId, shiftId)
+    const done = all.filter(ci=>ci.completed).length
+    return { total:all.length, done, pct: all.length>0?Math.round((done/all.length)*100):0 }
   }
 
-  // Task count per role
-  function getTaskCount(role) {
-    return tasks.filter(t => t.role === role && t.is_active).length
+  async function openDetail(staffMember, shiftId) {
+    setSelectedStaff(staffMember)
+    setSelectedShift(shiftId)
+    setView('detail')
+    if (isToday) {
+      const roleTasks = tasks.filter(t=>t.role===staffMember.role&&t.shift_type===shiftId)
+      if (roleTasks.length > 0) {
+        const existing = checkIns.filter(ci=>ci.staff_id===staffMember.id&&ci.shift_type===shiftId)
+        const existingTaskIds = new Set(existing.map(ci=>ci.task_id))
+        const missing = roleTasks.filter(t=>!existingTaskIds.has(t.id))
+        if (missing.length > 0) {
+          const schedEntry = assignments.find(a=>a.staff_id===staffMember.id&&a.shift_type===shiftId)
+          const inserts = missing.map(t=>({ schedule_id:schedEntry?.id||null, task_id:t.id, staff_id:staffMember.id, shift_date:dateISO, shift_type:shiftId, completed:false, completed_at:null }))
+          const { data } = await supabase.from('shift_task_assignments').insert(inserts).select('*, role_tasks!shift_task_assignments_task_id_fkey(task_name)')
+          if (data) setCheckIns(prev=>[...prev,...data])
+        }
+      }
+    }
   }
 
-  const shift = SHIFTS.find(s => s.id === selectedShift)
+  async function toggleTask(ciId, completed) {
+    if (isPast) return
+    setSaving(ciId)
+    const completed_at = completed ? new Date().toISOString() : null
+    const { data } = await supabase.from('shift_task_assignments').update({ completed, completed_at }).eq('id', ciId).select('*, role_tasks!shift_task_assignments_task_id_fkey(task_name)').single()
+    if (data) setCheckIns(prev=>prev.map(ci=>ci.id===ciId?data:ci))
+    setSaving(null)
+  }
+
+  const shiftOverview = SHIFTS.map(sh => {
+    const shiftStaff = getScheduledStaff(sh.id)
+    const scores = shiftStaff.map(s => getScore(s.id, sh.id))
+    const totalTasks = scores.reduce((a,sc)=>a+sc.total,0)
+    const doneTasks  = scores.reduce((a,sc)=>a+sc.done,0)
+    const avgPct = totalTasks > 0 ? Math.round((doneTasks/totalTasks)*100) : null
+    return { ...sh, staff:shiftStaff, totalTasks, doneTasks, avgPct, scores }
+  })
+
+  const detailTasks = selectedStaff ? getStaffTasks(selectedStaff.id, selectedShift) : []
+  const detailScore = selectedStaff ? getScore(selectedStaff.id, selectedShift) : { total:0, done:0, pct:0 }
+  const detailShift = SHIFTS.find(s=>s.id===selectedShift)
 
   return (
     <AuthShell>
       <div className="topbar">
         <div>
-          <div className="topbar-title">Role Task Templates</div>
-          <div className="topbar-sub">Define what each role does per shift · {tasks.filter(t=>t.is_active).length} total tasks</div>
+          <div className="topbar-title">Daily Check-In</div>
+          <div className="topbar-sub" style={{display:'flex',alignItems:'center',gap:8}}>
+            <button onClick={goToPrevDay}
+              style={{background:'none',border:'1px solid var(--border)',borderRadius:6,width:24,height:24,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)'}}>
+              ‹
+            </button>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:11}}>
+              {isToday ? `Today · ${dateLabel}` : dateLabel}
+            </span>
+            <button onClick={goToNextDay} disabled={isToday}
+              style={{background:'none',border:'1px solid var(--border)',borderRadius:6,width:24,height:24,cursor:isToday?'not-allowed':'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',color:isToday?'var(--border)':'var(--text-muted)',opacity:isToday?.4:1}}>
+              ›
+            </button>
+            {!isToday && (
+              <button onClick={goToToday}
+                style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:6,padding:'2px 10px',fontSize:10,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",marginLeft:4}}>
+                Today
+              </button>
+            )}
+          </div>
         </div>
+        {view==='detail'&&<button className="btn btn-secondary" onClick={()=>setView('overview')}>← Back</button>}
       </div>
 
-      <div style={{display:'flex',height:'calc(100vh - 56px)',overflow:'hidden'}}>
+      <div className="page-content">
 
-        {/* ROLE SIDEBAR */}
-        <div style={{width:220,flexShrink:0,background:'var(--white)',borderRight:'1px solid var(--border)',overflowY:'auto'}}>
-          <div style={{padding:'12px 14px 6px',fontSize:9,fontWeight:700,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>Roles</div>
-          {ROLES.map(role => {
-            const count = getTaskCount(role)
-            const active = selectedRole === role
-            return (
-              <div key={role} onClick={() => setSelectedRole(role)}
-                style={{padding:'10px 14px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,borderLeft:`3px solid ${active?ROLE_COLORS[role]:'transparent'}`,background:active?ROLE_COLORS[role]+'11':'transparent',transition:'all .15s'}}
-                onMouseEnter={e=>!active&&(e.currentTarget.style.background='var(--surface)')}
-                onMouseLeave={e=>!active&&(e.currentTarget.style.background='transparent')}>
-                <div style={{width:8,height:8,borderRadius:'50%',background:ROLE_COLORS[role],flexShrink:0}}></div>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:12,fontWeight:active?700:500,color:active?'var(--espresso)':'var(--text-muted)'}}>{role}</div>
+        {isPast && (
+          <div style={{background:'#fef3e2',border:'1px solid #d4a84366',borderRadius:10,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,fontSize:12}}>
+            <span style={{fontSize:16}}>📅</span>
+            <span style={{color:'#a06000',fontWeight:600}}>Viewing past check-in — read-only</span>
+          </div>
+        )}
+
+        {view==='overview'&&(
+          <>
+            <div style={{display:'flex',gap:8,marginBottom:20}}>
+              {SHIFTS.map(sh=>(
+                <button key={sh.id} onClick={()=>setSelectedShift(sh.id)}
+                  style={{padding:'8px 18px',borderRadius:9,border:`1.5px solid ${selectedShift===sh.id?sh.border:'var(--border)'}`,background:selectedShift===sh.id?sh.bg:'var(--white)',color:selectedShift===sh.id?sh.color:'var(--text-muted)',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s',display:'flex',alignItems:'center',gap:6}}>
+                  {sh.emoji} {sh.label} Shift
+                  <span style={{opacity:.7,fontSize:10}}>({getScheduledStaff(sh.id).length})</span>
+                </button>
+              ))}
+            </div>
+
+            {(() => {
+              const sh = shiftOverview.find(s=>s.id===selectedShift)
+              if (!sh || sh.staff.length===0) return (
+                <div style={{textAlign:'center',padding:'60px',background:'var(--white)',border:'1px solid var(--border)',borderRadius:13}}>
+                  <div style={{fontSize:36,marginBottom:12}}>{sh?.emoji||'📅'}</div>
+                  <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:15,fontWeight:700}}>No staff scheduled for {sh?.label} {isToday?'today':'on this day'}</div>
                 </div>
-                {count > 0 && <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'var(--text-muted)',background:'var(--surface)',padding:'1px 6px',borderRadius:6}}>{count}</div>}
-              </div>
-            )
-          })}
-        </div>
-
-        {/* TASK PANEL */}
-        <div style={{flex:1,overflowY:'auto',padding:'20px 24px'}}>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}>
-            <div style={{width:10,height:10,borderRadius:'50%',background:ROLE_COLORS[selectedRole]}}></div>
-            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:16,fontWeight:700,color:'var(--espresso)'}}>{selectedRole}</div>
-          </div>
-
-          {/* Shift tabs */}
-          <div style={{display:'flex',gap:8,marginBottom:20}}>
-            {SHIFTS.map(sh => (
-              <button key={sh.id} onClick={() => setSelectedShift(sh.id)}
-                style={{padding:'8px 16px',borderRadius:9,border:`1.5px solid ${selectedShift===sh.id?sh.border:'var(--border)'}`,background:selectedShift===sh.id?sh.bg:'var(--white)',color:selectedShift===sh.id?sh.color:'var(--text-muted)',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s'}}>
-                {sh.label}
-                <span style={{fontSize:10,marginLeft:6,opacity:.7}}>{tasks.filter(t=>t.role===selectedRole&&t.shift_type===sh.id&&t.is_active).length}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Copy from another shift */}
-          {currentTasks.length === 0 && (
-            <div style={{background:'var(--gold-pale)',border:'1px solid var(--gold)',borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:12}}>
-              <span style={{fontSize:13}}>💡</span>
-              <span style={{fontSize:12,color:'#a06000'}}>No tasks yet for this shift. Copy from another shift?</span>
-              <div style={{marginLeft:'auto',display:'flex',gap:7}}>
-                {SHIFTS.filter(s=>s.id!==selectedShift).map(s=>(
-                  <button key={s.id} onClick={()=>copyFromShift(s.id)}
-                    style={{background:s.bg,border:`1px solid ${s.border}`,color:s.color,borderRadius:7,padding:'5px 10px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                    Copy {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Task list */}
-          <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden',marginBottom:14}}>
-            {/* Header */}
-            <div style={{background:shift.bg,padding:'12px 16px',borderBottom:`1px solid ${shift.border}33`,display:'flex',alignItems:'center',gap:8}}>
-              <span style={{fontSize:12,fontWeight:700,color:shift.color}}>{shift.label} Tasks</span>
-              <span style={{fontSize:11,color:shift.color,opacity:.7}}>· {shift.time}</span>
-              <span style={{marginLeft:'auto',fontSize:10,color:shift.color,opacity:.7,fontFamily:"'DM Mono',monospace"}}>{currentTasks.length} task{currentTasks.length!==1?'s':''}</span>
-            </div>
-
-            {loading ? (
-              <div style={{padding:'30px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>Loading…</div>
-            ) : currentTasks.length === 0 ? (
-              <div style={{padding:'30px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No tasks yet — add one below</div>
-            ) : (
-              <div>
-                {currentTasks.map((task, idx) => (
-                  <div key={task.id}
-                    draggable
-                    onDragStart={() => setDragItem(task.id)}
-                    onDragOver={e => { e.preventDefault(); setDragOver(task.id) }}
-                    onDragLeave={() => setDragOver(null)}
-                    onDrop={() => { reorderTasks(dragItem, task.id); setDragOver(null); setDragItem(null) }}
-                    style={{display:'flex',alignItems:'center',gap:12,padding:'11px 16px',borderBottom:'1px solid var(--cream-dark)',background:dragOver===task.id?shift.bg:'var(--white)',cursor:'grab',transition:'background .1s'}}>
-                    <span style={{color:'var(--border)',fontSize:14,cursor:'grab'}}>⠿</span>
-                    <div style={{width:20,height:20,borderRadius:'50%',border:`2px solid ${shift.border}`,background:shift.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:shift.color,flexShrink:0}}>{idx+1}</div>
-                    {editingId === task.id ? (
-                      <input
-                        autoFocus
-                        value={editText}
-                        onChange={e=>setEditText(e.target.value)}
-                        onKeyDown={e=>{ if(e.key==='Enter') saveEdit(task.id); if(e.key==='Escape') setEditingId(null) }}
-                        style={{...iStyle,flex:1,padding:'5px 9px'}}
-                      />
-                    ) : (
-                      <span style={{flex:1,fontSize:12,color:'var(--espresso)',fontWeight:500}}>{task.task_name}</span>
-                    )}
-                    <div style={{display:'flex',gap:6,flexShrink:0}}>
-                      {editingId===task.id ? (
-                        <>
-                          <button onClick={()=>saveEdit(task.id)} style={{background:'var(--matcha)',color:'white',border:'none',borderRadius:6,padding:'4px 10px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Save</button>
-                          <button onClick={()=>setEditingId(null)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Cancel</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={()=>{setEditingId(task.id);setEditText(task.task_name)}} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>✏️</button>
-                          <button onClick={()=>deleteTask(task.id)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 9px',fontSize:11,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑</button>
-                        </>
-                      )}
+              )
+              return (
+                <>
+                  {sh.avgPct !== null && (
+                    <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 20px',marginBottom:16,display:'flex',alignItems:'center',gap:20}}>
+                      <ScoreRing pct={sh.avgPct} color={sh.color} size={64}/>
+                      <div>
+                        <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:15,fontWeight:700}}>{sh.emoji} {sh.label} Shift Progress</div>
+                        <div style={{fontSize:12,color:'var(--text-muted)',marginTop:2}}>{sh.doneTasks} of {sh.totalTasks} tasks completed across {sh.staff.length} staff</div>
+                        <div style={{height:6,background:'var(--cream-dark)',borderRadius:4,overflow:'hidden',width:200,marginTop:8}}>
+                          <div style={{height:'100%',width:`${sh.avgPct}%`,background:sh.avgPct===100?'var(--matcha)':sh.border,borderRadius:4,transition:'width .5s'}}/>
+                        </div>
+                      </div>
                     </div>
+                  )}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12}}>
+                    {sh.staff.map(s=>{
+                      const score = getScore(s.id, selectedShift)
+                      return (
+                        <div key={s.id} onClick={()=>openDetail(s,selectedShift)}
+                          style={{background:'var(--white)',border:`1px solid ${score.pct===100?'var(--matcha)':'var(--border)'}`,borderRadius:13,padding:'16px',cursor:'pointer',transition:'all .2s',borderTop:`3px solid ${getRoleColor(s.role)}`}}
+                          onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-2px)';e.currentTarget.style.boxShadow='0 6px 18px rgba(26,18,8,.08)'}}
+                          onMouseLeave={e=>{e.currentTarget.style.transform='';e.currentTarget.style.boxShadow=''}}>
+                          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+                            <div style={{width:36,height:36,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:700,color:'white',flexShrink:0}}>
+                              {initials(s.first_name,s.last_name)}
+                            </div>
+                            <div style={{flex:1}}>
+                              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700}}>{s.first_name} {s.last_name}</div>
+                              <div style={{fontSize:10,color:'var(--text-muted)'}}>{s.role}</div>
+                            </div>
+                            <ScoreRing pct={score.pct} color={getRoleColor(s.role)} size={48}/>
+                          </div>
+                          {score.total > 0 ? (
+                            <>
+                              <div style={{height:5,background:'var(--cream-dark)',borderRadius:4,overflow:'hidden',marginBottom:5}}>
+                                <div style={{height:'100%',width:`${score.pct}%`,background:score.pct===100?'var(--matcha)':getRoleColor(s.role),borderRadius:4,transition:'width .3s'}}/>
+                              </div>
+                              <div style={{fontSize:10,color:'var(--text-muted)'}}>{score.done}/{score.total} tasks · {score.pct===100?'✅ Complete':'In progress'}</div>
+                            </>
+                          ) : (
+                            <div style={{fontSize:11,color:'var(--text-muted)'}}>
+                              {isPast ? 'No check-in recorded' : 'Tap to assign & start check-in'}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
-                ))}
+                </>
+              )
+            })()}
+          </>
+        )}
+
+        {view==='detail'&&selectedStaff&&(
+          <div style={{maxWidth:560,margin:'0 auto'}}>
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:14,padding:'18px 22px',marginBottom:14,display:'flex',alignItems:'center',gap:14}}>
+              <div style={{width:48,height:48,borderRadius:'50%',background:getRoleColor(selectedStaff.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:700,color:'white',flexShrink:0}}>
+                {initials(selectedStaff.first_name,selectedStaff.last_name)}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:16,fontWeight:700}}>{selectedStaff.first_name} {selectedStaff.last_name}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)'}}>{selectedStaff.role} · <span style={{color:detailShift?.color,fontWeight:600}}>{detailShift?.emoji} {detailShift?.label} Shift</span></div>
+              </div>
+              <ScoreRing pct={detailScore.pct} color={detailShift?.color||'#7ab648'} size={64}/>
+            </div>
+
+            {detailTasks.length>0&&(
+              <div style={{height:8,background:'var(--cream-dark)',borderRadius:4,overflow:'hidden',marginBottom:14}}>
+                <div style={{height:'100%',width:`${detailScore.pct}%`,background:detailScore.pct===100?'var(--matcha)':detailShift?.border,borderRadius:4,transition:'width .4s'}}/>
               </div>
             )}
 
-            {/* Add task input */}
-            <div style={{padding:'12px 16px',background:'var(--surface)',display:'flex',gap:9,alignItems:'center'}}>
-              <input
-                style={{...iStyle,flex:1}}
-                placeholder={`Add task for ${selectedRole} · ${shift.label}…`}
-                value={newTask}
-                onChange={e=>setNewTask(e.target.value)}
-                onKeyDown={e=>e.key==='Enter'&&addTask()}
-              />
-              <button onClick={addTask} disabled={adding||!newTask.trim()}
-                style={{background:newTask.trim()?'var(--matcha)':'var(--border)',color:'white',border:'none',borderRadius:8,padding:'9px 16px',fontSize:12,fontWeight:700,cursor:newTask.trim()?'pointer':'default',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap',transition:'all .15s'}}>
-                {adding?'Adding…':'+ Add Task'}
-              </button>
-            </div>
-          </div>
-
-          {/* Quick overview across all shifts */}
-          <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 18px'}}>
-            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:12,color:'var(--espresso)'}}>
-              All Shifts Overview — {selectedRole}
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
-              {SHIFTS.map(sh => {
-                const shiftTasks = tasks.filter(t=>t.role===selectedRole&&t.shift_type===sh.id&&t.is_active)
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden',marginBottom:12}}>
+              <div style={{background:detailShift?.bg,padding:'11px 16px',borderBottom:`1px solid ${detailShift?.border}33`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span style={{fontSize:11,fontWeight:700,color:detailShift?.color}}>
+                  {isToday ? "Today's" : dateLabel.split(',')[0]+"'s"} Checklist · {detailScore.done}/{detailScore.total}
+                </span>
+                <span style={{fontSize:13,fontWeight:700,color:detailScore.pct===100?'var(--matcha-dark)':detailShift?.color}}>{detailScore.pct}%</span>
+              </div>
+              {detailTasks.length===0?(
+                <div style={{padding:'24px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>
+                  {isPast ? 'No tasks were recorded for this shift.' : 'No tasks assigned — tasks auto-load from Role Templates.'}
+                </div>
+              ):detailTasks.map(ci=>{
+                const taskName = ci.role_tasks?.task_name || tasks.find(t=>t.id===ci.task_id)?.task_name || 'Task'
                 return (
-                  <div key={sh.id} style={{background:sh.bg,border:`1px solid ${sh.border}44`,borderRadius:10,padding:'12px 14px'}}>
-                    <div style={{fontSize:11,fontWeight:700,color:sh.color,marginBottom:8}}>{sh.label} <span style={{opacity:.7}}>· {sh.time}</span></div>
-                    {shiftTasks.length===0 ? (
-                      <div style={{fontSize:11,color:sh.color,opacity:.5,fontStyle:'italic'}}>No tasks yet</div>
-                    ) : (
-                      shiftTasks.map((t,i)=>(
-                        <div key={t.id} style={{display:'flex',alignItems:'flex-start',gap:6,padding:'3px 0',fontSize:11,color:'var(--espresso)'}}>
-                          <span style={{color:sh.color,fontWeight:700,flexShrink:0}}>{i+1}.</span>
-                          <span>{t.task_name}</span>
-                        </div>
-                      ))
-                    )}
+                  <div key={ci.id} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 16px',borderBottom:'1px solid var(--cream-dark)',background:ci.completed?'#f8fdf5':'var(--white)',transition:'background .2s'}}>
+                    <button onClick={()=>toggleTask(ci.id,!ci.completed)} disabled={saving===ci.id||isPast}
+                      style={{width:24,height:24,borderRadius:'50%',border:`2px solid ${ci.completed?'var(--matcha)':detailShift?.border}`,background:ci.completed?'var(--matcha)':'transparent',cursor:isPast?'default':'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .2s',flexShrink:0,opacity:isPast?.7:1}}>
+                      {ci.completed&&<span style={{color:'white',fontSize:12,fontWeight:700}}>✓</span>}
+                    </button>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,fontWeight:500,color:ci.completed?'var(--text-muted)':'var(--espresso)',textDecoration:ci.completed?'line-through':'none'}}>
+                        {taskName}
+                      </div>
+                      {ci.completed&&ci.completed_at&&(
+                        <div style={{fontSize:10,color:'var(--matcha-dark)',marginTop:2,fontFamily:"'DM Mono',monospace"}}>✓ {fmtTime(ci.completed_at)}</div>
+                      )}
+                    </div>
                   </div>
                 )
               })}
             </div>
+
+            {detailScore.pct===100&&detailTasks.length>0&&(
+              <div style={{background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:12,padding:'16px',textAlign:'center'}}>
+                <div style={{fontSize:28,marginBottom:6}}>🎉</div>
+                <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:15,fontWeight:700,color:'var(--matcha-dark)'}}>100% Complete!</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{selectedStaff.first_name} finished all {detailShift?.label} tasks {isToday?'today':'on this day'}</div>
+              </div>
+            )}
           </div>
-        </div>
+        )}
       </div>
 
       {toast&&(
