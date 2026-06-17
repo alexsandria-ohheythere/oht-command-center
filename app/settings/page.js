@@ -72,6 +72,44 @@ export default function SettingsPage() {
     night_diff_rate: '0.10',
   })
 
+  // Rate cards — employment type × role
+  const ROLES = ['Cafe Supervisor','Cafe Operations Support','Senior Barista','Junior Barista - Milk Station','Junior Barista - Cashier','Executive Chef','Sous Chef','Kitchen Staff']
+  const EMP_TYPES = ['Full-time','Part-time','Freelancer']
+  const DEFAULT_RATES = {
+    'Full-time': {
+      'Senior Barista':                { type:'monthly', amount:17000 },
+      'Executive Chef':                { type:'monthly', amount:17000 },
+      'Junior Barista - Milk Station': { type:'monthly', amount:14000 },
+      'Junior Barista - Cashier':      { type:'monthly', amount:14000 },
+      'Sous Chef':                     { type:'monthly', amount:15000 },
+      'Cafe Supervisor':               { type:'monthly', amount:0 },
+      'Cafe Operations Support':       { type:'monthly', amount:0 },
+      'Kitchen Staff':                 { type:'monthly', amount:0 },
+    },
+    'Part-time': {
+      'Senior Barista':                { type:'daily', amount:850 },
+      'Executive Chef':                { type:'daily', amount:850 },
+      'Junior Barista - Milk Station': { type:'daily', amount:700 },
+      'Junior Barista - Cashier':      { type:'daily', amount:700 },
+      'Sous Chef':                     { type:'daily', amount:700 },
+      'Kitchen Staff':                 { type:'daily', amount:700 },
+      'Cafe Supervisor':               { type:'daily', amount:0 },
+      'Cafe Operations Support':       { type:'daily', amount:0 },
+    },
+    'Freelancer': {
+      'Cafe Supervisor':               { type:'daily', amount:1150 },
+      'Cafe Operations Support':       { type:'daily', amount:750 },
+      'Senior Barista':                { type:'daily', amount:850 },
+      'Executive Chef':                { type:'daily', amount:850 },
+      'Junior Barista - Milk Station': { type:'daily', amount:700 },
+      'Junior Barista - Cashier':      { type:'daily', amount:700 },
+      'Sous Chef':                     { type:'daily', amount:700 },
+      'Kitchen Staff':                 { type:'daily', amount:700 },
+    },
+  }
+  const [rates, setRates] = useState(DEFAULT_RATES)
+  const [ratesSaving, setRatesSaving] = useState(false)
+
   // Notifications
   const [notifs, setNotifs] = useState({
     notify_leave_request: true,
@@ -92,6 +130,7 @@ export default function SettingsPage() {
       data.forEach(row => {
         if (row.key === 'business')   setBiz(prev => ({ ...prev, ...JSON.parse(row.value || '{}') }))
         if (row.key === 'payroll')    setPayroll(prev => ({ ...prev, ...JSON.parse(row.value || '{}') }))
+        if (row.key === 'payroll_rates') setRates(prev => ({ ...prev, ...JSON.parse(row.value || '{}') }))
         if (row.key === 'notifs')     setNotifs(prev => ({ ...prev, ...JSON.parse(row.value || '{}') }))
         if (row.key === 'sidebar_nav') {
           const saved = JSON.parse(row.value || '[]')
@@ -112,6 +151,23 @@ export default function SettingsPage() {
     await supabase.from('settings').upsert({ key, value: JSON.stringify(value) }, { onConflict: 'key' })
     showToast('✅', 'Settings saved')
     setSaving(false)
+  }
+
+  async function saveRates() {
+    setRatesSaving(true)
+    await supabase.from('settings').upsert({ key: 'payroll_rates', value: JSON.stringify(rates) }, { onConflict: 'key' })
+    showToast('✅', 'Rate cards saved — takes effect on next payroll run')
+    setRatesSaving(false)
+  }
+
+  function updateRate(empType, role, field, value) {
+    setRates(prev => ({
+      ...prev,
+      [empType]: {
+        ...prev[empType],
+        [role]: { ...prev[empType][role], [field]: field === 'amount' ? parseFloat(value) || 0 : value }
+      }
+    }))
   }
 
   function showToast(icon, msg) { setToast({ icon, msg }); setTimeout(() => setToast(null), 3000) }
@@ -249,6 +305,59 @@ export default function SettingsPage() {
                 <>
                   <div style={sectionHead}>💸 Payroll Configuration</div>
                   <div style={{ marginBottom:16 }}>
+                    <div style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:'var(--text-muted)', marginBottom:4 }}>Rate Cards</div>
+                    <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:14, lineHeight:1.6 }}>
+                      Set the base pay rate for each role and employment type. Full-time uses monthly salary (÷26 for daily rate). Part-time and Freelancer use daily rates directly.
+                    </div>
+                    {EMP_TYPES.map(empType => (
+                      <div key={empType} style={{ marginBottom:20 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:'var(--text-primary)', background:'var(--surface)', border:'1px solid var(--border)', borderRadius:8, padding:'8px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:8 }}>
+                          <span>{empType === 'Full-time' ? '🏢' : empType === 'Part-time' ? '⏱️' : '🔧'}</span>
+                          <span>{empType}</span>
+                          <span style={{ fontSize:10, color:'var(--text-muted)', fontWeight:400, marginLeft:4 }}>
+                            {empType === 'Full-time' ? '— monthly salary' : '— daily rate'}
+                          </span>
+                        </div>
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10 }}>
+                          {ROLES.map(role => {
+                            const entry = rates[empType]?.[role] || { type: empType === 'Full-time' ? 'monthly' : 'daily', amount: 0 }
+                            const isEmpty = entry.amount === 0
+                            return (
+                              <div key={role} style={{ background: isEmpty ? 'var(--surface)' : 'var(--white)', border:`1px solid ${isEmpty ? 'var(--border)' : 'var(--matcha)'}`, borderRadius:9, padding:'10px 14px', display:'flex', alignItems:'center', gap:10 }}>
+                                <div style={{ flex:1 }}>
+                                  <div style={{ fontSize:10, fontWeight:700, color:'var(--text-primary)', marginBottom:5 }}>{role}</div>
+                                  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                                    <span style={{ fontSize:12, color:'var(--text-muted)', fontWeight:600 }}>₱</span>
+                                    <input
+                                      type="number"
+                                      value={entry.amount || ''}
+                                      onChange={e => updateRate(empType, role, 'amount', e.target.value)}
+                                      placeholder="0"
+                                      style={{ ...iStyle, width:110, padding:'5px 8px', fontSize:12 }}
+                                    />
+                                    <span style={{ fontSize:10, color:'var(--text-muted)' }}>
+                                      {empType === 'Full-time' ? '/mo' : '/day'}
+                                    </span>
+                                    {empType === 'Full-time' && entry.amount > 0 && (
+                                      <span style={{ fontSize:9, color:'var(--matcha-dark)', background:'var(--matcha-pale)', padding:'2px 6px', borderRadius:5, whiteSpace:'nowrap' }}>
+                                        ₱{Math.round(entry.amount / 26).toLocaleString('en-PH')}/day
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    <button onClick={saveRates} disabled={ratesSaving}
+                      style={{ background:'var(--matcha)', color:'white', border:'none', borderRadius:9, padding:'10px 24px', fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", marginBottom:24 }}>
+                      {ratesSaving ? 'Saving…' : '✓ Save Rate Cards'}
+                    </button>
+                  </div>
+
+                  <div style={{ borderTop:'1px solid var(--border)', paddingTop:20, marginBottom:16 }}>
                     <div style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:'var(--text-muted)', marginBottom:10 }}>Cutoff Dates</div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:20 }}>
                       <div>
