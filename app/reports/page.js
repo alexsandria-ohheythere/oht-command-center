@@ -109,7 +109,7 @@ export default function ReportsPage() {
   return (
     <AuthShell>
       {userEmail === null ? (
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%' }} />
+        <div style={{ height:'100%' }} />
       ) : !INCIDENT_AUTHORIZED.includes(userEmail) ? (
         <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:12, fontFamily:"'DM Sans',sans-serif" }}>
           <div style={{ fontSize:40 }}>🔒</div>
