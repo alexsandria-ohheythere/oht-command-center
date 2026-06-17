@@ -98,19 +98,24 @@ export default function ReportsPage() {
 
   const DEPTS = ['Operations', 'Creatives', 'Cafe Bar', 'Commissary']
 
-  // Counts
   const counts = {
-    all: reports.length,
-    pending: reports.filter(r => r.status === 'pending').length,
+    all:      reports.length,
+    pending:  reports.filter(r => r.status === 'pending').length,
     reviewed: reports.filter(r => r.status === 'reviewed').length,
     resolved: reports.filter(r => r.status === 'resolved').length,
   }
 
-  return (
-    <AuthShell>
-      {userEmail === null ? (
+  if (userEmail === null) {
+    return (
+      <AuthShell>
         <div style={{ height:'100%' }} />
-      ) : !INCIDENT_AUTHORIZED.includes(userEmail) ? (
+      </AuthShell>
+    )
+  }
+
+  if (!INCIDENT_AUTHORIZED.includes(userEmail)) {
+    return (
+      <AuthShell>
         <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:12, fontFamily:"'DM Sans',sans-serif" }}>
           <div style={{ fontSize:40 }}>🔒</div>
           <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:16, fontWeight:700, color:'#1a1208' }}>Access Restricted</div>
@@ -118,16 +123,19 @@ export default function ReportsPage() {
             Incident reports are only accessible to the Managing Director and CEO.
           </div>
         </div>
-      ) : (
+      </AuthShell>
+    )
+  }
+
+  return (
+    <AuthShell>
       <div style={{ display:'flex', flexDirection:'column', height:'100%', overflow:'hidden', fontFamily:"'DM Sans',sans-serif" }}>
 
-        {/* Page header */}
         <div style={{ background:'white', borderBottom:'1px solid #e5e0d8', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
           <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:17, fontWeight:700 }}>Incident Reports</div>
           <div style={{ fontSize:11, color:'#9a8a7a' }}>{filtered.length} of {reports.length} reports</div>
         </div>
 
-        {/* Status filter tabs */}
         <div style={{ background:'white', borderBottom:'1px solid #e5e0d8', padding:'0 24px', display:'flex', gap:4, overflowX:'auto', flexShrink:0 }}>
           {[
             { key:'all',      label:'All',      count: counts.all },
@@ -157,10 +165,7 @@ export default function ReportsPage() {
 
         <div style={{ flex:1, overflow:'hidden', display:'flex' }}>
 
-          {/* LEFT: List */}
           <div style={{ flex:1, overflowY:'auto', padding:'16px 20px', minWidth:0 }}>
-
-            {/* Search + dept filter */}
             <div style={{ display:'flex', gap:10, marginBottom:16 }}>
               <input
                 value={search}
@@ -225,7 +230,6 @@ export default function ReportsPage() {
             )}
           </div>
 
-          {/* RIGHT: Detail panel */}
           {selected && (
             <div style={{ width:400, borderLeft:'1px solid #e5e0d8', overflowY:'auto', background:'white', flexShrink:0 }}>
               <div style={{ padding:'14px 20px', borderBottom:'1px solid #e5e0d8', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
@@ -243,8 +247,6 @@ export default function ReportsPage() {
               </div>
 
               <div style={{ padding:'20px' }}>
-
-                {/* Status badge + actions */}
                 <div style={{ display:'flex', gap:8, marginBottom:20, flexWrap:'wrap' }}>
                   {['pending','reviewed','resolved'].map(s => {
                     const st = STATUS_STYLE[s]
@@ -266,7 +268,6 @@ export default function ReportsPage() {
                   })}
                 </div>
 
-                {/* Basic info */}
                 <div style={{ background:'#faf8f5', borderRadius:10, padding:'14px', marginBottom:16 }}>
                   <Row label="Incident Type" value={`${TYPE_ICONS[selected.incident_type] || '📋'} ${selected.incident_type}`} />
                   <Row label="Date & Time" value={`${fmtDate(selected.date_of_report)} at ${selected.time_of_report}`} />
@@ -275,29 +276,24 @@ export default function ReportsPage() {
                   <Row label="Submitted" value={fmtCreated(selected.created_at)} last />
                 </div>
 
-                {/* Description */}
                 <Section title="Description of Incident">
                   <p style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.7, margin:0 }}>{selected.description}</p>
                 </Section>
 
-                {/* Persons involved */}
                 <Section title="Persons Involved">
                   <p style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.7, margin:0 }}>{selected.persons_involved}</p>
                 </Section>
 
-                {/* Witnesses */}
                 {selected.witnesses && (
                   <Section title="Witnesses">
                     <p style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.7, margin:0 }}>{selected.witnesses}</p>
                   </Section>
                 )}
 
-                {/* Resolution */}
                 <Section title="Resolution">
                   <p style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.7, margin:0 }}>{selected.resolution || <em style={{ color:'#9a8a7a' }}>Not provided</em>}</p>
                 </Section>
 
-                {/* Photo */}
                 {selected.photo_url && (
                   <Section title="Attached Photo">
                     <a href={selected.photo_url} target="_blank" rel="noreferrer">
@@ -307,7 +303,6 @@ export default function ReportsPage() {
                   </Section>
                 )}
 
-                {/* Declaration */}
                 <Section title="Declaration">
                   <div style={{ background:'#fef3e2', borderRadius:8, padding:'10px 12px' }}>
                     <div style={{ fontSize:11, color:'#7a5500', lineHeight:1.6 }}>
@@ -317,7 +312,6 @@ export default function ReportsPage() {
                   </div>
                 </Section>
 
-                {/* Admin notes */}
                 <Section title="Admin Notes">
                   <textarea
                     value={adminNotes}
@@ -333,19 +327,16 @@ export default function ReportsPage() {
                     {saving ? 'Saving...' : 'Save Notes'}
                   </button>
                 </Section>
-
               </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Toast */}
       {toast && (
         <div style={{ position:'fixed', bottom:20, left:'50%', transform:'translateX(-50%)', background:'#1a1208', color:'white', borderRadius:10, padding:'10px 18px', fontSize:12, fontWeight:600, zIndex:999, display:'flex', gap:8, alignItems:'center', whiteSpace:'nowrap', boxShadow:'0 4px 20px rgba(0,0,0,.3)' }}>
           <span>{toast.icon}</span><span>{toast.msg}</span>
         </div>
-      )}
       )}
     </AuthShell>
   )
