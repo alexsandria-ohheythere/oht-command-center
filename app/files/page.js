@@ -4,8 +4,14 @@ import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { notifyOne } from '../../lib/notify'
 
-const CATEGORIES = ['All','Contract','NDA','Government Forms','Performance Reviews','Training Materials','General']
-const CAT_COLORS = {'Contract':'#4a7a1e','NDA':'#c0392b','Government Forms':'#2d5a8a','Performance Reviews':'#8e44ad','Training Materials':'#a06000','General':'#7a6a50'}
+// Read ?staff=id from URL to pre-filter to a specific employee
+function getStaffParam() {
+  if (typeof window === 'undefined') return ''
+  return new URLSearchParams(window.location.search).get('staff') || ''
+}
+
+const CATEGORIES = ['All','Contract','NDA','Government Forms','Performance Reviews','Training Materials','Incident Report','General']
+const CAT_COLORS = {'Contract':'#4a7a1e','NDA':'#c0392b','Government Forms':'#2d5a8a','Performance Reviews':'#8e44ad','Training Materials':'#a06000','General':'#7a6a50','Incident Report':'#c0392b'}
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
@@ -21,7 +27,7 @@ export default function FilesPage() {
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
   const [catFilter, setCatFilter] = useState('All')
-  const [staffFilter, setStaffFilter] = useState('')
+  const [staffFilter, setStaffFilter] = useState(getStaffParam)
   const [search, setSearch]     = useState('')
   const [showForm, setShowForm] = useState(false)
   const [selectedStaff, setSelectedStaff] = useState(null)
