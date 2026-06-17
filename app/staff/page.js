@@ -275,7 +275,7 @@ export default function StaffPage() {
                           </div>
                         ) : (
                           <a href={`/staff/profile?id=${s.id}`} style={{textDecoration:'none',color:'inherit'}}>
-                            <div style={{fontWeight:600,color:'var(--text-primary)'}}>{s.first_name} {s.last_name}</div>
+                            <div style={{fontWeight:600,color:'var(--text-primary)'}}>{s.last_name}, {s.first_name}</div>
                             {s.nickname && <div style={{fontSize:10,color:'var(--text-muted)'}}>"{s.nickname}"</div>}
                           </a>
                         )}
