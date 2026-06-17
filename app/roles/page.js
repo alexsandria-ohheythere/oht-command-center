@@ -170,21 +170,18 @@ export default function RolesPage() {
             ))}
           </div>
 
-          {/* Copy from another shift */}
-          {currentTasks.length === 0 && (
-            <div style={{background:'var(--gold-pale)',border:'1px solid var(--gold)',borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:12}}>
-              <span style={{fontSize:13}}>💡</span>
-              <span style={{fontSize:12,color:'#a06000'}}>No tasks yet for this shift. Copy from another shift?</span>
-              <div style={{marginLeft:'auto',display:'flex',gap:7}}>
-                {SHIFTS.filter(s=>s.id!==selectedShift).map(s=>(
-                  <button key={s.id} onClick={()=>copyFromShift(s.id)}
-                    style={{background:s.bg,border:`1px solid ${s.border}`,color:s.color,borderRadius:7,padding:'5px 10px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-                    Copy {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Copy from another shift — always visible */}
+          <div style={{marginBottom:14,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+            <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:600}}>Copy tasks from:</span>
+            {SHIFTS.filter(s=>s.id!==selectedShift).map(s=>(
+              <button key={s.id} onClick={()=>copyFromShift(s.id)}
+                style={{background:s.bg,border:`1px solid ${s.border}`,color:s.color,borderRadius:7,padding:'5px 12px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s'}}
+                onMouseEnter={e=>e.currentTarget.style.opacity='.8'}
+                onMouseLeave={e=>e.currentTarget.style.opacity='1'}>
+                📋 {s.label}
+              </button>
+            ))}
+          </div>
 
           {/* Task list grouped by category */}
           <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden',marginBottom:14}}>
