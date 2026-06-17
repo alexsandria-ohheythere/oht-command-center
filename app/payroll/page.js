@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate } from '../../lib/payroll'
@@ -8,6 +8,33 @@ const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
+
+function SortTh({ label, colKey, sortKey, sortDir, onSort, style }) {
+  const active = sortKey === colKey
+  return (
+    <th
+      onClick={() => onSort(colKey)}
+      style={{
+        padding:'11px 12px',
+        textAlign:'left',
+        fontSize:9,
+        fontWeight:700,
+        letterSpacing:1.5,
+        textTransform:'uppercase',
+        color: active ? 'white' : 'var(--matcha-light)',
+        cursor:'pointer',
+        userSelect:'none',
+        whiteSpace:'nowrap',
+        ...style
+      }}
+    >
+      {label}
+      <span style={{marginLeft:5, opacity: active ? 1 : 0.4, fontSize:10}}>
+        {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+      </span>
+    </th>
+  )
+}
 
 export default function PayrollPage() {
   const supabase = createClient()
@@ -21,6 +48,8 @@ export default function PayrollPage() {
   const [selectedStaff, setSelectedStaff]   = useState(null)
   const [unmatchedTs, setUnmatchedTs]       = useState([])
   const [toast, setToast]                   = useState(null)
+  const [sortKey, setSortKey]               = useState('name')
+  const [sortDir, setSortDir]               = useState('asc')
   const fileRef = useRef()
 
   useEffect(() => { fetchStaff() }, [])
@@ -28,7 +57,7 @@ export default function PayrollPage() {
 
   async function fetchStaff() {
     setLoading(true)
-    const { data } = await supabase.from('staff').select('*').order('last_name')
+    const { data } = await supabase.from('staff').select('*')
     setStaff(data || [])
     setLoading(false)
   }
@@ -39,6 +68,11 @@ export default function PayrollPage() {
   }
 
   function showToast(icon, msg) { setToast({icon,msg}); setTimeout(()=>setToast(null),3500) }
+
+  function handleSort(key) {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
 
   function handleTimesheetUpload(e) {
     const file = e.target.files[0]; if (!file) return
@@ -82,7 +116,6 @@ export default function PayrollPage() {
     showToast('💾',`Payroll saved for ${selectedCutoff.label}`)
   }
 
-  // ── DELETE individual run ──
   async function deleteRun(runId, name) {
     if (!confirm(`Delete payroll record for ${name}?`)) return
     await supabase.from('payroll_runs').delete().eq('id', runId)
@@ -90,7 +123,6 @@ export default function PayrollPage() {
     showToast('🗑️',`Payroll record deleted`)
   }
 
-  // ── DELETE entire cutoff ──
   async function deleteCutoff() {
     if (!confirm(`Delete ALL payroll records for ${selectedCutoff.label}? This cannot be undone.`)) return
     await supabase.from('payroll_runs').delete().eq('cutoff_id', selectedCutoff.id)
@@ -103,7 +135,7 @@ export default function PayrollPage() {
     const rows = buildPayrollRows()
     const data = [
       ['Name','Role','Type','Days','Paid Hours','Late (mins)','Gross','Late Deduction','SSS','PhilHealth','Pag-IBIG','Tax','Total Deductions','Net Pay','Service Charge'],
-      ...rows.map(r => [`${r.staff.first_name} ${r.staff.last_name}`,r.staff.role,r.staff.employment_type||'Full-time',r.pay.daysWorked,r.pay.paidHours.toFixed(2),r.pay.totalLateMins,r.pay.gross,r.pay.lateDeduction,r.pay.sss,r.pay.philhealth,r.pay.pagibig,r.pay.tax,r.pay.totalDeductions,r.pay.netPay,r.pay.eligible?'Yes':'No'])
+      ...rows.map(r => [`${r.staff.last_name}, ${r.staff.first_name}`,r.staff.role,r.staff.employment_type||'Full-time',r.pay.daysWorked,r.pay.paidHours.toFixed(2),r.pay.totalLateMins,r.pay.gross,r.pay.lateDeduction,r.pay.sss,r.pay.philhealth,r.pay.pagibig,r.pay.tax,r.pay.totalDeductions,r.pay.netPay,r.pay.eligible?'Yes':'No'])
     ]
     const csv = data.map(r=>r.join(',')).join('\n')
     const blob = new Blob([csv],{type:'text/csv'})
@@ -113,12 +145,41 @@ export default function PayrollPage() {
     showToast('📥','Payroll exported')
   }
 
-  const payrollRows = buildPayrollRows()
+  const allPayrollRows = buildPayrollRows()
+
+  // Sort payroll rows
+  const payrollRows = useMemo(() => {
+    return [...allPayrollRows].sort((a, b) => {
+      let av, bv
+      if (sortKey === 'name') {
+        av = `${a.staff.last_name} ${a.staff.first_name}`.toLowerCase()
+        bv = `${b.staff.last_name} ${b.staff.first_name}`.toLowerCase()
+      } else if (sortKey === 'role') {
+        av = (a.staff.role || '').toLowerCase()
+        bv = (b.staff.role || '').toLowerCase()
+      } else if (sortKey === 'employment_type') {
+        av = (a.staff.employment_type || '').toLowerCase()
+        bv = (b.staff.employment_type || '').toLowerCase()
+      } else if (sortKey === 'gross') {
+        av = a.pay.gross; bv = b.pay.gross
+      } else if (sortKey === 'deductions') {
+        av = a.pay.totalDeductions; bv = b.pay.totalDeductions
+      } else if (sortKey === 'net') {
+        av = a.pay.netPay; bv = b.pay.netPay
+      } else {
+        av = ''; bv = ''
+      }
+      const cmp = typeof av === 'number' ? av - bv : av.localeCompare(bv)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [allPayrollRows, sortKey, sortDir])
+
   const totals = payrollRows.reduce((acc,r)=>({ gross:acc.gross+r.pay.gross, deductions:acc.deductions+r.pay.totalDeductions, net:acc.net+r.pay.netPay, lateDeduction:acc.lateDeduction+r.pay.lateDeduction, sss:acc.sss+r.pay.sss, philhealth:acc.philhealth+r.pay.philhealth, pagibig:acc.pagibig+r.pay.pagibig, tax:acc.tax+r.pay.tax }),{gross:0,deductions:0,net:0,lateDeduction:0,sss:0,philhealth:0,pagibig:0,tax:0})
 
   const hasSavedData = savedRuns.length > 0
   const hasLiveData  = !!timesheetData
   const iStyle = {background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none',cursor:'pointer'}
+  const thBase = {padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)',whiteSpace:'nowrap'}
 
   return (
     <AuthShell>
@@ -189,9 +250,17 @@ export default function PayrollPage() {
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
             <thead>
               <tr style={{background:'var(--espresso)'}}>
-                {['Employee','Role','Type','Days','Hrs','Late','Gross','Deductions','Net Pay','SVC',''].map(h=>(
-                  <th key={h} style={{padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)',whiteSpace:'nowrap'}}>{h}</th>
-                ))}
+                <SortTh label="Employee"    colKey="name"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortTh label="Role"        colKey="role"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortTh label="Type"        colKey="employment_type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th style={thBase}>Days</th>
+                <th style={thBase}>Hrs</th>
+                <th style={thBase}>Late</th>
+                <SortTh label="Gross"       colKey="gross"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortTh label="Deductions"  colKey="deductions"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortTh label="Net Pay"     colKey="net"             sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th style={thBase}>SVC</th>
+                <th style={thBase}></th>
               </tr>
             </thead>
             <tbody>
@@ -205,7 +274,7 @@ export default function PayrollPage() {
                         {initials(r.staff.first_name,r.staff.last_name)}
                       </div>
                       <div>
-                        <div style={{fontWeight:600,fontSize:11}}>{r.staff.first_name} {r.staff.last_name}</div>
+                        <div style={{fontWeight:600,fontSize:11}}>{r.staff.last_name}, {r.staff.first_name}</div>
                         {r.staff.nickname&&<div style={{fontSize:9,color:'var(--text-muted)'}}>"{r.staff.nickname}"</div>}
                       </div>
                       {r.saved&&!r.isLive&&<span style={{fontSize:8,background:'var(--sky-pale)',color:'var(--sky)',border:'1px solid #4a90c444',padding:'1px 4px',borderRadius:4,fontWeight:600}}>Saved</span>}
@@ -222,7 +291,7 @@ export default function PayrollPage() {
                   <td style={{padding:'9px 12px',fontSize:13}}>{r.pay.eligible?'✅':'❌'}</td>
                   <td style={{padding:'9px 12px'}}>
                     {r.saved && (
-                      <button onClick={()=>deleteRun(r.saved.id,`${r.staff.first_name} ${r.staff.last_name}`)}
+                      <button onClick={()=>deleteRun(r.saved.id,`${r.staff.last_name}, ${r.staff.first_name}`)}
                         style={{background:'transparent',border:'none',color:'var(--border)',cursor:'pointer',fontSize:13}}
                         onMouseEnter={e=>e.target.style.color='#c0392b'} onMouseLeave={e=>e.target.style.color='var(--border)'}>
                         🗑
