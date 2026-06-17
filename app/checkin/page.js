@@ -79,7 +79,7 @@ export default function CheckinPage() {
         supabase.from('staff').select('*').order('last_name'),
         supabase.from('schedules').select('*').eq('shift_date', dateISO),
         supabase.from('role_tasks').select('*').eq('is_active', true).order('task_order'),
-        supabase.from('shift_task_assignments').select('*').eq('shift_date', dateISO),
+        supabase.from('shift_task_assignments').select('*, role_tasks!shift_task_assignments_task_id_fkey(task_name)').eq('shift_date', dateISO),
       ])
       if (e1) console.error('staff fetch error:', e1)
       if (e2) console.error('schedules fetch error:', e2)
@@ -317,7 +317,7 @@ export default function CheckinPage() {
                   {isPast ? 'No tasks were recorded for this shift.' : 'No tasks assigned — tasks auto-load from Role Templates.'}
                 </div>
               ):detailTasks.map(ci=>{
-                const task = tasks.find(t=>t.id===ci.task_id)
+                const taskName = ci.role_tasks?.task_name || tasks.find(t=>t.id===ci.task_id)?.task_name || 'Task'
                 return (
                   <div key={ci.id} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 16px',borderBottom:'1px solid var(--cream-dark)',background:ci.completed?'#f8fdf5':'var(--white)',transition:'background .2s'}}>
                     <button onClick={()=>toggleTask(ci.id,!ci.completed)} disabled={saving===ci.id||isPast}
@@ -326,7 +326,7 @@ export default function CheckinPage() {
                     </button>
                     <div style={{flex:1}}>
                       <div style={{fontSize:12,fontWeight:500,color:ci.completed?'var(--text-muted)':'var(--espresso)',textDecoration:ci.completed?'line-through':'none'}}>
-                        {task?.task_name||'Task'}
+                        {taskName}
                       </div>
                       {ci.completed&&ci.completed_at&&(
                         <div style={{fontSize:10,color:'var(--matcha-dark)',marginTop:2,fontFamily:"'DM Mono',monospace"}}>✓ {fmtTime(ci.completed_at)}</div>
