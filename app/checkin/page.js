@@ -62,17 +62,26 @@ export default function CheckinPage() {
 
   async function fetchAll() {
     setLoading(true)
-    const [{ data: s }, { data: sch }, { data: t }, { data: ci }] = await Promise.all([
-      supabase.from('staff').select('*').order('last_name'),
-      supabase.from('schedules').select('*').eq('shift_date', dateISO),
-      supabase.from('role_tasks').select('*').eq('is_active', true).order('task_order'),
-      supabase.from('shift_task_assignments').select('*').eq('shift_date', dateISO),
-    ])
-    setStaff(s||[])
-    setAssignments(sch||[])
-    setTasks(t||[])
-    setCheckIns(ci||[])
-    setLoading(false)
+    try {
+      const [{ data: s, error: e1 }, { data: sch, error: e2 }, { data: t, error: e3 }, { data: ci, error: e4 }] = await Promise.all([
+        supabase.from('staff').select('*').order('last_name'),
+        supabase.from('schedules').select('*').eq('shift_date', dateISO),
+        supabase.from('role_tasks').select('*').eq('is_active', true).order('task_order'),
+        supabase.from('shift_task_assignments').select('*').eq('shift_date', dateISO),
+      ])
+      if (e1) console.error('staff fetch error:', e1)
+      if (e2) console.error('schedules fetch error:', e2)
+      if (e3) console.error('role_tasks fetch error:', e3)
+      if (e4) console.error('shift_task_assignments fetch error:', e4)
+      setStaff(s||[])
+      setAssignments(sch||[])
+      setTasks(t||[])
+      setCheckIns(ci||[])
+    } catch (err) {
+      console.error('fetchAll failed:', err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   function goToPrevDay() {
