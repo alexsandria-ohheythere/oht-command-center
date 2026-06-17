@@ -133,14 +133,16 @@ export default function CheckinPage() {
     setSelectedStaff(staffMember)
     setSelectedShift(shiftId)
     setView('detail')
-    // Only auto-assign tasks on today — don't create tasks for past dates
+    // Sync tasks on today — insert any missing role tasks without touching existing ones
     if (isToday) {
-      const existing = checkIns.filter(ci=>ci.staff_id===staffMember.id&&ci.shift_type===shiftId)
-      if (existing.length === 0) {
-        const roleTasks = tasks.filter(t=>t.role===staffMember.role&&t.shift_type===shiftId)
-        if (roleTasks.length > 0) {
+      const roleTasks = tasks.filter(t=>t.role===staffMember.role&&t.shift_type===shiftId)
+      if (roleTasks.length > 0) {
+        const existing = checkIns.filter(ci=>ci.staff_id===staffMember.id&&ci.shift_type===shiftId)
+        const existingTaskIds = new Set(existing.map(ci=>ci.task_id))
+        const missing = roleTasks.filter(t=>!existingTaskIds.has(t.id))
+        if (missing.length > 0) {
           const schedEntry = assignments.find(a=>a.staff_id===staffMember.id&&a.shift_type===shiftId)
-          const inserts = roleTasks.map(t=>({ schedule_id:schedEntry?.id||null, task_id:t.id, staff_id:staffMember.id, shift_date:dateISO, shift_type:shiftId, completed:false, completed_at:null }))
+          const inserts = missing.map(t=>({ schedule_id:schedEntry?.id||null, task_id:t.id, staff_id:staffMember.id, shift_date:dateISO, shift_type:shiftId, completed:false, completed_at:null }))
           const { data } = await supabase.from('shift_task_assignments').insert(inserts).select()
           if (data) setCheckIns(prev=>[...prev,...data])
         }
