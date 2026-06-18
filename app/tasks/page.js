@@ -29,6 +29,60 @@ const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(-
 const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
 const EMPTY_FORM = { title:'', description:'', priority:'normal', assigned_to:'', due_date:'', status:'todo' }
 
+function ArchivedColumn({ tasks, search, pri, getRoleColor, initials, openDrawer, deleteTask, restoreTask }) {
+  const archivedTasks = tasks.filter(t =>
+    t.status === 'archived' &&
+    (!search || `${t.ticket_no} ${t.title} ${t.description||''}`.toLowerCase().includes(search.toLowerCase()))
+  )
+  return (
+    <div style={{background:'var(--surface)',borderRadius:13,display:'flex',flexDirection:'column',overflow:'hidden',opacity:0.88}}>
+      <div style={{padding:'14px 16px',background:ARCHIVED_COL.bg,borderBottom:`1px solid ${ARCHIVED_COL.color}22`,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:10,height:10,borderRadius:'50%',background:ARCHIVED_COL.color}}/>
+          <span style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700,color:ARCHIVED_COL.color}}>Archived</span>
+        </div>
+        <span style={{fontSize:11,fontWeight:700,color:ARCHIVED_COL.color,background:'white',padding:'2px 8px',borderRadius:20}}>{archivedTasks.length}</span>
+      </div>
+      <div style={{flex:1,overflowY:'auto',padding:'10px 10px 16px'}}>
+        {archivedTasks.length===0 && <div style={{textAlign:'center',padding:'30px 10px',color:'var(--border)',fontSize:12}}>No archived orders</div>}
+        {archivedTasks.map(task => {
+          const p = pri(task.priority)
+          const assignee = task.staff
+          return (
+            <div key={task.id} onClick={()=>openDrawer(task)}
+              style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:10,marginBottom:8,cursor:'pointer',borderLeft:`5px solid ${ARCHIVED_COL.color}`,transition:'all .15s',overflow:'hidden',opacity:0.75}}
+              onMouseEnter={e=>{e.currentTarget.style.opacity='1';e.currentTarget.style.boxShadow='0 2px 8px rgba(0,0,0,.07)'}}
+              onMouseLeave={e=>{e.currentTarget.style.opacity='0.75';e.currentTarget.style.boxShadow=''}}>
+              <div style={{padding:'10px 12px 8px 13px'}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:5}}>
+                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    {task.ticket_no && <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:'var(--text-muted)',background:'var(--surface)',padding:'2px 7px',borderRadius:6}}>{task.ticket_no}</span>}
+                    <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:20,background:p.bg,color:p.color,opacity:0.7}}>{p.label}</span>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();deleteTask(task.id)}} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px'}}>🗑</button>
+                </div>
+                <div style={{fontSize:12,fontWeight:600,color:'var(--text-muted)',marginBottom:6,lineHeight:1.4,textDecoration:'line-through'}}>{task.title}</div>
+                {assignee && (
+                  <div style={{display:'flex',alignItems:'center',gap:5}}>
+                    <div style={{width:16,height:16,borderRadius:'50%',background:getRoleColor(assignee.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,fontWeight:700,color:'white'}}>{initials(assignee.first_name,assignee.last_name)}</div>
+                    <span style={{fontSize:9,color:'var(--text-muted)'}}>{assignee.nickname||assignee.first_name}</span>
+                  </div>
+                )}
+              </div>
+              <div style={{display:'flex',borderTop:'1px solid var(--border)',background:'var(--surface)'}}>
+                <button onClick={e=>{e.stopPropagation();restoreTask(task.id)}}
+                  style={{flex:1,background:'transparent',border:'none',color:'#4a7a1e',padding:'5px 4px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",textAlign:'center'}}>
+                  ♻ Restore
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function JobOrderPage() {
   const supabase = createClient()
   const [tasks, setTasks]         = useState([])
@@ -444,56 +498,7 @@ export default function JobOrderPage() {
               )
             })}
 
-            {/* ── Archived Column ── */}
-            {isAdmin && (() => {
-              const archivedTasks = tasks.filter(t=>t.status==='archived' && (!search || `${t.ticket_no} ${t.title} ${t.description||''}`.toLowerCase().includes(search.toLowerCase())))
-              return (
-                <div style={{background:'var(--surface)',borderRadius:13,display:'flex',flexDirection:'column',overflow:'hidden',opacity:0.85}}>
-                  <div style={{padding:'14px 16px',background:ARCHIVED_COL.bg,borderBottom:`1px solid ${ARCHIVED_COL.color}22`,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8}}>
-                      <div style={{width:10,height:10,borderRadius:'50%',background:ARCHIVED_COL.color}}/>
-                      <span style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700,color:ARCHIVED_COL.color}}>Archived</span>
-                    </div>
-                    <span style={{fontSize:11,fontWeight:700,color:ARCHIVED_COL.color,background:'white',padding:'2px 8px',borderRadius:20}}>{archivedTasks.length}</span>
-                  </div>
-                  <div style={{flex:1,overflowY:'auto',padding:'10px 10px 16px'}}>
-                    {archivedTasks.length===0&&<div style={{textAlign:'center',padding:'30px 10px',color:'var(--border)',fontSize:12}}>No archived orders</div>}
-                    {archivedTasks.map(task=>{
-                      const p = pri(task.priority)
-                      const assignee = task.staff
-                      return (
-                        <div key={task.id}
-                          onClick={()=>openDrawer(task)}
-                          style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:10,marginBottom:8,cursor:'pointer',borderLeft:`5px solid ${ARCHIVED_COL.color}`,transition:'all .15s',overflow:'hidden',opacity:0.75}}
-                          onMouseEnter={e=>{e.currentTarget.style.opacity='1';e.currentTarget.style.boxShadow='0 2px 8px rgba(0,0,0,.07)'}}
-                          onMouseLeave={e=>{e.currentTarget.style.opacity='0.75';e.currentTarget.style.boxShadow=''}}>
-                          <div style={{padding:'10px 12px 8px 13px'}}>
-                            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:5}}>
-                              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                                {task.ticket_no&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:'var(--text-muted)',background:'var(--surface)',padding:'2px 7px',borderRadius:6}}>{task.ticket_no}</span>}
-                                <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:20,background:p.bg,color:p.color,opacity:0.7}}>{p.label}</span>
-                              </div>
-                              <button onClick={e=>{e.stopPropagation();deleteTask(task.id)}} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px'}}>🗑</button>
-                            </div>
-                            <div style={{fontSize:12,fontWeight:600,color:'var(--text-muted)',marginBottom:6,lineHeight:1.4,textDecoration:'line-through'}}>{task.title}</div>
-                            {assignee&&<div style={{display:'flex',alignItems:'center',gap:5}}>
-                              <div style={{width:16,height:16,borderRadius:'50%',background:getRoleColor(assignee.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,fontWeight:700,color:'white'}}>{initials(assignee.first_name,assignee.last_name)}</div>
-                              <span style={{fontSize:9,color:'var(--text-muted)'}}>{assignee.nickname||assignee.first_name}</span>
-                            </div>}
-                          </div>
-                          <div style={{display:'flex',borderTop:'1px solid var(--border)',background:'var(--surface)'}}>
-                            <button onClick={e=>{e.stopPropagation();restoreTask(task.id)}}
-                              style={{flex:1,background:'transparent',border:'none',color:'#4a7a1e',padding:'5px 4px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",textAlign:'center'}}>
-                              ♻ Restore
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )
-            })()}
+            {isAdmin && <ArchivedColumn tasks={tasks} search={search} pri={pri} getRoleColor={getRoleColor} initials={initials} openDrawer={openDrawer} deleteTask={deleteTask} restoreTask={restoreTask}/>}
           </div>
         )}
       </div>
