@@ -14,35 +14,121 @@ const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUppe
 
 const SHIFT_BADGE = {
   am:  { label:'AM',  bg:'#eef7e4', color:'#4a7a1e', border:'#7ab648' },
+  ops: { label:'OPS', bg:'#f5eeff', color:'#7a3a8a', border:'#b06af5' },
   mid: { label:'MID', bg:'#fef3e2', color:'#a06000',  border:'#d4a843' },
   pm:  { label:'PM',  bg:'#e8f0fb', color:'#2d5a8a',  border:'#4a90c4' },
 }
 
+// Daily rate lookup (mirrors lib/payroll.js RATES)
+const RATES = {
+  'Full-time': {
+    'Senior Barista':                { monthly: 17000 },
+    'Executive Chef':                { monthly: 17000 },
+    'Junior Barista - Milk Station': { monthly: 14000 },
+    'Junior Barista - Cashier':      { monthly: 14000 },
+    'Sous Chef':                     { monthly: 15000 },
+  },
+  'Part-time': {
+    'Senior Barista':                { daily: 850 },
+    'Executive Chef':                { daily: 850 },
+    'Junior Barista - Milk Station': { daily: 700 },
+    'Junior Barista - Cashier':      { daily: 700 },
+    'Sous Chef':                     { daily: 700 },
+    'Kitchen Staff':                 { daily: 700 },
+  },
+  'Freelancer': {
+    'Cafe Supervisor':               { daily: 1150 },
+    'Cafe Operations Support':       { daily: 750  },
+    'Senior Barista':                { daily: 850  },
+    'Executive Chef':                { daily: 850  },
+    'Junior Barista - Milk Station': { daily: 700  },
+    'Junior Barista - Cashier':      { daily: 700  },
+    'Sous Chef':                     { daily: 700  },
+    'Kitchen Staff':                 { daily: 700  },
+  },
+}
+function getDailyRate(employment_type, role) {
+  const typeRates = RATES[employment_type]
+  if (!typeRates) return 0
+  const r = typeRates[role]
+  if (!r) return 0
+  if (r.daily) return r.daily
+  if (r.monthly) return r.monthly / 26
+  return 0
+}
+
 const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const peso = n => '₱'+(parseFloat(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
+
+// Mini bar chart for daily sales
+function SalesBarChart({ data, loading }) {
+  if (loading) return <div style={{textAlign:'center',padding:'40px',color:'var(--text-muted)',fontSize:12}}>Loading…</div>
+  if (!data.length) return <div style={{textAlign:'center',padding:'40px',color:'var(--text-muted)',fontSize:12}}>No sales data this month</div>
+  const max = Math.max(...data.map(d=>d.total), 1)
+  const barW = Math.max(8, Math.floor(540 / data.length) - 4)
+  return (
+    <div style={{display:'flex',alignItems:'flex-end',gap:3,height:110,paddingBottom:24,paddingTop:8,overflowX:'auto'}}>
+      {data.map((d,i) => {
+        const pct = d.total / max
+        const h = Math.max(4, Math.round(pct * 90))
+        const isToday = d.date === toISO(new Date())
+        return (
+          <div key={i} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,flexShrink:0,width:barW+4}}>
+            <div title={`${d.label}: ${peso(d.total)}`}
+              style={{width:barW,height:h,borderRadius:'4px 4px 0 0',
+                background:isToday?'var(--matcha-dark)':'#7ab64866',
+                cursor:'pointer',transition:'background .15s'}}
+              onMouseEnter={e=>e.currentTarget.style.background=isToday?'#2d5a1e':'#7ab648'}
+              onMouseLeave={e=>e.currentTarget.style.background=isToday?'var(--matcha-dark)':'#7ab64866'}
+            />
+            <span style={{fontSize:8,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace",transform:'rotate(-45deg)',transformOrigin:'top left',whiteSpace:'nowrap',marginTop:2}}>
+              {d.label}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function DashboardPage() {
   const supabase = createClient()
   const today = toISO(new Date())
   const todayLabel = new Date().toLocaleDateString('en-PH',{weekday:'long',month:'long',day:'numeric',year:'numeric'})
 
-  // Month range
   const now = new Date()
   const monthStart = toISO(new Date(now.getFullYear(), now.getMonth(), 1))
   const monthEnd   = toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0))
   const monthLabel = now.toLocaleDateString('en-PH',{month:'long',year:'numeric'})
 
-  const [staffList, setStaffList]         = useState([])
-  const [todayShifts, setTodayShifts]     = useState([])
-  const [pendingLeaves, setPendingLeaves] = useState([])
-  const [announcements, setAnnouncements] = useState([])
-  const [loading, setLoading]             = useState(true)
+  const [loading, setLoading]                 = useState(true)
+  const [userRole, setUserRole]               = useState('admin')
 
-  // Finance state
-  const [totalSales, setTotalSales]       = useState(0)
-  const [totalExpenses, setTotalExpenses] = useState(0)
-  const [financeLoading, setFinanceLoading] = useState(true)
-  const [userRole, setUserRole] = useState('admin')
+  // KPI data
+  const [incidentCount, setIncidentCount]     = useState(0)
+  const [pendingInventory, setPendingInventory] = useState(0)
+  const [pendingLeaves, setPendingLeaves]     = useState(0)
+  const [manpowerCost, setManpowerCost]       = useState(0)
+  const [todayShifts, setTodayShifts]         = useState([])
+
+  // Finance
+  const [totalSales, setTotalSales]           = useState(0)
+  const [totalExpenses, setTotalExpenses]     = useState(0)
+  const [financeLoading, setFinanceLoading]   = useState(true)
+
+  // Daily sales chart
+  const [dailySales, setDailySales]           = useState([])
+  const [chartLoading, setChartLoading]       = useState(true)
+
+  // Check-in data
+  const [checkIns, setCheckIns]               = useState([])
+  const [staffMap, setStaffMap]               = useState({})
+
+  // Job orders
+  const [jobOrders, setJobOrders]             = useState([])
+
+  // Announcements
+  const [announcements, setAnnouncements]     = useState([])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -55,59 +141,97 @@ export default function DashboardPage() {
   async function fetchDashboard() {
     setLoading(true)
     const [
-      { data: staff },
       { data: schedules },
       { data: leaves },
+      { data: incidents },
+      { data: inventoryPending },
+      { data: staffAll },
+      { data: checkinData },
+      { data: jobData },
       { data: announceData },
     ] = await Promise.all([
-      supabase.from('staff').select('*'),
-      supabase.from('schedules').select('*, staff(first_name,last_name,role,nickname)').eq('shift_date', today),
-      supabase.from('leave_requests').select('*, staff(first_name,last_name)').eq('status','pending').order('created_at',{ascending:false}).limit(5),
-      supabase.from('announcements').select('*').order('created_at',{ascending:false}).limit(3).catch(()=>({data:[]})),
+      supabase.from('schedules').select('*, staff(first_name,last_name,role,nickname,employment_type)').eq('shift_date', today),
+      supabase.from('leave_requests').select('id').eq('status','pending'),
+      supabase.from('incident_reports').select('id').eq('status','pending'),
+      supabase.from('inventory_reports').select('id').eq('status','pending'),
+      supabase.from('staff').select('id,first_name,last_name,role,employment_type'),
+      supabase.from('daily_checkins').select('*, staff(first_name,last_name,role)').eq('checkin_date', today),
+      supabase.from('job_orders').select('*, staff(first_name,last_name)').in('status',['todo','inprogress']).order('created_at',{ascending:false}).limit(6),
+      supabase.from('announcements').select('*').order('created_at',{ascending:false}).limit(3),
     ])
-    setStaffList(staff || [])
-    setTodayShifts(schedules || [])
-    setPendingLeaves(leaves || [])
-    setAnnouncements(announceData || [])
-    setLoading(false)
 
-    // Fetch finance separately so it doesn't block main load
+    const shifts = schedules || []
+    setTodayShifts(shifts)
+    setPendingLeaves((leaves||[]).length)
+    setIncidentCount((incidents||[]).length)
+    setPendingInventory((inventoryPending||[]).length)
+    setCheckIns(checkinData || [])
+    setJobOrders(jobData || [])
+    setAnnouncements(announceData || [])
+
+    // Build staff lookup
+    const sMap = {}
+    ;(staffAll||[]).forEach(s => { sMap[s.id] = s })
+    setStaffMap(sMap)
+
+    // Compute today's manpower cost from scheduled shifts
+    let cost = 0
+    shifts.forEach(s => {
+      const st = s.staff
+      if (st) cost += getDailyRate(st.employment_type, st.role)
+    })
+    setManpowerCost(cost)
+
+    setLoading(false)
     fetchFinance()
   }
 
   async function fetchFinance() {
     setFinanceLoading(true)
+    setChartLoading(true)
     const [
       { data: salesData },
       { data: expensesData },
+      { data: allSalesData },
     ] = await Promise.all([
       supabase.from('sales').select('gross_sales').gte('sale_date', monthStart).lte('sale_date', monthEnd),
       supabase.from('expenses').select('amount').gte('expense_date', monthStart).lte('expense_date', monthEnd),
+      supabase.from('sales').select('sale_date,gross_sales').gte('sale_date', monthStart).lte('sale_date', monthEnd).order('sale_date',{ascending:true}),
     ])
-    setTotalSales((salesData||[]).reduce((sum,r)=>sum+(parseFloat(r.gross_sales)||0),0))
-    setTotalExpenses((expensesData||[]).reduce((sum,r)=>sum+(parseFloat(r.amount)||0),0))
+    const sales = (salesData||[]).reduce((sum,r)=>sum+(parseFloat(r.gross_sales)||0),0)
+    const expenses = (expensesData||[]).reduce((sum,r)=>sum+(parseFloat(r.amount)||0),0)
+    setTotalSales(sales)
+    setTotalExpenses(expenses)
     setFinanceLoading(false)
+
+    // Aggregate daily sales for chart
+    const byDate = {}
+    ;(allSalesData||[]).forEach(r => {
+      byDate[r.sale_date] = (byDate[r.sale_date]||0) + (parseFloat(r.gross_sales)||0)
+    })
+    const chartData = Object.entries(byDate).map(([date, total]) => ({
+      date,
+      total,
+      label: new Date(date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'}),
+    }))
+    setDailySales(chartData)
+    setChartLoading(false)
   }
 
-  const totalStaff   = staffList.length
-  const onShiftToday = [...new Set(todayShifts.map(s=>s.staff_id))].length
-  const pendingCount = pendingLeaves.length
-  const netProfit    = totalSales - totalExpenses
+  const netSales = totalSales - totalExpenses
+  const pendingCount = pendingLeaves
 
-  const QUICK_ACTIONS = [
-    { icon:'📅', label:'Scheduling',    href:'/schedule',  color:'var(--matcha)',  show: true },
-    { icon:'📋', label:'Job Orders',    href:'/tasks',     color:'var(--sky)',     show: true },
-    { icon:'🗓️', label:'Leave & Unavail.',href:'/leave',   color:'#2d7a6a',        show: true },
-    { icon:'📝', label:'Role Tasks',    href:'/roles',     color:'#8e44ad',        show: true },
-    { icon:'✔️', label:'Daily Check-In',href:'/checkin',   color:'var(--gold)',    show: true },
-    { icon:'💸', label:'Payroll',       href:'/payroll',   color:'var(--blush)',   show: true },
-    { icon:'👥', label:'Staff',         href:'/staff',     color:'var(--bark)',    show: true },
-    { icon:'📄', label:'Contracts',     href:'/contracts', color:'#4a90c4',        show: true },
-    { icon:'📁', label:'Files · 201',   href:'/files',     color:'#c0392b',        show: true },
-    { icon:'📊', label:'Finance',       href:'/finance',   color:'#2d7a6a',        show: userRole !== 'hr' },
-    { icon:'📣', label:'Announcements', href:'/announce',  color:'#c0392b',        show: true },
-    { icon:'⚙️', label:'Settings',      href:'/settings',  color:'#7a6a50',        show: userRole !== 'hr' },
-  ]
+  const JO_STATUS = {
+    todo:       { label:'To Do',       color:'#7a6a50', bg:'#f5f0e8' },
+    inprogress: { label:'In Progress', color:'#a06000', bg:'#fef3e2' },
+    done:       { label:'Done',        color:'#4a7a1e', bg:'#eef7e4' },
+  }
+  const JO_PRIORITY = {
+    urgent: { color:'#c0392b' },
+    high:   { color:'#e8845a' },
+    normal: { color:'#4a90c4' },
+    low:    { color:'#7a6a50' },
+  }
 
   return (
     <AuthShell>
@@ -122,19 +246,43 @@ export default function DashboardPage() {
       </div>
 
       <div className="page-content">
-        {/* KPI STRIP — Operations */}
+
+        {/* KPI STRIP */}
         <div className="kpi-grid fade-up" style={{marginBottom:20}}>
           {[
-            { label:'Total Staff',      value: loading?'…':totalStaff,           delta:'Active team members',          dir:'neutral', icon:'👥', cls:'c-matcha', href:'/staff'   },
-            { label:'On Shift Today',   value: loading?'…':onShiftToday,         delta:`of ${totalStaff} scheduled`,   dir:'neutral', icon:'📅', cls:'c-gold',   href:'/schedule'},
-            { label:'Pending Leaves',   value: loading?'…':pendingCount,         delta: pendingCount>0?'Need approval':'All clear', dir:pendingCount>0?'down':'up', icon:'🗓️', cls:'c-blush', href:'/leave' },
-            { label:'Shifts Today',     value: loading?'…':todayShifts.length,   delta:'Total assignments today',      dir:'neutral', icon:'🕐', cls:'c-bark',   href:'/schedule'},
+            {
+              label:'Incident Reports',
+              value: loading?'…':incidentCount,
+              delta: incidentCount>0?'Pending review':'All clear',
+              dir: incidentCount>0?'down':'up',
+              icon:'⚠️', cls:'c-blush', href:'/reports'
+            },
+            {
+              label:'Inventory Approval',
+              value: loading?'…':pendingInventory,
+              delta: pendingInventory>0?'Awaiting approval':'Queue clear',
+              dir: pendingInventory>0?'down':'up',
+              icon:'📦', cls:'c-bark', href:'/inventory/inventory-approvals'
+            },
+            {
+              label:'Pending Leaves',
+              value: loading?'…':pendingCount,
+              delta: pendingCount>0?'Need approval':'All clear',
+              dir: pendingCount>0?'down':'up',
+              icon:'🗓️', cls:'c-gold', href:'/leave'
+            },
+            {
+              label:'Manpower Cost Today',
+              value: loading?'…':peso(manpowerCost),
+              delta: loading?'…':`${todayShifts.length} shift${todayShifts.length!==1?'s':''} scheduled`,
+              dir:'neutral', icon:'💸', cls:'c-matcha', href:'/schedule'
+            },
           ].map(k => (
             <a key={k.label} href={k.href} style={{textDecoration:'none'}}>
               <div className={`kpi-card ${k.cls}`} style={{cursor:'pointer'}}>
                 <div className="kpi-icon">{k.icon}</div>
                 <div className="kpi-label">{k.label}</div>
-                <div className="kpi-value">{k.value}</div>
+                <div className="kpi-value" style={{fontSize: k.label==='Manpower Cost Today'?16:undefined}}>{k.value}</div>
                 <div className={`kpi-delta ${k.dir}`}>{k.delta}</div>
               </div>
             </a>
@@ -176,185 +324,165 @@ export default function DashboardPage() {
             </div>
           </a>
 
-          {/* Net Profit */}
+          {/* Net Sales */}
           <a href="/finance/financial-statement" style={{textDecoration:'none'}}>
-            <div className="card fade-up" style={{cursor:'pointer',borderTop:`3px solid ${netProfit>=0?'#4a90c4':'#c0392b'}`,transition:'box-shadow .15s'}}
+            <div className="card fade-up" style={{cursor:'pointer',borderTop:`3px solid ${netSales>=0?'#4a90c4':'#c0392b'}`,transition:'box-shadow .15s'}}
               onMouseEnter={e=>e.currentTarget.style.boxShadow='0 4px 16px #4a90c422'}
               onMouseLeave={e=>e.currentTarget.style.boxShadow=''}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-                <span style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Net Profit · {monthLabel}</span>
+                <span style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Net Sales · {monthLabel}</span>
                 <span style={{fontSize:16}}>📊</span>
               </div>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:22,fontWeight:700,color:financeLoading?'var(--text-muted)':netProfit>=0?'#2d5a8a':'#c0392b'}}>
-                {financeLoading ? '…' : peso(netProfit)}
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:22,fontWeight:700,color:financeLoading?'var(--text-muted)':netSales>=0?'#2d5a8a':'#c0392b'}}>
+                {financeLoading ? '…' : peso(netSales)}
               </div>
               <div style={{fontSize:10,color:'#4a90c4',marginTop:4,fontWeight:600}}>Full P&L →</div>
             </div>
           </a>
         </div>
-        )}{/* end hide finance for HR */}
+        )}
 
-        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,marginBottom:16}}>
-          {/* TODAY'S SHIFTS */}
-          <div className="card fade-up">
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700}}>Today's Shifts</div>
-              <a href="/schedule" style={{fontSize:11,color:'var(--matcha-dark)',fontWeight:600,textDecoration:'none'}}>Manage →</a>
-            </div>
-            {loading ? (
-              <div style={{textAlign:'center',padding:'20px',color:'var(--text-muted)',fontSize:12}}>Loading…</div>
-            ) : todayShifts.length === 0 ? (
-              <div style={{textAlign:'center',padding:'20px 0'}}>
-                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>No shifts scheduled for today</div>
-                <a href="/schedule" style={{fontSize:11,fontWeight:700,color:'var(--matcha-dark)',textDecoration:'none'}}>+ Go to Scheduler →</a>
-              </div>
-            ) : (
-              <div style={{display:'flex',flexDirection:'column',gap:7}}>
-                {todayShifts.slice(0,6).map(s => {
-                  const st = s.staff
-                  const badge = SHIFT_BADGE[s.shift_type]
-                  return (
-                    <div key={s.id} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 11px',background:'var(--surface)',borderRadius:9,border:'1px solid var(--cream-dark)'}}>
-                      <div style={{width:28,height:28,borderRadius:'50%',background:getRoleColor(st?.role||''),display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white',flexShrink:0}}>
-                        {initials(st?.first_name||'',st?.last_name||'')}
-                      </div>
-                      <span style={{fontSize:12,fontWeight:600,flex:1}}>{st?.first_name} {st?.last_name}</span>
-                      <span style={{fontSize:10,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>{st?.role}</span>
-                      <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:8,background:badge.bg,color:badge.color,border:`1px solid ${badge.border}`}}>{badge.label}</span>
-                    </div>
-                  )
-                })}
-                {todayShifts.length > 6 && (
-                  <a href="/schedule" style={{fontSize:11,color:'var(--text-muted)',textAlign:'center',padding:'4px',textDecoration:'none'}}>+{todayShifts.length-6} more shifts →</a>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* RIGHT COLUMN */}
-          <div style={{display:'flex',flexDirection:'column',gap:16}}>
-            {/* Staff overview */}
-            <div className="card fade-up">
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:12}}>Staff Overview</div>
-              <div style={{display:'flex',justifyContent:'space-around'}}>
-                {[
-                  [totalStaff,   'Total',    'var(--espresso)'],
-                  [onShiftToday, 'On Shift', 'var(--matcha-dark)'],
-                  [pendingCount, 'On Leave', pendingCount>0?'#c0392b':'var(--text-muted)'],
-                ].map(([num,lbl,color])=>(
-                  <div key={lbl} style={{textAlign:'center'}}>
-                    <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:24,fontWeight:700,color}}>{loading?'…':num}</div>
-                    <div style={{fontSize:9,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginTop:2}}>{lbl}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Pending leaves alert */}
-            {pendingCount > 0 && (
-              <a href="/leave" style={{textDecoration:'none'}}>
-                <div className="card fade-up" style={{background:'#fef3e2',border:'1px solid #d4a84366',cursor:'pointer'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:10}}>
-                    <span style={{fontSize:20}}>⏳</span>
-                    <div>
-                      <div style={{fontSize:12,fontWeight:700,color:'#a06000'}}>{pendingCount} Leave Request{pendingCount!==1?'s':''}</div>
-                      <div style={{fontSize:10,color:'#a06000',opacity:.8}}>Pending your approval</div>
-                    </div>
-                    <span style={{marginLeft:'auto',fontSize:12,color:'#a06000'}}>→</span>
-                  </div>
-                </div>
-              </a>
-            )}
-          </div>
-        </div>
-
-        {/* QUICK ACTIONS */}
+        {/* DAILY SALES CHART */}
+        {userRole !== 'hr' && (
         <div className="card fade-up" style={{marginBottom:16}}>
-          <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:14}}>Quick Actions</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:8}}>
-            {QUICK_ACTIONS.filter(qa => qa.show).map(qa=>(
-              <a key={qa.label} href={qa.href} style={{textDecoration:'none'}}>
-                <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 8px',textAlign:'center',transition:'all .15s',cursor:'pointer'}}
-                  onMouseEnter={e=>{e.currentTarget.style.background=qa.color;e.currentTarget.style.borderColor=qa.color;e.currentTarget.querySelectorAll('span').forEach(s=>s.style.color='white')}}
-                  onMouseLeave={e=>{e.currentTarget.style.background='var(--surface)';e.currentTarget.style.borderColor='var(--border)';e.currentTarget.querySelectorAll('span').forEach(s=>s.style.color='')}}>
-                  <div style={{fontSize:20,marginBottom:4}}>{qa.icon}</div>
-                  <span style={{fontSize:9,fontWeight:600,color:'var(--text-primary)',display:'block',lineHeight:1.3}}>{qa.label}</span>
-                </div>
-              </a>
-            ))}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700}}>Daily Sales — {monthLabel}</div>
+            <a href="/finance/sales" style={{fontSize:11,color:'var(--matcha-dark)',fontWeight:600,textDecoration:'none'}}>View All →</a>
           </div>
+          <SalesBarChart data={dailySales} loading={chartLoading} />
         </div>
+        )}
 
-        {/* BOTTOM ROW — Today's check-in progress + announcements */}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
-          {/* Check-in progress */}
+        {/* DAILY CHECK-IN + JOB ORDERS */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+
+          {/* Daily Check-In Data */}
           <div className="card fade-up">
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
               <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700}}>Daily Check-In</div>
               <a href="/checkin" style={{fontSize:11,color:'var(--matcha-dark)',fontWeight:600,textDecoration:'none'}}>Open →</a>
             </div>
-            {loading?(
-              <div style={{textAlign:'center',padding:'16px',color:'var(--text-muted)',fontSize:12}}>Loading…</div>
-            ):todayShifts.length===0?(
-              <div style={{textAlign:'center',padding:'16px',color:'var(--text-muted)',fontSize:12}}>No shifts scheduled today</div>
-            ):(
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                {['am','mid','pm'].map(shiftId=>{
-                  const shiftStaff = todayShifts.filter(s=>s.shift_type===shiftId)
-                  const badge = SHIFT_BADGE[shiftId]
-                  if(!shiftStaff.length) return null
-                  return (
-                    <div key={shiftId} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',background:badge.bg,borderRadius:9,border:`1px solid ${badge.border}44`}}>
-                      <span style={{fontSize:10,fontWeight:700,color:badge.color,minWidth:30}}>{badge.label}</span>
-                      <div style={{flex:1,display:'flex',gap:4,flexWrap:'wrap'}}>
-                        {shiftStaff.slice(0,4).map(s=>(
-                          <div key={s.id} style={{width:22,height:22,borderRadius:'50%',background:getRoleColor(s.staff?.role||''),display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'white'}} title={`${s.staff?.first_name} ${s.staff?.last_name}`}>
-                            {initials(s.staff?.first_name||'',s.staff?.last_name||'')}
-                          </div>
-                        ))}
-                        {shiftStaff.length>4&&<span style={{fontSize:10,color:badge.color}}>+{shiftStaff.length-4}</span>}
+            {loading ? (
+              <div style={{textAlign:'center',padding:'20px',color:'var(--text-muted)',fontSize:12}}>Loading…</div>
+            ) : todayShifts.length === 0 ? (
+              <div style={{textAlign:'center',padding:'20px',color:'var(--text-muted)',fontSize:12}}>No shifts scheduled today</div>
+            ) : (() => {
+              const shiftGroups = ['am','ops','mid','pm']
+              return (
+                <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                  {shiftGroups.map(shiftId => {
+                    const shiftStaff = todayShifts.filter(s => s.shift_type === shiftId)
+                    if (!shiftStaff.length) return null
+                    const badge = SHIFT_BADGE[shiftId]
+                    // Count checked in
+                    const checkedIn = shiftStaff.filter(s =>
+                      checkIns.some(c => c.staff_id === s.staff_id && c.shift_type === shiftId && c.time_in)
+                    ).length
+                    const pct = Math.round((checkedIn / shiftStaff.length) * 100)
+                    return (
+                      <div key={shiftId} style={{padding:'10px 12px',background:badge.bg,borderRadius:10,border:`1px solid ${badge.border}44`}}>
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                          <span style={{fontSize:11,fontWeight:700,color:badge.color}}>{badge.label} Shift</span>
+                          <span style={{fontSize:10,color:badge.color,fontWeight:600}}>{checkedIn}/{shiftStaff.length} in</span>
+                        </div>
+                        {/* Progress bar */}
+                        <div style={{height:5,background:'white',borderRadius:4,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:`${pct}%`,background:badge.border,borderRadius:4,transition:'width .4s ease'}}/>
+                        </div>
+                        {/* Avatars */}
+                        <div style={{display:'flex',gap:4,marginTop:8,flexWrap:'wrap'}}>
+                          {shiftStaff.slice(0,6).map(s => {
+                            const isIn = checkIns.some(c => c.staff_id === s.staff_id && c.shift_type === shiftId && c.time_in)
+                            return (
+                              <div key={s.id}
+                                title={`${s.staff?.first_name} ${s.staff?.last_name}${isIn?' ✔':' – not in'}`}
+                                style={{width:24,height:24,borderRadius:'50%',
+                                  background:isIn?getRoleColor(s.staff?.role||''):'#ccc',
+                                  display:'flex',alignItems:'center',justifyContent:'center',
+                                  fontSize:8,fontWeight:700,color:'white',
+                                  border:`2px solid ${isIn?badge.border:'#ddd'}`}}>
+                                {initials(s.staff?.first_name||'',s.staff?.last_name||'')}
+                              </div>
+                            )
+                          })}
+                          {shiftStaff.length > 6 && <span style={{fontSize:10,color:badge.color,alignSelf:'center'}}>+{shiftStaff.length-6}</span>}
+                        </div>
                       </div>
-                      <span style={{fontSize:10,color:badge.color,fontWeight:600}}>{shiftStaff.length} staff</span>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+          </div>
+
+          {/* Job Orders */}
+          <div className="card fade-up">
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700}}>Job Orders</div>
+              <a href="/tasks" style={{fontSize:11,color:'var(--matcha-dark)',fontWeight:600,textDecoration:'none'}}>View All →</a>
+            </div>
+            {loading ? (
+              <div style={{textAlign:'center',padding:'20px',color:'var(--text-muted)',fontSize:12}}>Loading…</div>
+            ) : jobOrders.length === 0 ? (
+              <div style={{textAlign:'center',padding:'20px',color:'var(--text-muted)',fontSize:12}}>No active job orders</div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',gap:7}}>
+                {jobOrders.map(jo => {
+                  const st = JO_STATUS[jo.status] || JO_STATUS.todo
+                  const pr = JO_PRIORITY[jo.priority] || JO_PRIORITY.normal
+                  return (
+                    <div key={jo.id} style={{padding:'9px 11px',background:'var(--surface)',borderRadius:9,border:'1px solid var(--cream-dark)',borderLeft:`3px solid ${pr.color}`}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:11,fontWeight:700,color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{jo.title}</div>
+                          {jo.ticket_no && <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace",marginTop:2}}>{jo.ticket_no}</div>}
+                        </div>
+                        <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3,flexShrink:0}}>
+                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:8,background:st.bg,color:st.color}}>{st.label}</span>
+                          {jo.staff && <span style={{fontSize:9,color:'var(--text-muted)'}}>{jo.staff.first_name}</span>}
+                        </div>
+                      </div>
                     </div>
                   )
                 })}
               </div>
             )}
           </div>
-
-          {/* Announcements */}
-          <div className="card fade-up">
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
-              <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700}}>Announcements</div>
-              <a href="/announce" style={{fontSize:11,color:'var(--matcha-dark)',fontWeight:600,textDecoration:'none'}}>View all →</a>
-            </div>
-            {announcements.length===0?(
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                {[
-                  {title:'🌿 New Matcha Menu Drop — This Friday!',body:"We're launching 3 new menu items. All baristas must complete recipe training by Thursday.",time:'Posted by CJ · Today',cls:'var(--matcha)',bg:'#f0f8e8'},
-                  {title:'⚠️ Payroll Processing — Sunday 5PM Cutoff',body:'Please submit DTR corrections before Sunday 5PM.',time:'Posted by Alex · Yesterday',cls:'var(--gold)',bg:'#fef8ec'},
-                ].map((a,i)=>(
-                  <div key={i} style={{padding:'11px 13px',borderRadius:9,borderLeft:`3px solid ${a.cls}`,background:a.bg}}>
-                    <div style={{fontSize:12,fontWeight:700}}>{a.title}</div>
-                    <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3,lineHeight:1.5}}>{a.body}</div>
-                    <div style={{fontSize:10,color:'#bbb',marginTop:5,fontFamily:"'DM Mono',monospace"}}>{a.time}</div>
-                  </div>
-                ))}
-              </div>
-            ):(
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                {announcements.map((a,i)=>(
-                  <div key={i} style={{padding:'11px 13px',borderRadius:9,borderLeft:'3px solid var(--matcha)',background:'#f0f8e8'}}>
-                    <div style={{fontSize:12,fontWeight:700}}>{a.title||a.content?.slice(0,50)}</div>
-                    <div style={{fontSize:10,color:'#bbb',marginTop:4,fontFamily:"'DM Mono',monospace"}}>
-                      {new Date(a.created_at).toLocaleDateString('en-PH',{month:'short',day:'numeric'})}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
+
+        {/* ANNOUNCEMENTS */}
+        <div className="card fade-up">
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700}}>Announcements</div>
+            <a href="/announce" style={{fontSize:11,color:'var(--matcha-dark)',fontWeight:600,textDecoration:'none'}}>View all →</a>
+          </div>
+          {announcements.length === 0 ? (
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {[
+                {title:'🌿 New Matcha Menu Drop — This Friday!',body:"We're launching 3 new menu items. All baristas must complete recipe training by Thursday.",time:'Posted by CJ · Today',cls:'var(--matcha)',bg:'#f0f8e8'},
+                {title:'⚠️ Payroll Processing — Sunday 5PM Cutoff',body:'Please submit DTR corrections before Sunday 5PM.',time:'Posted by Alex · Yesterday',cls:'var(--gold)',bg:'#fef8ec'},
+              ].map((a,i)=>(
+                <div key={i} style={{padding:'11px 13px',borderRadius:9,borderLeft:`3px solid ${a.cls}`,background:a.bg}}>
+                  <div style={{fontSize:12,fontWeight:700}}>{a.title}</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3,lineHeight:1.5}}>{a.body}</div>
+                  <div style={{fontSize:10,color:'#bbb',marginTop:5,fontFamily:"'DM Mono',monospace"}}>{a.time}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {announcements.map((a,i)=>(
+                <div key={i} style={{padding:'11px 13px',borderRadius:9,borderLeft:'3px solid var(--matcha)',background:'#f0f8e8'}}>
+                  <div style={{fontSize:12,fontWeight:700}}>{a.title||a.content?.slice(0,60)}</div>
+                  <div style={{fontSize:10,color:'#bbb',marginTop:4,fontFamily:"'DM Mono',monospace"}}>
+                    {new Date(a.created_at).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
       </div>
     </AuthShell>
   )
