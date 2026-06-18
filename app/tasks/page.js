@@ -88,6 +88,7 @@ export default function JobOrderPage() {
   const [tasks, setTasks]         = useState([])
   const [staff, setStaff]         = useState([])
   const [currentUser, setCurrentUser] = useState(null)
+  const [isAdmin, setIsAdmin]         = useState(false)
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [showForm, setShowForm]   = useState(false)
@@ -141,6 +142,7 @@ export default function JobOrderPage() {
     }))
     setTasks(enriched)
     setStaff(s||[])
+    setIsAdmin(userRole?.role === 'admin')
     if (userRole?.staff_id) {
       const { data: me } = await supabase.from('staff').select('id,first_name,last_name,nickname,role').eq('id', userRole.staff_id).single()
       setCurrentUser(me)
