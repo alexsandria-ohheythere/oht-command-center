@@ -1,8 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
-import AuthShell from '../../components/AuthShell'
-import { createClient } from '../../lib/supabase'
-import { notifyOne } from '../../lib/notify'
+import AuthShell from '../components/AuthShell'
+import { createClient } from '../lib/supabase'
+import { notifyOne } from '../lib/notify'
 
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
