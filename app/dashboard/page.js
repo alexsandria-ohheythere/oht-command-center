@@ -121,7 +121,7 @@ export default function DashboardPage() {
   const [chartLoading, setChartLoading]       = useState(true)
 
   // Check-in data
-  const [checkIns, setCheckIns]               = useState([])
+  const [taskAssignments, setTaskAssignments]  = useState([])
   const [staffMap, setStaffMap]               = useState({})
 
   // Job orders
@@ -155,7 +155,7 @@ export default function DashboardPage() {
       supabase.from('incident_reports').select('id').eq('status','pending'),
       supabase.from('inventory_reports').select('id').eq('status','pending'),
       supabase.from('staff').select('id,first_name,last_name,role,employment_type'),
-      supabase.from('daily_checkins').select('*, staff(first_name,last_name,role)').eq('checkin_date', today),
+      supabase.from('shift_task_assignments').select('*').eq('shift_date', today),
       supabase.from('job_orders').select('*, staff(first_name,last_name)').in('status',['todo','inprogress']).order('created_at',{ascending:false}).limit(6),
       supabase.from('announcements').select('*').order('created_at',{ascending:false}).limit(3),
     ])
@@ -165,7 +165,7 @@ export default function DashboardPage() {
     setPendingLeaves((leaves||[]).length)
     setIncidentCount((incidents||[]).length)
     setPendingInventory((inventoryPending||[]).length)
-    setCheckIns(checkinData || [])
+    setTaskAssignments(checkinData || [])
     setJobOrders(jobData || [])
     setAnnouncements(announceData || [])
 
@@ -374,9 +374,9 @@ export default function DashboardPage() {
                     const shiftStaff = todayShifts.filter(s => s.shift_type === shiftId)
                     if (!shiftStaff.length) return null
                     const badge = SHIFT_BADGE[shiftId]
-                    // Count checked in
+                    // Count staff with at least one completed task (= active in shift)
                     const checkedIn = shiftStaff.filter(s =>
-                      checkIns.some(c => c.staff_id === s.staff_id && c.shift_type === shiftId && c.time_in)
+                      taskAssignments.some(t => t.staff_id === s.staff_id && t.shift_type === shiftId && t.completed)
                     ).length
                     const pct = Math.round((checkedIn / shiftStaff.length) * 100)
                     return (
@@ -392,7 +392,7 @@ export default function DashboardPage() {
                         {/* Avatars */}
                         <div style={{display:'flex',gap:4,marginTop:8,flexWrap:'wrap'}}>
                           {shiftStaff.slice(0,6).map(s => {
-                            const isIn = checkIns.some(c => c.staff_id === s.staff_id && c.shift_type === shiftId && c.time_in)
+                            const isIn = taskAssignments.some(t => t.staff_id === s.staff_id && t.shift_type === shiftId && t.completed)
                             return (
                               <div key={s.id}
                                 title={`${s.staff?.first_name} ${s.staff?.last_name}${isIn?' ✔':' – not in'}`}
