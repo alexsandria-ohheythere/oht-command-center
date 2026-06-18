@@ -247,48 +247,6 @@ export default function DashboardPage() {
 
       <div className="page-content">
 
-        {/* KPI STRIP */}
-        <div className="kpi-grid fade-up" style={{marginBottom:20}}>
-          {[
-            {
-              label:'Incident Reports',
-              value: loading?'…':incidentCount,
-              delta: incidentCount>0?'Pending review':'All clear',
-              dir: incidentCount>0?'down':'up',
-              icon:'⚠️', cls:'c-blush', href:'/reports'
-            },
-            {
-              label:'Inventory Approval',
-              value: loading?'…':pendingInventory,
-              delta: pendingInventory>0?'Awaiting approval':'Queue clear',
-              dir: pendingInventory>0?'down':'up',
-              icon:'📦', cls:'c-bark', href:'/inventory/inventory-approvals'
-            },
-            {
-              label:'Pending Leaves',
-              value: loading?'…':pendingCount,
-              delta: pendingCount>0?'Need approval':'All clear',
-              dir: pendingCount>0?'down':'up',
-              icon:'🗓️', cls:'c-gold', href:'/leave'
-            },
-            {
-              label:'Manpower Cost Today',
-              value: loading?'…':peso(manpowerCost),
-              delta: loading?'…':`${todayShifts.length} shift${todayShifts.length!==1?'s':''} scheduled`,
-              dir:'neutral', icon:'💸', cls:'c-matcha', href:'/schedule'
-            },
-          ].map(k => (
-            <a key={k.label} href={k.href} style={{textDecoration:'none'}}>
-              <div className={`kpi-card ${k.cls}`} style={{cursor:'pointer'}}>
-                <div className="kpi-icon">{k.icon}</div>
-                <div className="kpi-label">{k.label}</div>
-                <div className="kpi-value" style={{fontSize:'clamp(16px,2vw,26px)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{k.value}</div>
-                <div className={`kpi-delta ${k.dir}`}>{k.delta}</div>
-              </div>
-            </a>
-          ))}
-        </div>
-
         {/* FINANCE STRIP — hidden for HR */}
         {userRole !== 'hr' && (
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:20}}>
@@ -341,6 +299,48 @@ export default function DashboardPage() {
           </a>
         </div>
         )}
+
+        {/* KPI STRIP */}
+        <div className="kpi-grid fade-up" style={{marginBottom:20}}>
+          {[
+            {
+              label:'Incident Reports',
+              value: loading?'…':incidentCount,
+              delta: incidentCount>0?'Pending review':'All clear',
+              dir: incidentCount>0?'down':'up',
+              icon:'⚠️', cls:'c-blush', href:'/reports'
+            },
+            {
+              label:'Inventory Approval',
+              value: loading?'…':pendingInventory,
+              delta: pendingInventory>0?'Awaiting approval':'Queue clear',
+              dir: pendingInventory>0?'down':'up',
+              icon:'📦', cls:'c-bark', href:'/inventory/inventory-approvals'
+            },
+            {
+              label:'Pending Leaves',
+              value: loading?'…':pendingCount,
+              delta: pendingCount>0?'Need approval':'All clear',
+              dir: pendingCount>0?'down':'up',
+              icon:'🗓️', cls:'c-gold', href:'/leave'
+            },
+            {
+              label:'Manpower Cost Today',
+              value: loading?'…':peso(manpowerCost),
+              delta: loading?'…':`${todayShifts.length} shift${todayShifts.length!==1?'s':''} scheduled`,
+              dir:'neutral', icon:'💸', cls:'c-matcha', href:'/schedule'
+            },
+          ].map(k => (
+            <a key={k.label} href={k.href} style={{textDecoration:'none'}}>
+              <div className={`kpi-card ${k.cls}`} style={{cursor:'pointer'}}>
+                <div className="kpi-icon">{k.icon}</div>
+                <div className="kpi-label">{k.label}</div>
+                <div className="kpi-value" style={{fontSize:'clamp(16px,2vw,26px)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{k.value}</div>
+                <div className={`kpi-delta ${k.dir}`}>{k.delta}</div>
+              </div>
+            </a>
+          ))}
+        </div>
 
         {/* DAILY SALES CHART */}
         {userRole !== 'hr' && (
