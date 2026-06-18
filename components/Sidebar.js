@@ -52,6 +52,13 @@ export default function Sidebar({ user, userRole, onClose }) {
     { type:'section', label:'Overview' },
     { type:'link', id:'dashboard',        href:'/dashboard',              icon:'🏠', label:'Dashboard',           show: true },
 
+    { type:'section', label:'Finance', show: can(role,'finance') },
+    { type:'link', id:'finance',          href:'/finance',                icon:'📊', label:'Financial Statement',  show: can(role,'finance') },
+    { type:'link', id:'sales',            href:'/finance/sales',          icon:'💰', label:'Sales',                show: can(role,'finance') },
+    { type:'link', id:'expenses',         href:'/finance/expenses',       icon:'🧾', label:'Expenses',             show: can(role,'finance') },
+    { type:'link', id:'forecast',         href:'/finance/forecast',       icon:'📈', label:'Forecast',             show: can(role,'finance') },
+    { type:'link', id:'bank',             href:'/finance/bank',           icon:'🏦', label:'Bank Records',         show: can(role,'finance') },
+
     { type:'section', label:'Operations' },
     { type:'link', id:'schedule',         href:'/schedule',               icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
     { type:'link', id:'tasks',            href:'/tasks',                  icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
@@ -77,13 +84,6 @@ export default function Sidebar({ user, userRole, onClose }) {
     { type:'section', label:'Documents', show: can(role,'admin') },
     { type:'link', id:'contracts',        href:'/contracts',              icon:'📄', label:'Contracts',            show: can(role,'admin') },
     { type:'link', id:'files',            href:'/files',                  icon:'📁', label:'Files · 201',          show: can(role,'admin') },
-
-    { type:'section', label:'Finance', show: can(role,'finance') },
-    { type:'link', id:'finance',          href:'/finance',                icon:'📊', label:'Financial Statement',  show: can(role,'finance') },
-    { type:'link', id:'sales',            href:'/finance/sales',          icon:'💰', label:'Sales',                show: can(role,'finance') },
-    { type:'link', id:'expenses',         href:'/finance/expenses',       icon:'🧾', label:'Expenses',             show: can(role,'finance') },
-    { type:'link', id:'forecast',         href:'/finance/forecast',       icon:'📈', label:'Forecast',             show: can(role,'finance') },
-    { type:'link', id:'bank',             href:'/finance/bank',           icon:'🏦', label:'Bank Records',         show: can(role,'finance') },
 
     { type:'section', label:'Comms' },
     { type:'link', id:'announce',         href:'/announce',               icon:'📣', label:'Announcements',        show: can(role,'announcements') },
