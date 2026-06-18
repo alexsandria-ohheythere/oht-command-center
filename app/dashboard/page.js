@@ -120,6 +120,10 @@ export default function DashboardPage() {
   const [dailySales, setDailySales]           = useState([])
   const [chartLoading, setChartLoading]       = useState(true)
 
+  // Targets
+  const [salesTargets, setSalesTargets]       = useState({ daily_target: 0, monthly_target: 0 })
+  const [todaySalesTotal, setTodaySalesTotal] = useState(0)
+
   // Check-in data
   const [taskAssignments, setTaskAssignments]  = useState([])
   const [staffMap, setStaffMap]               = useState({})
@@ -193,15 +197,24 @@ export default function DashboardPage() {
       { data: salesData },
       { data: expensesData },
       { data: allSalesData },
+      { data: todaySalesData },
+      { data: targetsData },
     ] = await Promise.all([
       supabase.from('sales').select('gross_sales').gte('sale_date', monthStart).lte('sale_date', monthEnd),
       supabase.from('expenses').select('amount').gte('expense_date', monthStart).lte('expense_date', monthEnd),
       supabase.from('sales').select('sale_date,gross_sales').gte('sale_date', monthStart).lte('sale_date', monthEnd).order('sale_date',{ascending:true}),
+      supabase.from('sales').select('gross_sales').eq('sale_date', today),
+      supabase.from('settings').select('value').eq('key','sales_targets').single(),
     ])
     const sales = (salesData||[]).reduce((sum,r)=>sum+(parseFloat(r.gross_sales)||0),0)
     const expenses = (expensesData||[]).reduce((sum,r)=>sum+(parseFloat(r.amount)||0),0)
+    const todayTotal = (todaySalesData||[]).reduce((sum,r)=>sum+(parseFloat(r.gross_sales)||0),0)
     setTotalSales(sales)
     setTotalExpenses(expenses)
+    setTodaySalesTotal(todayTotal)
+    if (targetsData?.value) {
+      try { setSalesTargets(JSON.parse(targetsData.value)) } catch(e) {}
+    }
     setFinanceLoading(false)
 
     // Aggregate daily sales for chart
@@ -299,6 +312,54 @@ export default function DashboardPage() {
           </a>
         </div>
         )}
+
+        {/* TARGET ALERTS */}
+        {!financeLoading && (salesTargets.daily_target > 0 || salesTargets.monthly_target > 0) && (() => {
+          const dailyPct  = salesTargets.daily_target  > 0 ? (todaySalesTotal  / salesTargets.daily_target)  * 100 : null
+          const monthlyPct = salesTargets.monthly_target > 0 ? (totalSales / salesTargets.monthly_target) * 100 : null
+          const items = []
+          if (dailyPct !== null) items.push({
+            label: "Today's Sales vs Daily Target",
+            actual: todaySalesTotal,
+            target: salesTargets.daily_target,
+            pct: dailyPct,
+          })
+          if (monthlyPct !== null) items.push({
+            label: `${monthLabel} Sales vs Monthly Target`,
+            actual: totalSales,
+            target: salesTargets.monthly_target,
+            pct: monthlyPct,
+          })
+          return (
+            <div style={{display:'grid',gridTemplateColumns:`repeat(${items.length},1fr)`,gap:12,marginBottom:16}}>
+              {items.map((item,i) => {
+                const color = item.pct >= 100 ? '#2ecc71' : item.pct >= 80 ? '#e67e22' : '#e74c3c'
+                const bg    = item.pct >= 100 ? '#eafaf1' : item.pct >= 80 ? '#fef9e7' : '#fdeaea'
+                const border= item.pct >= 100 ? '#a9dfbf' : item.pct >= 80 ? '#f9e79f' : '#f5c6c6'
+                const icon  = item.pct >= 100 ? '✅' : item.pct >= 80 ? '⚠️' : '🚨'
+                const statusText = item.pct >= 100
+                  ? 'Target reached!'
+                  : `${peso(item.target - item.actual)} more needed`
+                return (
+                  <div key={i} className="card fade-up" style={{borderTop:`3px solid ${color}`,background:bg,border:`1px solid ${border}`,padding:'16px 20px'}}>
+                    <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6}}>{icon} {item.label}</div>
+                    <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:8}}>
+                      <span style={{fontFamily:"'Montserrat',sans-serif",fontSize:22,fontWeight:700,color}}>{peso(item.actual)}</span>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>of {peso(item.target)}</span>
+                    </div>
+                    <div style={{background:'rgba(0,0,0,.07)',borderRadius:99,height:7,overflow:'hidden',marginBottom:6}}>
+                      <div style={{height:'100%',width:`${Math.min(100,item.pct)}%`,background:color,borderRadius:99,transition:'width .4s ease'}}/>
+                    </div>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color}}>
+                      <span style={{fontWeight:700}}>{item.pct.toFixed(1)}% achieved</span>
+                      <span>{statusText}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
 
         {/* KPI STRIP */}
         <div className="kpi-grid fade-up" style={{marginBottom:20}}>
