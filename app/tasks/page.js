@@ -33,6 +33,7 @@ export default function JobOrderPage() {
   const [tasks, setTasks]         = useState([])
   const [staff, setStaff]         = useState([])
   const [currentUser, setCurrentUser] = useState(null)
+  const [isAdmin, setIsAdmin]         = useState(false)
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [showForm, setShowForm]   = useState(false)
@@ -60,12 +61,19 @@ export default function JobOrderPage() {
 
   async function fetchAll() {
     setLoading(true)
-    const [{ data: t }, { data: s }, userRole] = await Promise.all([
-      supabase.from('tasks').select('*, staff(first_name,last_name,nickname,role)').order('created_at',{ascending:false}),
+    const [{ data: s }, userRole] = await Promise.all([
       supabase.from('staff').select('id,first_name,last_name,nickname,role').order('last_name'),
       getUserRole(supabase),
     ])
-    // Attach checklist counts
+
+    // Admins see all tasks; everyone else only sees their own
+    const isAdmin = userRole?.role === 'admin'
+    let taskQuery = supabase.from('tasks').select('*, staff(first_name,last_name,nickname,role)').order('created_at',{ascending:false})
+    if (!isAdmin && userRole?.staff_id) taskQuery = taskQuery.eq('assigned_to', userRole.staff_id)
+
+    const { data: t } = await taskQuery
+
+    // Attach checklist + comment counts
     const taskIds = (t||[]).map(x=>x.id)
     let checkCounts = {}, commentCounts = {}
     if (taskIds.length) {
@@ -86,6 +94,7 @@ export default function JobOrderPage() {
     }))
     setTasks(enriched)
     setStaff(s||[])
+    setIsAdmin(isAdmin)
     if (userRole?.staff_id) {
       const { data: me } = await supabase.from('staff').select('id,first_name,last_name,nickname,role').eq('id', userRole.staff_id).single()
       setCurrentUser(me)
@@ -229,20 +238,22 @@ export default function JobOrderPage() {
       <div className="topbar">
         <div>
           <div className="topbar-title">Job Orders</div>
-          <div className="topbar-sub">{tasks.length} orders · {tasks.filter(t=>t.status==='done').length} completed</div>
+          <div className="topbar-sub">{tasks.length} orders · {tasks.filter(t=>t.status==='done').length} completed{!isAdmin&&' · your assignments'}</div>
         </div>
         <div style={{display:'flex',gap:9,alignItems:'center'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by ticket or title…"
             style={{...iStyle,width:220,padding:'6px 12px'}}/>
-          <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
-            <option value="">All Staff</option>
-            {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
-          </select>
+          {isAdmin&&(
+            <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
+              <option value="">All Staff</option>
+              {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
+            </select>
+          )}
           <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterPriority} onChange={e=>setFilterPriority(e.target.value)}>
             <option value="">All Priorities</option>
             {PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
-          <button className="btn btn-primary" onClick={()=>{setShowForm(true);setForm(EMPTY_FORM)}}>+ New Job Order</button>
+          {isAdmin&&<button className="btn btn-primary" onClick={()=>{setShowForm(true);setForm(EMPTY_FORM)}}>+ New Job Order</button>}
         </div>
       </div>
 
@@ -351,7 +362,7 @@ export default function JobOrderPage() {
                               </div>
                               <button
                                 onClick={e=>{e.stopPropagation();deleteTask(task.id)}}
-                                style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px'}}>🗑</button>
+                                style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px',display:isAdmin?'block':'none'}}>🗑</button>
                             </div>
 
                             <div style={{fontSize:13,fontWeight:600,color:'var(--espresso)',marginBottom:4,lineHeight:1.4}}>{task.title}</div>
@@ -418,8 +429,9 @@ export default function JobOrderPage() {
                 {drawerTask.ticket_no&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,color:'var(--espresso)',background:'var(--cream-dark)',padding:'2px 8px',borderRadius:6,display:'inline-block',marginBottom:8}}>{drawerTask.ticket_no}</div>}
                 <input
                   value={drawerForm?.title||''}
-                  onChange={e=>setDrawerForm(p=>({...p,title:e.target.value}))}
-                  style={{width:'100%',border:'none',outline:'none',fontSize:18,fontWeight:700,fontFamily:"'Montserrat',sans-serif",color:'var(--espresso)',background:'transparent',padding:0}}
+                  onChange={e=>isAdmin&&setDrawerForm(p=>({...p,title:e.target.value}))}
+                  readOnly={!isAdmin}
+                  style={{width:'100%',border:'none',outline:'none',fontSize:18,fontWeight:700,fontFamily:"'Montserrat',sans-serif",color:'var(--espresso)',background:'transparent',padding:0,cursor:isAdmin?'text':'default'}}
                 />
               </div>
               <button onClick={closeDrawer} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:16,color:'var(--text-muted)',flexShrink:0}}>×</button>
@@ -432,23 +444,23 @@ export default function JobOrderPage() {
 
                 {/* Meta fields */}
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
-                  <div>
+                  {isAdmin&&<div>
                     <label style={lStyle}>Assigned To</label>
                     <select style={iStyle} value={drawerForm?.assigned_to||''} onChange={e=>setDrawerForm(p=>({...p,assigned_to:e.target.value}))}>
                       <option value="">Unassigned</option>
                       {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}{s.nickname?' "'+s.nickname+'"':''}</option>)}
                     </select>
-                  </div>
-                  <div>
+                  </div>}
+                  {isAdmin&&<div>
                     <label style={lStyle}>Due Date</label>
                     <input style={iStyle} type="date" value={drawerForm?.due_date||''} onChange={e=>setDrawerForm(p=>({...p,due_date:e.target.value}))}/>
-                  </div>
+                  </div>}
                   <div>
                     <label style={lStyle}>Priority</label>
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:5}}>
                       {PRIORITIES.map(p=>(
-                        <div key={p.id} onClick={()=>setDrawerForm(prev=>({...prev,priority:p.id}))}
-                          style={{padding:'5px 6px',borderRadius:7,border:`1.5px solid ${drawerForm?.priority===p.id?p.color:'var(--border)'}`,background:drawerForm?.priority===p.id?p.bg:'var(--surface)',cursor:'pointer',textAlign:'center',fontSize:10,fontWeight:600,color:drawerForm?.priority===p.id?p.color:'var(--text-muted)',transition:'all .15s'}}>
+                        <div key={p.id} onClick={()=>isAdmin&&setDrawerForm(prev=>({...prev,priority:p.id}))}
+                          style={{padding:'5px 6px',borderRadius:7,border:`1.5px solid ${drawerForm?.priority===p.id?p.color:'var(--border)'}`,background:drawerForm?.priority===p.id?p.bg:'var(--surface)',cursor:isAdmin?'pointer':'default',textAlign:'center',fontSize:10,fontWeight:600,color:drawerForm?.priority===p.id?p.color:'var(--text-muted)',transition:'all .15s'}}>
                           {p.label}
                         </div>
                       ))}
@@ -467,17 +479,20 @@ export default function JobOrderPage() {
                   <label style={lStyle}>Description</label>
                   <textarea
                     value={drawerForm?.description||''}
-                    onChange={e=>setDrawerForm(p=>({...p,description:e.target.value}))}
-                    placeholder="Add a description…"
-                    style={{...iStyle,resize:'vertical',minHeight:80,lineHeight:1.6}}
+                    onChange={e=>isAdmin&&setDrawerForm(p=>({...p,description:e.target.value}))}
+                    readOnly={!isAdmin}
+                    placeholder={isAdmin?"Add a description…":"No description."}
+                    style={{...iStyle,resize:isAdmin?'vertical':'none',minHeight:80,lineHeight:1.6,cursor:isAdmin?'text':'default'}}
                   />
                 </div>
 
-                {/* Save button */}
-                <button onClick={saveDrawerTask} disabled={savingDrawer}
-                  style={{width:'100%',background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",marginBottom:28}}>
-                  {savingDrawer?'Saving…':'✓ Save Changes'}
-                </button>
+                {/* Save button — admin only */}
+                {isAdmin&&(
+                  <button onClick={saveDrawerTask} disabled={savingDrawer}
+                    style={{width:'100%',background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",marginBottom:28}}>
+                    {savingDrawer?'Saving…':'✓ Save Changes'}
+                  </button>
+                )}
 
                 {/* ── Checklist ── */}
                 <div style={{marginBottom:28}}>
