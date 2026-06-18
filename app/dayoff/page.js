@@ -72,7 +72,6 @@ export default function DayOffPage() {
       supabase.from('schedules').select('staff_id,shift_date,shift_type,published'),
       supabase.from('leave_requests').select('staff_id,date_from,date_to,leave_type,shifts').eq('status','approved'),
     ])
-    setStaff(sc||[])        // re-use name for display
     setStaff(s||[])
     setDayOffs(d||[])
     setSchedules(sc||[])
