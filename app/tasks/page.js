@@ -1,8 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
-import AuthShell from '../../components/AuthShell'
-import { createClient } from '../../lib/supabase'
-import { notifyOne } from '../../lib/notify'
+import AuthShell from '../components/AuthShell'
+import { createClient } from '../lib/supabase'
+import { notifyOne } from '../lib/notify'
 
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
@@ -218,7 +218,7 @@ export default function JobOrderPage() {
                         <div key={task.id} draggable
                           onDragStart={()=>setDragTask(task)}
                           onDragEnd={()=>setDragTask(null)}
-                          style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 13px',marginBottom:8,cursor:'grab',borderLeft:`3px solid ${p.color}`,opacity:dragTask?.id===task.id?.4:1,transition:'all .15s'}}
+                          style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 13px 12px 14px',marginBottom:8,cursor:'grab',borderLeft:`5px solid ${p.color}`,boxShadow:`inset 3px 0 0 ${p.color}11`,opacity:dragTask?.id===task.id?.4:1,transition:'all .15s'}}
                           onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 4px 14px rgba(26,18,8,.08)';e.currentTarget.style.transform='translateY(-1px)'}}
                           onMouseLeave={e=>{e.currentTarget.style.boxShadow='';e.currentTarget.style.transform=''}}>
                           {/* Ticket + priority */}
@@ -237,7 +237,7 @@ export default function JobOrderPage() {
                             </div>
                           </div>
                           <div style={{fontSize:13,fontWeight:600,color:'var(--espresso)',marginBottom:4,lineHeight:1.4}}>{task.title}</div>
-                          {task.description&&<div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8,lineHeight:1.5,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{task.description}</div>}
+                          {task.description&&<div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8,lineHeight:1.5,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',wordBreak:'break-all',overflowWrap:'anywhere'}}>{task.description}</div>}
                           <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
                             {assignee?(
                               <div style={{display:'flex',alignItems:'center',gap:5,flex:1}}>
@@ -245,7 +245,14 @@ export default function JobOrderPage() {
                                 <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:500}}>{assignee.nickname||assignee.first_name}</span>
                               </div>
                             ):<span style={{fontSize:10,color:'var(--border)',flex:1}}>Unassigned</span>}
-                            {task.due_date&&<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:isOverdue?'#c0392b':'var(--text-muted)'}}>📅 {fmtDate(task.due_date)}</span>}
+                            <div style={{display:'flex',alignItems:'center',gap:6}}>
+                              {(task.comment_count > 0) && (
+                                <span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:'var(--text-muted)',background:'var(--surface)',border:'1px solid var(--border)',padding:'1px 6px',borderRadius:20,display:'flex',alignItems:'center',gap:3}}>
+                                  💬 {task.comment_count}
+                                </span>
+                              )}
+                              {task.due_date&&<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:isOverdue?'#c0392b':'var(--text-muted)'}}>📅 {fmtDate(task.due_date)}</span>}
+                            </div>
                           </div>
                           <div style={{display:'flex',gap:5,marginTop:8}}>
                             {COLUMNS.filter(c=>c.id!==col.id).map(c=>(
