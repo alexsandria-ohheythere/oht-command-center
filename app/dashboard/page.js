@@ -282,7 +282,7 @@ export default function DashboardPage() {
               <div className={`kpi-card ${k.cls}`} style={{cursor:'pointer'}}>
                 <div className="kpi-icon">{k.icon}</div>
                 <div className="kpi-label">{k.label}</div>
-                <div className="kpi-value" style={{fontSize: k.label==='Manpower Cost Today'?16:undefined}}>{k.value}</div>
+                <div className="kpi-value" style={{fontSize:'clamp(16px,2vw,26px)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{k.value}</div>
                 <div className={`kpi-delta ${k.dir}`}>{k.delta}</div>
               </div>
             </a>
