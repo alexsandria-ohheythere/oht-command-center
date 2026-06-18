@@ -56,6 +56,7 @@ export default function Sidebar({ user, userRole, onClose }) {
     { type:'link', id:'schedule',         href:'/schedule',               icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
     { type:'link', id:'tasks',            href:'/tasks',                  icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
     { type:'link', id:'leave',            href:'/leave',                  icon:'🗓️', label:'Leave & Unavail.',     show: can(role,'leaveReview') },
+    { type:'link', id:'dayoff',           href:'/dayoff',                 icon:'📆', label:'Day-Off',               show: can(role,'schedule') },
     { type:'link', id:'roles',            href:'/roles',                  icon:'📝', label:'Role Tasks',           show: can(role,'roles') },
     { type:'link', id:'checkin',          href:'/checkin',                icon:'✔️', label:'Daily Check-In',       show: can(role,'checkin') },
     { type:'link', id:'payroll',          href:'/payroll',                icon:'💸', label:'Payroll',              show: can(role,'payrollUpload') },
