@@ -62,21 +62,30 @@ export default function DayOffPage() {
   const touchStaff = useRef(null)
   const ghostRef   = useRef(null)
 
-  useEffect(() => { fetchAll() }, [])
+  useEffect(() => { fetchStaff() }, [])
+  useEffect(() => { fetchData() }, [])
 
-  async function fetchAll() {
+  async function fetchStaff() {
+    const { data, error } = await supabase.from('staff').select('*').order('last_name')
+    if (!error) setStaff(data||[])
+  }
+
+  async function fetchData() {
     setLoading(true)
-    const [{ data:s }, { data:d }, { data:sc }, { data:lv }] = await Promise.all([
-      supabase.from('staff').select('id,first_name,last_name,nickname,role,employment_status').order('last_name'),
+    const [dRes, scRes, lvRes] = await Promise.allSettled([
       supabase.from('day_offs').select('*, staff(first_name,last_name,nickname,role)').order('date_from',{ascending:false}),
       supabase.from('schedules').select('staff_id,shift_date,shift_type,published'),
       supabase.from('leave_requests').select('staff_id,date_from,date_to,leave_type,shifts').eq('status','approved'),
     ])
-    setStaff(s||[])
-    setDayOffs(d||[])
-    setSchedules(sc||[])
-    setLeaves(lv||[])
+    if (dRes.status==='fulfilled')  setDayOffs(dRes.value.data||[])
+    if (scRes.status==='fulfilled') setSchedules(scRes.value.data||[])
+    if (lvRes.status==='fulfilled') setLeaves(lvRes.value.data||[])
     setLoading(false)
+  }
+
+  async function fetchAll() {
+    await fetchStaff()
+    await fetchData()
   }
 
   function showToast(icon, msg) { setToast({icon,msg}); setTimeout(()=>setToast(null),3200) }
