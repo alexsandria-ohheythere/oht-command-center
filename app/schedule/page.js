@@ -82,6 +82,7 @@ export default function SchedulePage() {
   const [toast, setToast]           = useState(null)
   const [showPublishModal, setShowPublishModal] = useState(false)
   const [approvedLeaves, setApprovedLeaves]     = useState([])
+  const [dayOffsData, setDayOffsData]           = useState([])
   const [dragStaffId, setDragStaffId]   = useState(null)
   const [dragSource, setDragSource]     = useState(null)
   const [sidebarSearch, setSidebarSearch] = useState('')
@@ -97,10 +98,15 @@ export default function SchedulePage() {
     setStaff(data||[])
   }
   async function fetchSchedules() {
+    fetchDayOffs()
     setLoading(true)
     const {data}=await supabase.from('schedules').select('*').eq('week_start',weekStart)
     setSchedules(data||[])
     setLoading(false)
+  }
+  async function fetchDayOffs() {
+    const {data}=await supabase.from('day_offs').select('staff_id,date_from,date_to')
+    setDayOffsData(data||[])
   }
   async function fetchLeaves() {
     const {data}=await supabase.from('leave_requests').select('staff_id,date_from,date_to,leave_type').eq('status','approved')
@@ -116,6 +122,14 @@ export default function SchedulePage() {
       if(date<l.date_from||date>l.date_to)return false
       if(!l.shifts||l.shifts.length===0)return true
       return l.shifts.includes(shiftId)||l.shifts.includes('all')
+    })
+  }
+
+  function isOnDayOff(staffId,dayIdx){
+    const date=toISO(weekDates[dayIdx])
+    return dayOffsData.some(d=>{
+      if(d.staff_id!==staffId)return false
+      return date>=d.date_from&&date<=d.date_to
     })
   }
 
@@ -315,6 +329,11 @@ export default function SchedulePage() {
               const hrs=getStaffWeekHours(s.id)
               const shifts=getStaffWeekShifts(s.id)
               const needsShifts=s.min_shifts_per_week===5
+              // Check if this staff has a day-off anywhere in the current week
+              const hasDayOffThisWeek=dayOffsData.some(d=>{
+                if(d.staff_id!==s.id)return false
+                return weekDates.some(wd=>{ const iso=toISO(wd); return iso>=d.date_from&&iso<=d.date_to })
+              })
               return (
                 <div key={s.id} draggable
                   onDragStart={e=>{setDragStaffId(s.id);setDragSource(null);e.dataTransfer.effectAllowed='copy';e.dataTransfer.setData('staffId',s.id)}}
@@ -333,6 +352,7 @@ export default function SchedulePage() {
                     <div style={{flexShrink:0,textAlign:'right'}}>
                       {hrs>0&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'rgba(255,255,255,.6)'}}>{hrs}h</div>}
                       {needsShifts&&<div style={{fontSize:8,fontWeight:700,color:shifts>=5?'#7ab648':'#e8845a'}}>{shifts}/5</div>}
+                      {hasDayOffThisWeek&&<div style={{fontSize:8,fontWeight:700,color:'#f5a623'}}>📆 off</div>}
                     </div>
                   </div>
                 </div>
@@ -427,6 +447,8 @@ export default function SchedulePage() {
                               const member=staff.find(x=>x.id===sid)
                               if(isOnLeave(sid,dayIdx,row.shiftId)){
                                 showToast('🚫','On approved leave for this date')
+                              } else if(isOnDayOff(sid,dayIdx)){
+                                showToast('📆','Staff has a day-off on this date')
                               } else if(src){
                                 moveAssignment(src.date,src.shiftType,sid,dayIdx,row.shiftId)
                               } else {
