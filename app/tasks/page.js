@@ -23,6 +23,7 @@ const COLUMNS = [
   { id:'inprogress', label:'In Progress', color:'#a06000', bg:'#fef3e2' },
   { id:'done',       label:'Done',        color:'#4a7a1e', bg:'#eef7e4' },
 ]
+const ARCHIVED_COL = { id:'archived', label:'Archived', color:'#9e9e9e', bg:'#f5f5f5' }
 
 const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none'}
 const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
@@ -33,7 +34,6 @@ export default function JobOrderPage() {
   const [tasks, setTasks]         = useState([])
   const [staff, setStaff]         = useState([])
   const [currentUser, setCurrentUser] = useState(null)
-  const [isAdmin, setIsAdmin]         = useState(false)
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [showForm, setShowForm]   = useState(false)
@@ -61,19 +61,12 @@ export default function JobOrderPage() {
 
   async function fetchAll() {
     setLoading(true)
-    const [{ data: s }, userRole] = await Promise.all([
+    const [{ data: t }, { data: s }, userRole] = await Promise.all([
+      supabase.from('tasks').select('*, staff(first_name,last_name,nickname,role)').order('created_at',{ascending:false}),
       supabase.from('staff').select('id,first_name,last_name,nickname,role').order('last_name'),
       getUserRole(supabase),
     ])
-
-    // Admins see all tasks; everyone else only sees their own
-    const isAdmin = userRole?.role === 'admin'
-    let taskQuery = supabase.from('tasks').select('*, staff(first_name,last_name,nickname,role)').order('created_at',{ascending:false})
-    if (!isAdmin && userRole?.staff_id) taskQuery = taskQuery.eq('assigned_to', userRole.staff_id)
-
-    const { data: t } = await taskQuery
-
-    // Attach checklist + comment counts
+    // Attach checklist counts
     const taskIds = (t||[]).map(x=>x.id)
     let checkCounts = {}, commentCounts = {}
     if (taskIds.length) {
@@ -94,7 +87,6 @@ export default function JobOrderPage() {
     }))
     setTasks(enriched)
     setStaff(s||[])
-    setIsAdmin(isAdmin)
     if (userRole?.staff_id) {
       const { data: me } = await supabase.from('staff').select('id,first_name,last_name,nickname,role').eq('id', userRole.staff_id).single()
       setCurrentUser(me)
@@ -141,6 +133,21 @@ export default function JobOrderPage() {
       setDrawerForm(prev=>({...prev,status:newStatus}))
       setActivity(prev=>[...prev,{id:'tmp'+Date.now(),action:`Moved to ${col?.label||newStatus}`,created_at:new Date().toISOString(),staff:currentUser}])
     }
+  }
+
+  async function archiveTask(taskId) {
+    await supabase.from('tasks').update({ status:'archived' }).eq('id', taskId)
+    await supabase.from('task_activity').insert([{ task_id:taskId, actor_id:currentUser?.id||null, action:'Archived this job order' }])
+    setTasks(prev=>prev.map(t=>t.id===taskId?{...t,status:'archived'}:t))
+    if (drawerTask?.id===taskId) { setDrawerTask(prev=>({...prev,status:'archived'})); setDrawerForm(prev=>({...prev,status:'archived'})) }
+    showToast('📦','Archived')
+  }
+
+  async function restoreTask(taskId) {
+    await supabase.from('tasks').update({ status:'todo' }).eq('id', taskId)
+    await supabase.from('task_activity').insert([{ task_id:taskId, actor_id:currentUser?.id||null, action:'Restored from archive' }])
+    setTasks(prev=>prev.map(t=>t.id===taskId?{...t,status:'todo'}:t))
+    showToast('♻️','Restored to To Do')
   }
 
   // ── Drawer ─────────────────────────────────────────────────
@@ -238,22 +245,20 @@ export default function JobOrderPage() {
       <div className="topbar">
         <div>
           <div className="topbar-title">Job Orders</div>
-          <div className="topbar-sub">{tasks.length} orders · {tasks.filter(t=>t.status==='done').length} completed{!isAdmin&&' · your assignments'}</div>
+          <div className="topbar-sub">{tasks.length} orders · {tasks.filter(t=>t.status==='done').length} completed</div>
         </div>
         <div style={{display:'flex',gap:9,alignItems:'center'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by ticket or title…"
             style={{...iStyle,width:220,padding:'6px 12px'}}/>
-          {isAdmin&&(
-            <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
-              <option value="">All Staff</option>
-              {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
-            </select>
-          )}
+          <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
+            <option value="">All Staff</option>
+            {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
+          </select>
           <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterPriority} onChange={e=>setFilterPriority(e.target.value)}>
             <option value="">All Priorities</option>
             {PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
-          {isAdmin&&<button className="btn btn-primary" onClick={()=>{setShowForm(true);setForm(EMPTY_FORM)}}>+ New Job Order</button>}
+          <button className="btn btn-primary" onClick={()=>{setShowForm(true);setForm(EMPTY_FORM)}}>+ New Job Order</button>
         </div>
       </div>
 
@@ -313,11 +318,31 @@ export default function JobOrderPage() {
           </div>
         )}
 
+        {/* ── Stats Row ── */}
+        {!loading && (
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:14}}>
+            {[
+              { label:'Total',       value: tasks.filter(t=>t.status!=='archived').length, color:'var(--espresso)', bg:'var(--white)',      icon:'📋' },
+              { label:'To Do',       value: tasks.filter(t=>t.status==='todo').length,      color:'#7a6a50',        bg:'#f5f0e8',            icon:'○' },
+              { label:'In Progress', value: tasks.filter(t=>t.status==='inprogress').length,color:'#a06000',        bg:'#fef3e2',            icon:'◑' },
+              { label:'Done',        value: tasks.filter(t=>t.status==='done').length,      color:'#4a7a1e',        bg:'#eef7e4',            icon:'●' },
+            ].map(s=>(
+              <div key={s.label} style={{background:s.bg,border:'1px solid var(--border)',borderRadius:10,padding:'10px 14px',display:'flex',alignItems:'center',gap:10}}>
+                <span style={{fontSize:20}}>{s.icon}</span>
+                <div>
+                  <div style={{fontSize:22,fontWeight:800,color:s.color,fontFamily:"'Montserrat',sans-serif",lineHeight:1}}>{s.value}</div>
+                  <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:2}}>{s.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* ── Kanban Board ── */}
         {loading ? (
           <div style={{textAlign:'center',padding:'60px',color:'var(--text-muted)'}}>Loading…</div>
         ) : (
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,height:'calc(100vh - 130px)'}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,height:'calc(100vh - 210px)'}}>
             {COLUMNS.map(col=>{
               const colTasks = getColTasks(col.id)
               return (
@@ -362,7 +387,7 @@ export default function JobOrderPage() {
                               </div>
                               <button
                                 onClick={e=>{e.stopPropagation();deleteTask(task.id)}}
-                                style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px',display:isAdmin?'block':'none'}}>🗑</button>
+                                style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px'}}>🗑</button>
                             </div>
 
                             <div style={{fontSize:13,fontWeight:600,color:'var(--espresso)',marginBottom:4,lineHeight:1.4}}>{task.title}</div>
@@ -405,6 +430,11 @@ export default function JobOrderPage() {
                                 → {c.label}
                               </button>
                             ))}
+                            {isAdmin&&<button
+                              onClick={e=>{e.stopPropagation();archiveTask(task.id)}}
+                              style={{flex:1,background:'transparent',border:'none',color:ARCHIVED_COL.color,padding:'5px 4px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",textAlign:'center'}}>
+                              📦 Archive
+                            </button>}
                           </div>
                         </div>
                       )
@@ -413,6 +443,57 @@ export default function JobOrderPage() {
                 </div>
               )
             })}
+
+            {/* ── Archived Column ── */}
+            {isAdmin && (() => {
+              const archivedTasks = tasks.filter(t=>t.status==='archived' && (!search || `${t.ticket_no} ${t.title} ${t.description||''}`.toLowerCase().includes(search.toLowerCase())))
+              return (
+                <div style={{background:'var(--surface)',borderRadius:13,display:'flex',flexDirection:'column',overflow:'hidden',opacity:0.85}}>
+                  <div style={{padding:'14px 16px',background:ARCHIVED_COL.bg,borderBottom:`1px solid ${ARCHIVED_COL.color}22`,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <div style={{width:10,height:10,borderRadius:'50%',background:ARCHIVED_COL.color}}/>
+                      <span style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700,color:ARCHIVED_COL.color}}>Archived</span>
+                    </div>
+                    <span style={{fontSize:11,fontWeight:700,color:ARCHIVED_COL.color,background:'white',padding:'2px 8px',borderRadius:20}}>{archivedTasks.length}</span>
+                  </div>
+                  <div style={{flex:1,overflowY:'auto',padding:'10px 10px 16px'}}>
+                    {archivedTasks.length===0&&<div style={{textAlign:'center',padding:'30px 10px',color:'var(--border)',fontSize:12}}>No archived orders</div>}
+                    {archivedTasks.map(task=>{
+                      const p = pri(task.priority)
+                      const assignee = task.staff
+                      return (
+                        <div key={task.id}
+                          onClick={()=>openDrawer(task)}
+                          style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:10,marginBottom:8,cursor:'pointer',borderLeft:`5px solid ${ARCHIVED_COL.color}`,transition:'all .15s',overflow:'hidden',opacity:0.75}}
+                          onMouseEnter={e=>{e.currentTarget.style.opacity='1';e.currentTarget.style.boxShadow='0 2px 8px rgba(0,0,0,.07)'}}
+                          onMouseLeave={e=>{e.currentTarget.style.opacity='0.75';e.currentTarget.style.boxShadow=''}}>
+                          <div style={{padding:'10px 12px 8px 13px'}}>
+                            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:5}}>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                {task.ticket_no&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:'var(--text-muted)',background:'var(--surface)',padding:'2px 7px',borderRadius:6}}>{task.ticket_no}</span>}
+                                <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:20,background:p.bg,color:p.color,opacity:0.7}}>{p.label}</span>
+                              </div>
+                              <button onClick={e=>{e.stopPropagation();deleteTask(task.id)}} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'2px 4px'}}>🗑</button>
+                            </div>
+                            <div style={{fontSize:12,fontWeight:600,color:'var(--text-muted)',marginBottom:6,lineHeight:1.4,textDecoration:'line-through'}}>{task.title}</div>
+                            {assignee&&<div style={{display:'flex',alignItems:'center',gap:5}}>
+                              <div style={{width:16,height:16,borderRadius:'50%',background:getRoleColor(assignee.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,fontWeight:700,color:'white'}}>{initials(assignee.first_name,assignee.last_name)}</div>
+                              <span style={{fontSize:9,color:'var(--text-muted)'}}>{assignee.nickname||assignee.first_name}</span>
+                            </div>}
+                          </div>
+                          <div style={{display:'flex',borderTop:'1px solid var(--border)',background:'var(--surface)'}}>
+                            <button onClick={e=>{e.stopPropagation();restoreTask(task.id)}}
+                              style={{flex:1,background:'transparent',border:'none',color:'#4a7a1e',padding:'5px 4px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",textAlign:'center'}}>
+                              ♻ Restore
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>
@@ -429,9 +510,8 @@ export default function JobOrderPage() {
                 {drawerTask.ticket_no&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,color:'var(--espresso)',background:'var(--cream-dark)',padding:'2px 8px',borderRadius:6,display:'inline-block',marginBottom:8}}>{drawerTask.ticket_no}</div>}
                 <input
                   value={drawerForm?.title||''}
-                  onChange={e=>isAdmin&&setDrawerForm(p=>({...p,title:e.target.value}))}
-                  readOnly={!isAdmin}
-                  style={{width:'100%',border:'none',outline:'none',fontSize:18,fontWeight:700,fontFamily:"'Montserrat',sans-serif",color:'var(--espresso)',background:'transparent',padding:0,cursor:isAdmin?'text':'default'}}
+                  onChange={e=>setDrawerForm(p=>({...p,title:e.target.value}))}
+                  style={{width:'100%',border:'none',outline:'none',fontSize:18,fontWeight:700,fontFamily:"'Montserrat',sans-serif",color:'var(--espresso)',background:'transparent',padding:0}}
                 />
               </div>
               <button onClick={closeDrawer} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:16,color:'var(--text-muted)',flexShrink:0}}>×</button>
@@ -444,23 +524,23 @@ export default function JobOrderPage() {
 
                 {/* Meta fields */}
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
-                  {isAdmin&&<div>
+                  <div>
                     <label style={lStyle}>Assigned To</label>
                     <select style={iStyle} value={drawerForm?.assigned_to||''} onChange={e=>setDrawerForm(p=>({...p,assigned_to:e.target.value}))}>
                       <option value="">Unassigned</option>
                       {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}{s.nickname?' "'+s.nickname+'"':''}</option>)}
                     </select>
-                  </div>}
-                  {isAdmin&&<div>
+                  </div>
+                  <div>
                     <label style={lStyle}>Due Date</label>
                     <input style={iStyle} type="date" value={drawerForm?.due_date||''} onChange={e=>setDrawerForm(p=>({...p,due_date:e.target.value}))}/>
-                  </div>}
+                  </div>
                   <div>
                     <label style={lStyle}>Priority</label>
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:5}}>
                       {PRIORITIES.map(p=>(
-                        <div key={p.id} onClick={()=>isAdmin&&setDrawerForm(prev=>({...prev,priority:p.id}))}
-                          style={{padding:'5px 6px',borderRadius:7,border:`1.5px solid ${drawerForm?.priority===p.id?p.color:'var(--border)'}`,background:drawerForm?.priority===p.id?p.bg:'var(--surface)',cursor:isAdmin?'pointer':'default',textAlign:'center',fontSize:10,fontWeight:600,color:drawerForm?.priority===p.id?p.color:'var(--text-muted)',transition:'all .15s'}}>
+                        <div key={p.id} onClick={()=>setDrawerForm(prev=>({...prev,priority:p.id}))}
+                          style={{padding:'5px 6px',borderRadius:7,border:`1.5px solid ${drawerForm?.priority===p.id?p.color:'var(--border)'}`,background:drawerForm?.priority===p.id?p.bg:'var(--surface)',cursor:'pointer',textAlign:'center',fontSize:10,fontWeight:600,color:drawerForm?.priority===p.id?p.color:'var(--text-muted)',transition:'all .15s'}}>
                           {p.label}
                         </div>
                       ))}
@@ -470,29 +550,37 @@ export default function JobOrderPage() {
                     <label style={lStyle}>Status</label>
                     <select style={iStyle} value={drawerForm?.status||'todo'} onChange={e=>setDrawerForm(p=>({...p,status:e.target.value}))}>
                       {COLUMNS.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
+                      {isAdmin&&<option value="archived">📦 Archived</option>}
                     </select>
                   </div>
                 </div>
+
+                {/* Archive / Restore shortcut — admin only */}
+                {isAdmin&&drawerTask&&(
+                  <div style={{marginBottom:16,display:'flex',gap:8}}>
+                    {drawerTask.status!=='archived'
+                      ? <button onClick={()=>archiveTask(drawerTask.id)} style={{flex:1,background:'#f5f5f5',color:'#9e9e9e',border:'1px solid #e0e0e0',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>📦 Archive this order</button>
+                      : <button onClick={()=>restoreTask(drawerTask.id)} style={{flex:1,background:'#eef7e4',color:'#4a7a1e',border:'1px solid #7ab64844',borderRadius:8,padding:'7px 10px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>♻ Restore to To Do</button>
+                    }
+                  </div>
+                )}
 
                 {/* Description */}
                 <div style={{marginBottom:24}}>
                   <label style={lStyle}>Description</label>
                   <textarea
                     value={drawerForm?.description||''}
-                    onChange={e=>isAdmin&&setDrawerForm(p=>({...p,description:e.target.value}))}
-                    readOnly={!isAdmin}
-                    placeholder={isAdmin?"Add a description…":"No description."}
-                    style={{...iStyle,resize:isAdmin?'vertical':'none',minHeight:80,lineHeight:1.6,cursor:isAdmin?'text':'default'}}
+                    onChange={e=>setDrawerForm(p=>({...p,description:e.target.value}))}
+                    placeholder="Add a description…"
+                    style={{...iStyle,resize:'vertical',minHeight:80,lineHeight:1.6}}
                   />
                 </div>
 
-                {/* Save button — admin only */}
-                {isAdmin&&(
-                  <button onClick={saveDrawerTask} disabled={savingDrawer}
-                    style={{width:'100%',background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",marginBottom:28}}>
-                    {savingDrawer?'Saving…':'✓ Save Changes'}
-                  </button>
-                )}
+                {/* Save button */}
+                <button onClick={saveDrawerTask} disabled={savingDrawer}
+                  style={{width:'100%',background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:'10px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",marginBottom:28}}>
+                  {savingDrawer?'Saving…':'✓ Save Changes'}
+                </button>
 
                 {/* ── Checklist ── */}
                 <div style={{marginBottom:28}}>
