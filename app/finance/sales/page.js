@@ -14,8 +14,71 @@ const SOURCES = [
   { id:'manual',   label:'Manual',   color:'#8e44ad' },
 ]
 
+const AUTHORIZED_EMAILS = ['ohheythere.matcha@gmail.com','ohheythere.group@gmail.com']
+
 const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none'}
 const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
+
+function ProgressBar({ value, target, color }) {
+  const pct = target > 0 ? Math.min(100, (value / target) * 100) : 0
+  const bg = pct >= 100 ? '#2ecc71' : pct >= 80 ? '#f39c12' : '#e74c3c'
+  return (
+    <div style={{marginTop:6}}>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',marginBottom:3}}>
+        <span>{peso(value)}</span>
+        <span style={{fontWeight:700,color:bg}}>{pct.toFixed(1)}%</span>
+      </div>
+      <div style={{background:'var(--border)',borderRadius:99,height:7,overflow:'hidden'}}>
+        <div style={{height:'100%',width:`${pct}%`,background:bg,borderRadius:99,transition:'width .4s ease'}}/>
+      </div>
+      <div style={{fontSize:9,color:'var(--text-muted)',marginTop:3}}>Target: {peso(target)}</div>
+    </div>
+  )
+}
+
+function AlertBanner({ todaySales, todayTarget, monthSales, monthTarget }) {
+  const alerts = []
+
+  if (todayTarget > 0) {
+    const pct = (todaySales / todayTarget) * 100
+    if (pct < 80) {
+      alerts.push({ level:'danger', msg:`🚨 Today's sales (${peso(todaySales)}) are critically below the daily target of ${peso(todayTarget)} — only ${pct.toFixed(0)}% achieved.` })
+    } else if (pct < 100) {
+      alerts.push({ level:'warn', msg:`⚠️ Today's sales are at ${pct.toFixed(0)}% of the daily target. ${peso(todayTarget - todaySales)} more needed.` })
+    }
+  }
+
+  if (monthTarget > 0) {
+    const pct = (monthSales / monthTarget) * 100
+    if (pct < 80) {
+      alerts.push({ level:'danger', msg:`🚨 This month's sales (${peso(monthSales)}) are critically below the monthly target of ${peso(monthTarget)} — ${pct.toFixed(0)}% achieved.` })
+    } else if (pct < 100) {
+      alerts.push({ level:'warn', msg:`⚠️ Monthly sales at ${pct.toFixed(0)}% of target. ${peso(monthTarget - monthSales)} still needed.` })
+    } else {
+      alerts.push({ level:'success', msg:`✅ Monthly sales target achieved! ${peso(monthSales)} vs target ${peso(monthTarget)}.` })
+    }
+  }
+
+  if (!alerts.length) return null
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
+      {alerts.map((a,i) => {
+        const styles = {
+          danger: { bg:'#fdeaea', border:'#f5c6c6', color:'#c0392b' },
+          warn:   { bg:'#fef9e7', border:'#f9e79f', color:'#856404' },
+          success:{ bg:'#eafaf1', border:'#a9dfbf', color:'#1e8449' },
+        }
+        const s = styles[a.level]
+        return (
+          <div key={i} style={{background:s.bg,border:`1px solid ${s.border}`,borderRadius:10,padding:'12px 16px',fontSize:12,fontWeight:600,color:s.color}}>
+            {a.msg}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function SalesPage() {
   const supabase = createClient()
@@ -29,10 +92,51 @@ export default function SalesPage() {
   const [form, setForm] = useState({sale_date:toISO(today),source:'storehub',gross_sales:'',net_sales:'',transaction_count:'',notes:''})
   const [toast, setToast]       = useState(null)
   const [selected, setSelected] = useState(new Set())
-  const [deleteModal, setDeleteModal] = useState(null) // { mode:'single'|'bulk', id? }
+  const [deleteModal, setDeleteModal] = useState(null)
   const fileRef = useRef()
 
+  // Targets
+  const [targets, setTargets]         = useState({ daily_target: 0, monthly_target: 0 })
+  const [showTargets, setShowTargets] = useState(false)
+  const [targetForm, setTargetForm]   = useState({ daily_target: '', monthly_target: '' })
+  const [savingTargets, setSavingTargets] = useState(false)
+  const [userEmail, setUserEmail]     = useState(null)
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setUserEmail(data?.user?.email || null)
+    })
+    fetchTargets()
+  }, [])
+
   useEffect(()=>{ fetchSales() },[dateFrom,dateTo])
+
+  async function fetchTargets() {
+    const { data } = await supabase.from('settings').select('value').eq('key','sales_targets').single()
+    if (data?.value) {
+      try {
+        const parsed = JSON.parse(data.value)
+        setTargets(parsed)
+        setTargetForm({ daily_target: parsed.daily_target || '', monthly_target: parsed.monthly_target || '' })
+      } catch(e) {}
+    }
+  }
+
+  async function saveTargets() {
+    setSavingTargets(true)
+    const payload = {
+      daily_target:   parseFloat(targetForm.daily_target)   || 0,
+      monthly_target: parseFloat(targetForm.monthly_target) || 0,
+    }
+    const { error } = await supabase.from('settings').upsert({ key:'sales_targets', value: JSON.stringify(payload) }, { onConflict:'key' })
+    if (error) { showToast('❌', error.message) }
+    else {
+      setTargets(payload)
+      setShowTargets(false)
+      showToast('✅', 'Sales targets updated')
+    }
+    setSavingTargets(false)
+  }
 
   async function fetchSales() {
     setLoading(true)
@@ -45,7 +149,6 @@ export default function SalesPage() {
   function showToast(icon,msg){setToast({icon,msg});setTimeout(()=>setToast(null),3500)}
   const fv = k => e => setForm(p=>({...p,[k]:e.target.value}))
 
-  // Parse StoreHub date: "1 May 2026 (Fri)" → "2026-05-01"
   function parseStoreHubDate(raw) {
     const clean = raw.replace(/\s*\(.*?\)/, '').trim()
     const d = new Date(clean)
@@ -56,11 +159,9 @@ export default function SalesPage() {
     const file = e.target.files[0]; if(!file) return
     const reader = new FileReader()
     reader.onload = async ev => {
-      const text = ev.target.result.replace(/^\uFEFF/, '') // strip BOM
+      const text = ev.target.result.replace(/^\uFEFF/, '')
       const lines = text.split('\n').filter(l=>l.trim())
       const rawHeaders = lines[0].split(',').map(h=>h.trim())
-
-      // Map StoreHub exact column names
       const col = {}
       rawHeaders.forEach((h, i) => {
         const n = h.toLowerCase()
@@ -71,12 +172,7 @@ export default function SalesPage() {
         if (n === 'total discount')                col.discount = i
         if (n === 'tax')                           col.tax = i
       })
-
-      if (col.date === undefined) {
-        showToast('⚠️', 'Date column not found — is this a StoreHub CSV?')
-        return
-      }
-
+      if (col.date === undefined) { showToast('⚠️', 'Date column not found — is this a StoreHub CSV?'); return }
       const rows = []
       for (let i = 1; i < lines.length; i++) {
         const vals = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''))
@@ -100,7 +196,6 @@ export default function SalesPage() {
           uploaded_by:       'alex',
         })
       }
-
       if (!rows.length) { showToast('⚠️', 'No valid rows found'); return }
       setSaving(true)
       const { error } = await supabase.from('sales').insert(rows)
@@ -140,13 +235,8 @@ export default function SalesPage() {
   }
 
   function toggleSelect(id) {
-    setSelected(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
+    setSelected(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
   }
-
   function toggleSelectAll() {
     if (selected.size === sales.length) setSelected(new Set())
     else setSelected(new Set(sales.map(s=>s.id)))
@@ -155,6 +245,16 @@ export default function SalesPage() {
   const totalGross = sales.reduce((a,s)=>a+(parseFloat(s.gross_sales)||0),0)
   const totalNet   = sales.reduce((a,s)=>a+(parseFloat(s.net_sales)||0),0)
   const totalTxns  = sales.reduce((a,s)=>a+(parseInt(s.transaction_count)||0),0)
+
+  // Today's sales (for daily target comparison)
+  const todayISO = toISO(today)
+  const todaySales = sales.filter(s=>s.sale_date===todayISO).reduce((a,s)=>a+(parseFloat(s.net_sales)||0),0)
+
+  // Month sales = totalNet for current month view
+  const isCurrentMonth = dateFrom === toISO(new Date(today.getFullYear(),today.getMonth(),1)) && dateTo === toISO(today)
+  const monthSales = totalNet
+
+  const canEditTargets = AUTHORIZED_EMAILS.includes(userEmail)
 
   return (
     <AuthShell>
@@ -168,11 +268,73 @@ export default function SalesPage() {
             {saving ? '⏳ Importing…' : '📂 Upload StoreHub CSV'}
             <input type="file" accept=".csv" ref={fileRef} style={{display:'none'}} onChange={handleCSV} disabled={saving}/>
           </label>
+          {canEditTargets && (
+            <button
+              onClick={()=>setShowTargets(!showTargets)}
+              style={{background:'#fef9e7',border:'1px solid #f9e79f',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:700,color:'#856404',cursor:'pointer',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap'}}>
+              🎯 Set Targets
+            </button>
+          )}
           <button className="btn btn-primary" onClick={()=>setShowForm(!showForm)}>+ Add Sale</button>
         </div>
       </div>
 
       <div className="page-content">
+
+        {/* Alerts */}
+        <AlertBanner
+          todaySales={todaySales}
+          todayTarget={targets.daily_target}
+          monthSales={monthSales}
+          monthTarget={targets.monthly_target}
+        />
+
+        {/* Targets Panel */}
+        {(targets.daily_target > 0 || targets.monthly_target > 0) && (
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+            {targets.daily_target > 0 && (
+              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 20px'}}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Today's Sales vs Daily Target</div>
+                <ProgressBar value={todaySales} target={targets.daily_target} />
+              </div>
+            )}
+            {targets.monthly_target > 0 && (
+              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 20px'}}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>
+                  {isCurrentMonth ? "This Month's Sales vs Monthly Target" : "Period Net Sales vs Monthly Target"}
+                </div>
+                <ProgressBar value={monthSales} target={targets.monthly_target} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Set Targets Form */}
+        {showTargets && canEditTargets && (
+          <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'20px',marginBottom:16}}>
+            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:4}}>🎯 Sales Targets</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>Set daily and monthly targets. Alerts will fire if sales fall below 80% of target.</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+              <div>
+                <label style={lStyle}>Daily Target (₱)</label>
+                <input style={iStyle} type="number" placeholder="e.g. 15000" value={targetForm.daily_target}
+                  onChange={e=>setTargetForm(p=>({...p,daily_target:e.target.value}))}/>
+              </div>
+              <div>
+                <label style={lStyle}>Monthly Target (₱)</label>
+                <input style={iStyle} type="number" placeholder="e.g. 350000" value={targetForm.monthly_target}
+                  onChange={e=>setTargetForm(p=>({...p,monthly_target:e.target.value}))}/>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button className="btn btn-secondary" onClick={()=>setShowTargets(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveTargets} disabled={savingTargets}>
+                {savingTargets ? 'Saving…' : '✓ Save Targets'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* KPIs */}
         <div className="kpi-grid" style={{marginBottom:16}}>
           {[
@@ -220,9 +382,7 @@ export default function SalesPage() {
         {selected.size > 0 && (
           <div style={{background:'#fdeaea',border:'1px solid #f5c6c6',borderRadius:10,padding:'10px 16px',marginBottom:12,display:'flex',alignItems:'center',gap:12}}>
             <span style={{fontSize:12,fontWeight:600,color:'#c0392b',flex:1}}>{selected.size} record{selected.size!==1?'s':''} selected</span>
-            <button onClick={()=>setSelected(new Set())} style={{background:'none',border:'1px solid #f5c6c6',borderRadius:7,padding:'5px 12px',fontSize:11,color:'#c0392b',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
-              Deselect all
-            </button>
+            <button onClick={()=>setSelected(new Set())} style={{background:'none',border:'1px solid #f5c6c6',borderRadius:7,padding:'5px 12px',fontSize:11,color:'#c0392b',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Deselect all</button>
             <button onClick={()=>setDeleteModal({mode:'bulk'})} style={{background:'#c0392b',border:'none',borderRadius:7,padding:'6px 14px',fontSize:11,fontWeight:700,color:'white',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
               🗑️ Delete {selected.size} record{selected.size!==1?'s':''}
             </button>
@@ -243,8 +403,7 @@ export default function SalesPage() {
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
               <thead><tr style={{background:'var(--espresso)'}}>
                 <th style={{padding:'11px 14px',width:36}}>
-                  <input type="checkbox" checked={selected.size===sales.length&&sales.length>0} onChange={toggleSelectAll}
-                    style={{cursor:'pointer',accentColor:'#EF4576'}}/>
+                  <input type="checkbox" checked={selected.size===sales.length&&sales.length>0} onChange={toggleSelectAll} style={{cursor:'pointer',accentColor:'#EF4576'}}/>
                 </th>
                 {['Date','Source','Gross Sales','Net Sales','Transactions','Notes',''].map(h=>(
                   <th key={h} style={{padding:'11px 14px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}}>{h}</th>
@@ -257,8 +416,7 @@ export default function SalesPage() {
                   return(
                     <tr key={s.id} style={{borderBottom:'1px solid var(--border)',background:isSelected?'#fef3f3':i%2===0?'var(--white)':'var(--surface)',transition:'background .1s'}}>
                       <td style={{padding:'10px 14px'}}>
-                        <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(s.id)}
-                          style={{cursor:'pointer',accentColor:'#EF4576'}}/>
+                        <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(s.id)} style={{cursor:'pointer',accentColor:'#EF4576'}}/>
                       </td>
                       <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",fontWeight:600}}>{fmtDate(s.sale_date)}</td>
                       <td style={{padding:'10px 14px'}}><span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:6,background:src.color+'22',color:src.color}}>{src.label}</span></td>
