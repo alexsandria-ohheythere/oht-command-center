@@ -6,6 +6,7 @@ import { createClient } from '../../../lib/supabase'
 const peso = n => '₱'+(parseFloat(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
 const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const fmtDate = d => d?new Date(d+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}):'—'
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 
 const SOURCES = [
   { id:'storehub', label:'StoreHub', color:'#4a90c4' },
@@ -19,7 +20,47 @@ const AUTHORIZED_EMAILS = ['ohheythere.matcha@gmail.com','ohheythere.group@gmail
 const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none'}
 const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
 
-function ProgressBar({ value, target, color }) {
+// Get the target for a specific date ISO string
+// Priority: exact date match > day-of-week default > global daily_target
+function getTargetForDate(dateISO, targets) {
+  if (!dateISO || !targets) return 0
+  // Exact date override
+  if (targets.date_overrides && targets.date_overrides[dateISO]) {
+    return parseFloat(targets.date_overrides[dateISO]) || 0
+  }
+  // Day-of-week default (0=Sun … 6=Sat)
+  const dow = new Date(dateISO + 'T00:00:00').getDay()
+  if (targets.dow_targets && targets.dow_targets[dow] !== undefined && targets.dow_targets[dow] !== '') {
+    return parseFloat(targets.dow_targets[dow]) || 0
+  }
+  // Fallback global daily target
+  return parseFloat(targets.daily_target) || 0
+}
+
+function TargetBadge({ netSales, target }) {
+  if (!target || target <= 0) return null
+  const pct = (netSales / target) * 100
+  if (pct >= 100) return (
+    <span title={`Target: ${peso(target)} · Achieved ${pct.toFixed(0)}%`}
+      style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:10,fontWeight:700,color:'#1e8449',background:'#eafaf1',border:'1px solid #a9dfbf',borderRadius:20,padding:'1px 7px',marginLeft:6,whiteSpace:'nowrap'}}>
+      ✅ {pct.toFixed(0)}%
+    </span>
+  )
+  if (pct >= 80) return (
+    <span title={`Target: ${peso(target)} · ${pct.toFixed(0)}% achieved`}
+      style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:10,fontWeight:700,color:'#856404',background:'#fef9e7',border:'1px solid #f9e79f',borderRadius:20,padding:'1px 7px',marginLeft:6,whiteSpace:'nowrap'}}>
+      ⚠️ {pct.toFixed(0)}%
+    </span>
+  )
+  return (
+    <span title={`Target: ${peso(target)} · Only ${pct.toFixed(0)}% achieved`}
+      style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:10,fontWeight:700,color:'#c0392b',background:'#fdeaea',border:'1px solid #f5c6c6',borderRadius:20,padding:'1px 7px',marginLeft:6,whiteSpace:'nowrap'}}>
+      ❌ {pct.toFixed(0)}%
+    </span>
+  )
+}
+
+function ProgressBar({ value, target }) {
   const pct = target > 0 ? Math.min(100, (value / target) * 100) : 0
   const bg = pct >= 100 ? '#2ecc71' : pct >= 80 ? '#f39c12' : '#e74c3c'
   return (
@@ -96,9 +137,13 @@ export default function SalesPage() {
   const fileRef = useRef()
 
   // Targets
-  const [targets, setTargets]         = useState({ daily_target: 0, monthly_target: 0 })
+  const [targets, setTargets]         = useState({ daily_target: 0, monthly_target: 0, dow_targets: {}, date_overrides: {} })
   const [showTargets, setShowTargets] = useState(false)
+  const [targetTab, setTargetTab]     = useState('global') // 'global' | 'weekly' | 'override'
   const [targetForm, setTargetForm]   = useState({ daily_target: '', monthly_target: '' })
+  const [dowForm, setDowForm]         = useState({ 0:'', 1:'', 2:'', 3:'', 4:'', 5:'', 6:'' })
+  const [overrideDate, setOverrideDate] = useState(toISO(today))
+  const [overrideAmt, setOverrideAmt]   = useState('')
   const [savingTargets, setSavingTargets] = useState(false)
   const [userEmail, setUserEmail]     = useState(null)
 
@@ -116,26 +161,72 @@ export default function SalesPage() {
     if (data?.value) {
       try {
         const parsed = JSON.parse(data.value)
-        setTargets(parsed)
-        setTargetForm({ daily_target: parsed.daily_target || '', monthly_target: parsed.monthly_target || '' })
+        const full = {
+          daily_target:   parsed.daily_target   || 0,
+          monthly_target: parsed.monthly_target || 0,
+          dow_targets:    parsed.dow_targets    || {},
+          date_overrides: parsed.date_overrides || {},
+        }
+        setTargets(full)
+        setTargetForm({ daily_target: full.daily_target || '', monthly_target: full.monthly_target || '' })
+        const dows = { 0:'', 1:'', 2:'', 3:'', 4:'', 5:'', 6:'' }
+        Object.keys(full.dow_targets).forEach(k => { dows[k] = full.dow_targets[k] || '' })
+        setDowForm(dows)
       } catch(e) {}
     }
   }
 
-  async function saveTargets() {
+  async function saveGlobalTargets() {
     setSavingTargets(true)
     const payload = {
+      ...targets,
       daily_target:   parseFloat(targetForm.daily_target)   || 0,
       monthly_target: parseFloat(targetForm.monthly_target) || 0,
     }
     const { error } = await supabase.from('settings').upsert({ key:'sales_targets', value: JSON.stringify(payload) }, { onConflict:'key' })
     if (error) { showToast('❌', error.message) }
+    else { setTargets(payload); showToast('✅', 'Global targets updated') }
+    setSavingTargets(false)
+  }
+
+  async function saveWeeklyTargets() {
+    setSavingTargets(true)
+    const dow = {}
+    Object.keys(dowForm).forEach(k => { if (dowForm[k] !== '') dow[k] = parseFloat(dowForm[k]) || 0 })
+    const payload = { ...targets, dow_targets: dow }
+    const { error } = await supabase.from('settings').upsert({ key:'sales_targets', value: JSON.stringify(payload) }, { onConflict:'key' })
+    if (error) { showToast('❌', error.message) }
+    else { setTargets(payload); showToast('✅', 'Weekly targets saved') }
+    setSavingTargets(false)
+  }
+
+  async function saveOverride() {
+    if (!overrideDate || overrideAmt === '') { showToast('⚠️','Enter a date and amount'); return }
+    setSavingTargets(true)
+    const overrides = { ...(targets.date_overrides || {}) }
+    if (overrideAmt === '0' || overrideAmt === '') {
+      delete overrides[overrideDate]
+    } else {
+      overrides[overrideDate] = parseFloat(overrideAmt) || 0
+    }
+    const payload = { ...targets, date_overrides: overrides }
+    const { error } = await supabase.from('settings').upsert({ key:'sales_targets', value: JSON.stringify(payload) }, { onConflict:'key' })
+    if (error) { showToast('❌', error.message) }
     else {
       setTargets(payload)
-      setShowTargets(false)
-      showToast('✅', 'Sales targets updated')
+      setOverrideAmt('')
+      showToast('✅', `Target set for ${fmtDate(overrideDate)}`)
     }
     setSavingTargets(false)
+  }
+
+  async function removeOverride(dateISO) {
+    const overrides = { ...(targets.date_overrides || {}) }
+    delete overrides[dateISO]
+    const payload = { ...targets, date_overrides: overrides }
+    await supabase.from('settings').upsert({ key:'sales_targets', value: JSON.stringify(payload) }, { onConflict:'key' })
+    setTargets(payload)
+    showToast('🗑️', 'Override removed')
   }
 
   async function fetchSales() {
@@ -242,19 +333,33 @@ export default function SalesPage() {
     else setSelected(new Set(sales.map(s=>s.id)))
   }
 
+  // Group net sales by date for target comparison
+  const netByDate = {}
+  sales.forEach(s => {
+    netByDate[s.sale_date] = (netByDate[s.sale_date] || 0) + (parseFloat(s.net_sales) || 0)
+  })
+
   const totalGross = sales.reduce((a,s)=>a+(parseFloat(s.gross_sales)||0),0)
   const totalNet   = sales.reduce((a,s)=>a+(parseFloat(s.net_sales)||0),0)
   const totalTxns  = sales.reduce((a,s)=>a+(parseInt(s.transaction_count)||0),0)
 
-  // Today's sales (for daily target comparison)
   const todayISO = toISO(today)
-  const todaySales = sales.filter(s=>s.sale_date===todayISO).reduce((a,s)=>a+(parseFloat(s.net_sales)||0),0)
+  const todaySales = netByDate[todayISO] || 0
+  const todayTarget = getTargetForDate(todayISO, targets)
 
-  // Month sales = totalNet for current month view
   const isCurrentMonth = dateFrom === toISO(new Date(today.getFullYear(),today.getMonth(),1)) && dateTo === toISO(today)
   const monthSales = totalNet
 
   const canEditTargets = AUTHORIZED_EMAILS.includes(userEmail)
+
+  const tabStyle = active => ({
+    padding:'7px 14px',fontSize:11,fontWeight:700,cursor:'pointer',borderRadius:7,
+    background: active ? 'var(--matcha-dark)' : 'transparent',
+    color: active ? 'white' : 'var(--text-muted)',
+    border: 'none',
+    fontFamily:"'DM Sans',sans-serif",
+    transition:'all .15s',
+  })
 
   return (
     <AuthShell>
@@ -284,18 +389,18 @@ export default function SalesPage() {
         {/* Alerts */}
         <AlertBanner
           todaySales={todaySales}
-          todayTarget={targets.daily_target}
+          todayTarget={todayTarget}
           monthSales={monthSales}
           monthTarget={targets.monthly_target}
         />
 
         {/* Targets Panel */}
-        {(targets.daily_target > 0 || targets.monthly_target > 0) && (
+        {(targets.daily_target > 0 || targets.monthly_target > 0 || Object.keys(targets.dow_targets||{}).length > 0) && (
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
-            {targets.daily_target > 0 && (
+            {(targets.daily_target > 0 || Object.keys(targets.dow_targets||{}).length > 0) && (
               <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 20px'}}>
                 <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Today's Sales vs Daily Target</div>
-                <ProgressBar value={todaySales} target={targets.daily_target} />
+                <ProgressBar value={todaySales} target={todayTarget} />
               </div>
             )}
             {targets.monthly_target > 0 && (
@@ -313,25 +418,100 @@ export default function SalesPage() {
         {showTargets && canEditTargets && (
           <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'20px',marginBottom:16}}>
             <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:4}}>🎯 Sales Targets</div>
-            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>Set daily and monthly targets. Alerts will fire if sales fall below 80% of target.</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
-              <div>
-                <label style={lStyle}>Daily Target (₱)</label>
-                <input style={iStyle} type="number" placeholder="e.g. 15000" value={targetForm.daily_target}
-                  onChange={e=>setTargetForm(p=>({...p,daily_target:e.target.value}))}/>
-              </div>
-              <div>
-                <label style={lStyle}>Monthly Target (₱)</label>
-                <input style={iStyle} type="number" placeholder="e.g. 350000" value={targetForm.monthly_target}
-                  onChange={e=>setTargetForm(p=>({...p,monthly_target:e.target.value}))}/>
-              </div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>Set targets by day of week or for a specific date. Date-specific overrides take priority over day-of-week defaults.</div>
+
+            {/* Tabs */}
+            <div style={{display:'flex',gap:4,background:'var(--surface)',borderRadius:9,padding:4,marginBottom:18,width:'fit-content'}}>
+              <button style={tabStyle(targetTab==='global')} onClick={()=>setTargetTab('global')}>🌐 Global</button>
+              <button style={tabStyle(targetTab==='weekly')} onClick={()=>setTargetTab('weekly')}>📅 By Day of Week</button>
+              <button style={tabStyle(targetTab==='override')} onClick={()=>setTargetTab('override')}>📌 Date Override</button>
             </div>
-            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
-              <button className="btn btn-secondary" onClick={()=>setShowTargets(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveTargets} disabled={savingTargets}>
-                {savingTargets ? 'Saving…' : '✓ Save Targets'}
-              </button>
-            </div>
+
+            {/* Global tab */}
+            {targetTab === 'global' && (
+              <div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:12}}>Fallback targets used when no day-of-week or date override is set.</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+                  <div>
+                    <label style={lStyle}>Daily Target (₱) — fallback</label>
+                    <input style={iStyle} type="number" placeholder="e.g. 15000" value={targetForm.daily_target}
+                      onChange={e=>setTargetForm(p=>({...p,daily_target:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <label style={lStyle}>Monthly Target (₱)</label>
+                    <input style={iStyle} type="number" placeholder="e.g. 350000" value={targetForm.monthly_target}
+                      onChange={e=>setTargetForm(p=>({...p,monthly_target:e.target.value}))}/>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                  <button className="btn btn-secondary" onClick={()=>setShowTargets(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={saveGlobalTargets} disabled={savingTargets}>
+                    {savingTargets ? 'Saving…' : '✓ Save Global Targets'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Weekly tab */}
+            {targetTab === 'weekly' && (
+              <div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:12}}>Set a different target per day of the week. Leave blank to use the global fallback.</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:10,marginBottom:16}}>
+                  {[0,1,2,3,4,5,6].map(d => (
+                    <div key={d}>
+                      <label style={lStyle}>{DOW[d]}</label>
+                      <input style={iStyle} type="number" placeholder="—" value={dowForm[d]}
+                        onChange={e=>setDowForm(p=>({...p,[d]:e.target.value}))}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                  <button className="btn btn-secondary" onClick={()=>setShowTargets(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={saveWeeklyTargets} disabled={savingTargets}>
+                    {savingTargets ? 'Saving…' : '✓ Save Weekly Targets'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Date override tab */}
+            {targetTab === 'override' && (
+              <div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:12}}>Override the target for a specific date — e.g. holidays, events, or promo days.</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:10,alignItems:'end',marginBottom:16}}>
+                  <div>
+                    <label style={lStyle}>Date</label>
+                    <input style={iStyle} type="date" value={overrideDate} onChange={e=>setOverrideDate(e.target.value)}/>
+                  </div>
+                  <div>
+                    <label style={lStyle}>Target (₱)</label>
+                    <input style={iStyle} type="number" placeholder="e.g. 25000" value={overrideAmt}
+                      onChange={e=>setOverrideAmt(e.target.value)}/>
+                  </div>
+                  <button className="btn btn-primary" onClick={saveOverride} disabled={savingTargets} style={{whiteSpace:'nowrap'}}>
+                    {savingTargets ? 'Saving…' : '+ Set Override'}
+                  </button>
+                </div>
+
+                {/* Existing overrides list */}
+                {Object.keys(targets.date_overrides||{}).length > 0 && (
+                  <div>
+                    <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>Active Date Overrides</div>
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {Object.entries(targets.date_overrides).sort(([a],[b])=>a.localeCompare(b)).map(([date, amt]) => (
+                        <div key={date} style={{display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 12px'}}>
+                          <span style={{fontSize:12,fontWeight:600}}>{fmtDate(date)}</span>
+                          <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)',fontWeight:700}}>{peso(amt)}</span>
+                          <button onClick={()=>removeOverride(date)} style={{background:'none',border:'none',cursor:'pointer',fontSize:13,color:'var(--text-muted)'}}
+                            onMouseEnter={e=>e.target.style.color='#c0392b'}
+                            onMouseLeave={e=>e.target.style.color='var(--text-muted)'}>🗑</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -413,12 +593,21 @@ export default function SalesPage() {
                 {sales.map((s,i)=>{
                   const src=SOURCES.find(x=>x.id===s.source)||SOURCES[0]
                   const isSelected = selected.has(s.id)
+                  const dayTarget = getTargetForDate(s.sale_date, targets)
+                  const dayNet = netByDate[s.sale_date] || 0
+                  // Only show badge on the first row of each date
+                  const isFirstOfDate = sales.findIndex(r => r.sale_date === s.sale_date) === i
                   return(
                     <tr key={s.id} style={{borderBottom:'1px solid var(--border)',background:isSelected?'#fef3f3':i%2===0?'var(--white)':'var(--surface)',transition:'background .1s'}}>
                       <td style={{padding:'10px 14px'}}>
                         <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(s.id)} style={{cursor:'pointer',accentColor:'#EF4576'}}/>
                       </td>
-                      <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",fontWeight:600}}>{fmtDate(s.sale_date)}</td>
+                      <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",fontWeight:600,whiteSpace:'nowrap'}}>
+                        {fmtDate(s.sale_date)}
+                        {isFirstOfDate && dayTarget > 0 && (
+                          <TargetBadge netSales={dayNet} target={dayTarget} />
+                        )}
+                      </td>
                       <td style={{padding:'10px 14px'}}><span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:6,background:src.color+'22',color:src.color}}>{src.label}</span></td>
                       <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)',fontWeight:600}}>{peso(s.gross_sales)}</td>
                       <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace"}}>{peso(s.net_sales)}</td>
