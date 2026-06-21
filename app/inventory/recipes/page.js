@@ -506,6 +506,13 @@ export default function RecipesPage() {
     return true
   })
 
+  const [activeTab, setActiveTab] = useState(null)
+
+  // Set default tab when categories load
+  useEffect(() => {
+    if (categories.length > 0 && !activeTab) setActiveTab(categories[0].name)
+  }, [categories])
+
   const btnStyle = (primary) => ({
     display: 'flex', alignItems: 'center', gap: 6,
     padding: '8px 16px', borderRadius: 9,
@@ -519,6 +526,11 @@ export default function RecipesPage() {
   // Subcategories for current form category
   const formCat = categories.find(c => c.name === form?.category)
   const formSubs = formCat?.subcategories || []
+
+  // Active tab data
+  const activeCatObj = categories.find(c => c.name === activeTab)
+  const activePalette = activeCatObj ? PALETTE[activeCatObj.colorIdx % PALETTE.length] : PALETTE[3]
+  const tabRecipes = filtered.filter(r => r.category === activeTab)
 
   return (
     <AuthShell>
@@ -540,8 +552,8 @@ export default function RecipesPage() {
           </div>
         </div>
 
-        {/* Filter bar */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
+        {/* Search + access filter */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 0, flexWrap: 'wrap', alignItems: 'center' }}>
           <input
             style={{ ...iStyle, width: 220 }}
             placeholder="🔍  Search recipes…"
@@ -563,122 +575,127 @@ export default function RecipesPage() {
           </div>
         </div>
 
-        {/* Board — top-level category columns */}
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)', fontSize: 14 }}>Loading recipes…</div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 20, alignItems: 'start' }}>
+        {/* Category Tabs */}
+        {!loading && categories.length > 0 && (
+          <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 28, marginTop: 20, overflowX: 'auto' }}>
             {categories.map(cat => {
               const p = PALETTE[cat.colorIdx % PALETTE.length]
-              const isExpanded = !!expandedCats[cat.name]
-              const catRecipes = filtered.filter(r => r.category === cat.name)
-              const totalInCat = recipes.filter(r => r.category === cat.name).length
-
+              const count = recipes.filter(r => r.category === cat.name).length
+              const isActive = activeTab === cat.name
               return (
-                <div key={cat.name} style={{ background: 'var(--white)', border: `1px solid ${isExpanded ? p.border : 'var(--border)'}`, borderRadius: 16, overflow: 'hidden', transition: 'border-color .2s' }}>
+                <button key={cat.name} onClick={() => setActiveTab(cat.name)} style={{
+                  display: 'flex', alignItems: 'center', gap: 7,
+                  padding: '10px 20px', border: 'none', background: 'transparent',
+                  cursor: 'pointer', fontFamily: "'DM Sans',sans-serif",
+                  fontWeight: isActive ? 700 : 500, fontSize: 13,
+                  color: isActive ? p.text : 'var(--text-muted)',
+                  borderBottom: isActive ? `3px solid ${p.dot}` : '3px solid transparent',
+                  marginBottom: -2, whiteSpace: 'nowrap', transition: 'all .15s',
+                }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.dot, flexShrink: 0 }} />
+                  {cat.name}
+                  <span style={{ fontSize: 11, padding: '1px 7px', borderRadius: 10, background: isActive ? p.bg : 'var(--surface)', color: isActive ? p.text : 'var(--text-muted)', fontWeight: 600 }}>{count}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
-                  {/* Category header — clickable */}
-                  <div
-                    onClick={() => toggleCat(cat.name)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', cursor: 'pointer', background: isExpanded ? p.bg : 'transparent', transition: 'background .2s', userSelect: 'none' }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: p.dot, flexShrink: 0 }} />
-                    <span style={{ fontWeight: 700, fontSize: 14, color: isExpanded ? p.text : 'var(--text-primary)', flex: 1, transition: 'color .2s' }}>{cat.name}</span>
-                    <span style={{ fontSize: 11, color: isExpanded ? p.text : 'var(--text-muted)', opacity: 0.7 }}>
-                      {catRecipes.length}{catRecipes.length !== totalInCat ? `/${totalInCat}` : ''}
-                    </span>
-                    <span style={{ fontSize: 13, color: isExpanded ? p.text : 'var(--text-muted)', transition: 'transform .2s', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span>
+        {/* Gallery content for active tab */}
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)', fontSize: 14 }}>Loading recipes…</div>
+        ) : !activeCatObj ? (
+          <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)', fontSize: 14 }}>No categories yet. Click ⚙️ Categories to add one.</div>
+        ) : (activeCatObj.subcategories || []).length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 13 }}>No subcategories yet. Click ⚙️ Categories to add some under {activeCatObj.name}.</div>
+        ) : (
+          <div>
+            {(activeCatObj.subcategories || []).map((sub, si) => {
+              const subRecipes = tabRecipes.filter(r => r.subcategory === sub.name)
+              const isLastSub = si === (activeCatObj.subcategories || []).length - 1
+              return (
+                <div key={sub.name} style={{ marginBottom: isLastSub ? 0 : 36 }}>
+                  {/* Subcategory header */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: activePalette.dot, opacity: 0.6, flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)' }}>{sub.name}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', opacity: 0.7 }}>{subRecipes.length}</span>
+                    <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                    <button onClick={() => openNew(activeCatObj.name, sub.name)}
+                      style={{ fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 8, border: `1px solid ${activePalette.border}`, background: activePalette.bg, color: activePalette.text, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+                      + Add
+                    </button>
                   </div>
 
-                  {/* Subcategory sections — accordion body */}
-                  {isExpanded && (
-                    <div style={{ borderTop: `1px solid ${p.border}` }}>
-                      {(cat.subcategories || []).length === 0 ? (
-                        <div style={{ padding: '16px', fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                          No subcategories. Add one via ⚙️ Categories.
-                        </div>
-                      ) : (
-                        (cat.subcategories || []).map((sub, si) => {
-                          const subRecipes = catRecipes.filter(r => r.subcategory === sub.name)
-                          const isLast = si === (cat.subcategories || []).length - 1
+                  {/* Recipe gallery cards */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
+                    {subRecipes.length === 0 && (
+                      <div onClick={() => openNew(activeCatObj.name, sub.name)}
+                        style={{ border: '1px dashed var(--border)', borderRadius: 14, minHeight: 120, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', transition: 'all .15s' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = activePalette.bg; e.currentTarget.style.color = activePalette.text; e.currentTarget.style.borderColor = activePalette.dot }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
+                        <span style={{ fontSize: 20 }}>+</span>
+                        <span>Add first recipe</span>
+                      </div>
+                    )}
+                    {subRecipes.map(r => (
+                      <div key={r.id} onClick={() => setViewRecipe(r)}
+                        style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', transition: 'box-shadow .15s, border-color .15s' }}
+                        onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,.1)'; e.currentTarget.style.borderColor = activePalette.border }}
+                        onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = 'var(--border)' }}>
 
-                          return (
-                            <div key={sub.name} style={{ borderBottom: isLast ? 'none' : `1px solid ${p.border}` }}>
-                              {/* Subcategory header */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', background: 'var(--surface)' }}>
-                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: p.dot, opacity: 0.5, flexShrink: 0 }} />
-                                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-muted)', textTransform: 'uppercase', flex: 1 }}>{sub.name}</span>
-                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{subRecipes.length}</span>
-                              </div>
+                        {/* Color top strip */}
+                        <div style={{ height: 3, background: activePalette.dot }} />
 
-                              {/* Recipe cards in this subcategory */}
-                              <div style={{ padding: '8px 12px' }}>
-                                {subRecipes.length === 0 && (
-                                  <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic', padding: '4px 4px 8px' }}>No recipes yet.</div>
-                                )}
-                                {subRecipes.map(r => (
-                                  <div key={r.id}
-                                    onClick={e => { e.stopPropagation(); setViewRecipe(r) }}
-                                    style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', marginBottom: 8, cursor: 'pointer', transition: 'border-color .15s, box-shadow .15s' }}
-                                    onMouseEnter={e => { e.currentTarget.style.borderColor = p.dot; e.currentTarget.style.boxShadow = '0 2px 10px rgba(0,0,0,.07)' }}
-                                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none' }}>
-
-                                    {/* Tags */}
-                                    {(r.junior_visible || !r.is_active) && (
-                                      <div style={{ display: 'flex', gap: 5, marginBottom: 7, flexWrap: 'wrap' }}>
-                                        {r.junior_visible && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#d1fae5', color: '#065f46', letterSpacing: 0.3 }}>Junior ✓</span>}
-                                        {!r.is_active && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#fee2e2', color: '#991b1b', letterSpacing: 0.3 }}>Inactive</span>}
-                                      </div>
-                                    )}
-
-                                    {/* Name */}
-                                    <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.35, marginBottom: r.description ? 5 : 8 }}>{r.name}</div>
-
-                                    {/* Description */}
-                                    {r.description && (
-                                      <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 8 }}>
-                                        {r.description.length > 70 ? r.description.slice(0, 70) + '…' : r.description}
-                                      </div>
-                                    )}
-
-                                    {/* Meta */}
-                                    <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-                                      {r.serving_size && <span>🍽 {r.serving_size}</span>}
-                                      {r.prep_time && <span>⏱ {r.prep_time}</span>}
-                                      {Array.isArray(r.ingredients) && r.ingredients.length > 0 && <span>🧂 {r.ingredients.length}</span>}
-                                      {Array.isArray(r.steps) && r.steps.length > 0 && <span>📋 {r.steps.length} steps</span>}
-                                    </div>
-                                  </div>
-                                ))}
-
-                                {/* Ghost add card */}
-                                <div
-                                  onClick={e => { e.stopPropagation(); openNew(cat.name, sub.name) }}
-                                  style={{ border: '1px dashed var(--border)', borderRadius: 12, padding: '9px 14px', display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', marginBottom: 4, transition: 'background .15s, color .15s' }}
-                                  onMouseEnter={e => { e.currentTarget.style.background = p.bg; e.currentTarget.style.color = p.text }}
-                                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}>
-                                  <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add recipe
-                                </div>
-                              </div>
+                        <div style={{ padding: '14px 16px' }}>
+                          {/* Tags */}
+                          {(r.junior_visible || !r.is_active) && (
+                            <div style={{ display: 'flex', gap: 5, marginBottom: 8, flexWrap: 'wrap' }}>
+                              {r.junior_visible && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#d1fae5', color: '#065f46' }}>Junior ✓</span>}
+                              {!r.is_active && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#fee2e2', color: '#991b1b' }}>Inactive</span>}
                             </div>
-                          )
-                        })
-                      )}
-                    </div>
-                  )}
+                          )}
 
-                  {/* Collapsed state: show subcategory pills */}
-                  {!isExpanded && (cat.subcategories || []).length > 0 && (
-                    <div style={{ padding: '0 16px 14px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {(cat.subcategories || []).map(sub => {
-                        const count = recipes.filter(r => r.category === cat.name && r.subcategory === sub.name).length
-                        return (
-                          <span key={sub.name} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: p.bg, color: p.text, border: `1px solid ${p.border}` }}>
-                            {sub.name} {count > 0 ? `·${count}` : ''}
-                          </span>
-                        )
-                      })}
-                    </div>
-                  )}
+                          {/* Name */}
+                          <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.35, marginBottom: 6 }}>{r.name}</div>
+
+                          {/* Description */}
+                          {r.description && (
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 10 }}>
+                              {r.description.length > 75 ? r.description.slice(0, 75) + '…' : r.description}
+                            </div>
+                          )}
+
+                          {/* Meta row */}
+                          <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+                            {r.serving_size && <span>🍽 {r.serving_size}</span>}
+                            {r.prep_time && <span>⏱ {r.prep_time}</span>}
+                            {Array.isArray(r.ingredients) && r.ingredients.length > 0 && <span>🧂 {r.ingredients.length}</span>}
+                            {Array.isArray(r.steps) && r.steps.length > 0 && <span>📋 {r.steps.length} steps</span>}
+                          </div>
+                        </div>
+
+                        {/* Edit footer */}
+                        <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', background: activePalette.bg }}>
+                          <button onClick={e => { e.stopPropagation(); openEdit(r) }}
+                            style={{ fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 7, border: `1px solid ${activePalette.border}`, background: 'transparent', color: activePalette.text, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+                            Edit
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Ghost add card at end (when there are already recipes) */}
+                    {subRecipes.length > 0 && (
+                      <div onClick={() => openNew(activeCatObj.name, sub.name)}
+                        style={{ border: '1px dashed var(--border)', borderRadius: 14, minHeight: 120, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', transition: 'all .15s' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = activePalette.bg; e.currentTarget.style.color = activePalette.text; e.currentTarget.style.borderColor = activePalette.dot }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
+                        <span style={{ fontSize: 20 }}>+</span>
+                        <span>Add recipe</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )
             })}
