@@ -65,9 +65,81 @@ function getPalette(categories, catName) {
   return found ? PALETTE[found.colorIdx % PALETTE.length] : PALETTE[3]
 }
 
-function IngredientRow({ ing, onChange, onRemove }) {
+// ─── Catalog-linked ingredient / packaging row ────────────────────────────────
+function IngredientRow({ ing, onChange, onRemove, catalogItems }) {
+  const [showPicker, setShowPicker] = useState(false)
+  const [pickerSearch, setPickerSearch] = useState('')
+
+  const linked = catalogItems.find(c => c.id === ing.catalog_id)
+
+  function pickCatalogItem(item) {
+    onChange({
+      ...ing,
+      catalog_id: item.id,
+      name: item.name,
+      unit: item.unit,
+      brand: item.preferred_store || ing.brand || '',
+      variant: item.notes || ing.variant || '',
+    })
+    setShowPicker(false)
+    setPickerSearch('')
+  }
+
+  function clearCatalogLink() {
+    onChange({ ...ing, catalog_id: null })
+  }
+
+  const filteredCatalog = catalogItems.filter(c =>
+    c.is_active && c.name.toLowerCase().includes(pickerSearch.toLowerCase())
+  )
+
   return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+    <div style={{ background: 'var(--surface)', border: `1px solid ${ing.catalog_id ? '#a7f3d0' : 'var(--border)'}`, borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+      {/* Catalog link indicator */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        {ing.catalog_id ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#d1fae5', color: '#065f46' }}>
+              📦 Linked to Catalog
+            </span>
+            {linked && <span style={{ fontSize: 11, color: '#065f46' }}>{linked.name} · ₱{Number(linked.avg_price || 0).toFixed(2)}/{linked.unit}</span>}
+            <button onClick={clearCatalogLink} style={{ fontSize: 10, color: '#9ca3af', background: 'transparent', border: 'none', cursor: 'pointer', marginLeft: 'auto' }}>✕ Unlink</button>
+          </div>
+        ) : (
+          <button onClick={() => setShowPicker(p => !p)} style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 8, border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+            📦 Link to Catalog
+          </button>
+        )}
+      </div>
+
+      {/* Catalog picker dropdown */}
+      {showPicker && (
+        <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 10, overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,.1)' }}>
+          <input
+            autoFocus
+            style={{ ...iStyle, borderRadius: 0, borderBottom: '1px solid var(--border)', fontSize: 12 }}
+            placeholder="Search catalog…"
+            value={pickerSearch}
+            onChange={e => setPickerSearch(e.target.value)}
+          />
+          <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+            {filteredCatalog.length === 0 && <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>No items found</div>}
+            {filteredCatalog.map(item => (
+              <div key={item.id} onClick={() => pickCatalogItem(item)}
+                style={{ padding: '9px 14px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                <div>
+                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.name}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>{item.category}</span>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 600, color: '#065f46' }}>₱{Number(item.avg_price || 0).toFixed(2)}/{item.unit}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Row 1: name, qty, unit, remove */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 28px', gap: 8, alignItems: 'center', marginBottom: 8 }}>
         <input style={{ ...iStyle, background: 'var(--white)' }} placeholder="Ingredient name" value={ing.name} onChange={e => onChange({ ...ing, name: e.target.value })} />
@@ -270,6 +342,7 @@ export default function RecipesPage() {
   const supabase = createClient()
   const [categories, setCategories] = useState([])
   const [recipes, setRecipes] = useState([])
+  const [catalogItems, setCatalogItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState(null)
   const showToast = (msg, type = 'success') => setToast({ msg, type })
@@ -313,7 +386,10 @@ export default function RecipesPage() {
     async function init() {
       setLoading(true)
       await loadCategories()
-      await loadRecipes()
+      await Promise.all([
+        loadRecipes(),
+        supabase.from('inventory_catalog').select('id,name,unit,avg_price,category,preferred_store,notes').eq('is_active', true).order('category').order('name').then(({ data }) => setCatalogItems(data || [])),
+      ])
       setLoading(false)
     }
     init()
@@ -769,7 +845,7 @@ export default function RecipesPage() {
                 </div>
                 {form.ingredients.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 0' }}>No ingredients yet.</div>}
                 {form.ingredients.map((ing, i) => (
-                  <IngredientRow key={i} ing={ing} onChange={val => updateIngredient(i, val)} onRemove={() => removeIngredient(i)} />
+                  <IngredientRow key={i} ing={ing} onChange={val => updateIngredient(i, val)} onRemove={() => removeIngredient(i)} catalogItems={catalogItems} />
                 ))}
               </div>
 
@@ -781,7 +857,7 @@ export default function RecipesPage() {
                 </div>
                 {(form.packaging || []).length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 0' }}>No packaging yet. e.g. 12oz Cup, Lid, Straw</div>}
                 {(form.packaging || []).map((pkg, i) => (
-                  <IngredientRow key={i} ing={pkg} onChange={val => updatePackaging(i, val)} onRemove={() => removePackaging(i)} />
+                  <IngredientRow key={i} ing={pkg} onChange={val => updatePackaging(i, val)} onRemove={() => removePackaging(i)} catalogItems={catalogItems} />
                 ))}
               </div>
 
