@@ -9,7 +9,8 @@ const UNITS = ['pcs','kg','g','bottle','sleeve','pack','roll','box','bag','liter
 
 const blank = () => ({
   name: '', sku: '', category: 'Other', unit: 'pcs',
-  avg_price: '', preferred_store: '', notes: '', is_active: true,
+  cost_per_item: '', net_volume: '', avg_price: '',
+  preferred_store: '', notes: '', is_active: true,
 })
 
 function Toast({ msg, type, onClose }) {
@@ -64,9 +65,49 @@ function ItemForm({ initial, onSave, onCancel, saving }) {
             {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
           </select>
         </div>
-        <div>
-          <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#6b7280', marginBottom:4 }}>Unit Cost / Avg Price (₱) *</label>
-          <input style={iStyle} type="number" value={form.avg_price} onChange={e => set('avg_price', e.target.value)} placeholder="0.00" />
+      </div>
+
+      {/* Cost calculation row */}
+      <div style={{ background:'#f9fafb', border:'1px solid #e5e7eb', borderRadius:10, padding:'14px 16px', marginBottom:12 }}>
+        <div style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:'#9ca3af', marginBottom:10 }}>Unit Cost Calculation</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr auto 1fr', gap:10, alignItems:'center' }}>
+          <div>
+            <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#6b7280', marginBottom:4 }}>Cost per Item (₱)</label>
+            <input style={iStyle} type="number" min="0" step="0.01"
+              value={form.cost_per_item}
+              onChange={e => {
+                const cost = e.target.value
+                const vol = parseFloat(form.net_volume) || 0
+                const unitCost = vol > 0 && cost ? (parseFloat(cost) / vol).toFixed(4) : ''
+                set('cost_per_item', cost)
+                set('avg_price', unitCost)
+              }}
+              placeholder="e.g. 500.00" />
+            <div style={{ fontSize:10, color:'#9ca3af', marginTop:3 }}>Price you pay per bottle/pack/bag</div>
+          </div>
+          <div style={{ fontSize:18, color:'#d1d5db', fontWeight:300, paddingTop:14 }}>÷</div>
+          <div>
+            <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#6b7280', marginBottom:4 }}>Net Volume per Item</label>
+            <input style={iStyle} type="number" min="0" step="any"
+              value={form.net_volume}
+              onChange={e => {
+                const vol = e.target.value
+                const cost = parseFloat(form.cost_per_item) || 0
+                const unitCost = vol && cost ? (cost / parseFloat(vol)).toFixed(4) : ''
+                set('net_volume', vol)
+                set('avg_price', unitCost)
+              }}
+              placeholder="e.g. 100" />
+            <div style={{ fontSize:10, color:'#9ca3af', marginTop:3 }}>Total {form.unit} in that item</div>
+          </div>
+          <div style={{ fontSize:18, color:'#d1d5db', fontWeight:300, paddingTop:14 }}>=</div>
+          <div>
+            <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#6b7280', marginBottom:4 }}>Cost per {form.unit} (₱)</label>
+            <div style={{ padding:'8px 12px', background: form.avg_price ? '#d1fae5' : '#f3f4f6', border:`1px solid ${form.avg_price ? '#a7f3d0' : '#e5e7eb'}`, borderRadius:8, fontSize:15, fontWeight:700, color: form.avg_price ? '#065f46' : '#9ca3af', minHeight:38, display:'flex', alignItems:'center' }}>
+              {form.avg_price ? `₱${parseFloat(form.avg_price).toFixed(4)}` : '—'}
+            </div>
+            <div style={{ fontSize:10, color:'#9ca3af', marginTop:3 }}>Auto-calculated · used by COGS</div>
+          </div>
         </div>
       </div>
 
@@ -139,6 +180,8 @@ export default function CatalogPage() {
     const { error } = await sb.from('inventory_catalog').insert({
       ...form,
       avg_price: form.avg_price ? parseFloat(form.avg_price) : null,
+      cost_per_item: form.cost_per_item ? parseFloat(form.cost_per_item) : null,
+      net_volume: form.net_volume ? parseFloat(form.net_volume) : null,
       updated_at: new Date().toISOString(),
     })
     if (error) { showToast(error.message, 'error') }
@@ -152,6 +195,8 @@ export default function CatalogPage() {
     const { error } = await sb.from('inventory_catalog').update({
       ...form,
       avg_price: form.avg_price ? parseFloat(form.avg_price) : null,
+      cost_per_item: form.cost_per_item ? parseFloat(form.cost_per_item) : null,
+      net_volume: form.net_volume ? parseFloat(form.net_volume) : null,
       updated_at: new Date().toISOString(),
     }).eq('id', editId)
     if (error) { showToast(error.message, 'error') }
@@ -256,7 +301,7 @@ export default function CatalogPage() {
                     <div key={item.id}>
                       {editId === item.id ? (
                         <div style={{ padding:16 }}>
-                          <ItemForm initial={{ ...item, avg_price: item.avg_price?.toString() ?? '' }} onSave={handleEdit} onCancel={() => setEditId(null)} saving={saving} />
+                          <ItemForm initial={{ ...item, avg_price: item.avg_price?.toString() ?? '', cost_per_item: item.cost_per_item?.toString() ?? '', net_volume: item.net_volume?.toString() ?? '' }} onSave={handleEdit} onCancel={() => setEditId(null)} saving={saving} />
                         </div>
                       ) : (
                         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', borderBottom: idx < catItems.length - 1 ? '1px solid #f3f4f6' : 'none', opacity: item.is_active ? 1 : 0.5 }}>
@@ -275,7 +320,14 @@ export default function CatalogPage() {
                             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
                               <span style={{ fontSize:11, color:'#6b7280' }}>Unit: <strong>{item.unit}</strong></span>
                               {item.avg_price != null ? (
-                                <span style={{ fontSize:11, color:'#065f46', fontWeight:600 }}>₱{Number(item.avg_price).toLocaleString('en-PH', { minimumFractionDigits:2 })} / {item.unit}</span>
+                                <span style={{ fontSize:11, color:'#065f46', fontWeight:600 }}>
+                                  ₱{Number(item.avg_price).toLocaleString('en-PH', { minimumFractionDigits:4, maximumFractionDigits:4 })} / {item.unit}
+                                  {item.cost_per_item && item.net_volume && (
+                                    <span style={{ fontWeight:400, color:'#9ca3af', marginLeft:6 }}>
+                                      (₱{Number(item.cost_per_item).toFixed(2)} ÷ {item.net_volume} {item.unit})
+                                    </span>
+                                  )}
+                                </span>
                               ) : (
                                 <span style={{ fontSize:11, color:'#d97706', fontWeight:600 }}>⚠️ No unit cost</span>
                               )}
