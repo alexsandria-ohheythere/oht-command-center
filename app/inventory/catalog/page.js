@@ -65,7 +65,7 @@ function ItemForm({ initial, onSave, onCancel, saving }) {
           </select>
         </div>
         <div>
-          <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#6b7280', marginBottom:4 }}>Avg price (₱)</label>
+          <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#6b7280', marginBottom:4 }}>Unit Cost / Avg Price (₱) *</label>
           <input style={iStyle} type="number" value={form.avg_price} onChange={e => set('avg_price', e.target.value)} placeholder="0.00" />
         </div>
       </div>
@@ -99,6 +99,7 @@ function ItemForm({ initial, onSave, onCancel, saving }) {
 
 export default function CatalogPage() {
   const [items, setItems]         = useState([])
+  const [recipeCounts, setRecipeCounts] = useState({}) // catalog_id → recipe count
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [showAdd, setShowAdd]     = useState(false)
@@ -110,8 +111,23 @@ export default function CatalogPage() {
 
   const load = useCallback(async () => {
     const sb = createClient()
-    const { data, error } = await sb.from('inventory_catalog').select('*').order('category').order('name')
-    if (!error) setItems(data ?? [])
+    const [{ data: catalogData }, { data: recipeData }] = await Promise.all([
+      sb.from('inventory_catalog').select('*').order('category').order('name'),
+      sb.from('recipes').select('ingredients, packaging').eq('is_active', true),
+    ])
+    setItems(catalogData ?? [])
+
+    // Count how many recipes each catalog item appears in
+    const counts = {}
+    for (const recipe of (recipeData || [])) {
+      const allRows = [...(recipe.ingredients || []), ...(recipe.packaging || [])]
+      for (const row of allRows) {
+        if (row.catalog_id) {
+          counts[row.catalog_id] = (counts[row.catalog_id] || 0) + 1
+        }
+      }
+    }
+    setRecipeCounts(counts)
     setLoading(false)
   }, [])
 
@@ -171,7 +187,7 @@ export default function CatalogPage() {
       <div className="topbar">
         <div>
           <div className="topbar-title">Inventory Catalog</div>
-          <div className="topbar-sub">Manage items, suppliers, and pricing for purchase requests</div>
+          <div className="topbar-sub">Single source of truth for Recipes and COGS. Set unit cost here.</div>
         </div>
         <button onClick={() => { setShowAdd(true); setEditId(null) }}
           style={{ background:'#EF4576', color:'white', border:'none', borderRadius:8, padding:'8px 16px', fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:"'DM Sans',sans-serif" }}>
@@ -180,14 +196,15 @@ export default function CatalogPage() {
       </div>
 
       <div style={{ flex:1, overflowY:'auto', padding:'24px' }}>
-        <div style={{ maxWidth:900 }}>
+        <div style={{ maxWidth:960 }}>
 
           {/* Stats */}
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:24 }}>
             {[
-              { label:'Total items',  value: items.length,                           color:'#111'    },
-              { label:'Active',       value: items.filter(i => i.is_active).length,  color:'#16a34a' },
-              { label:'Inactive',     value: items.filter(i => !i.is_active).length, color:'#9ca3af' },
+              { label:'Total items',     value: items.length,                                    color:'#111'    },
+              { label:'Active',          value: items.filter(i => i.is_active).length,           color:'#16a34a' },
+              { label:'Used in recipes', value: Object.keys(recipeCounts).length,                color:'#ef4576' },
+              { label:'No unit cost',    value: items.filter(i => !i.avg_price).length,          color:'#d97706' },
             ].map(s => (
               <div key={s.label} style={{ background:'white', border:'1px solid #e5e7eb', borderRadius:12, padding:16 }}>
                 <p style={{ fontSize:11, color:'#6b7280', margin:0 }}>{s.label}</p>
@@ -244,14 +261,24 @@ export default function CatalogPage() {
                       ) : (
                         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', borderBottom: idx < catItems.length - 1 ? '1px solid #f3f4f6' : 'none', opacity: item.is_active ? 1 : 0.5 }}>
                           <div style={{ flex:1, minWidth:0 }}>
-                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
                               <span style={{ fontSize:13, fontWeight:600, color:'#1f2937' }}>{item.name}</span>
                               {item.sku && <span style={{ fontSize:10, fontFamily:'monospace', color:'#9ca3af', background:'#f3f4f6', padding:'1px 6px', borderRadius:4 }}>{item.sku}</span>}
                               {!item.is_active && <span style={{ fontSize:10, fontWeight:600, color:'#9ca3af', background:'#f3f4f6', padding:'1px 8px', borderRadius:20 }}>Inactive</span>}
+                              {/* Recipe usage badge */}
+                              {recipeCounts[item.id] ? (
+                                <span style={{ fontSize:10, fontWeight:600, padding:'1px 8px', borderRadius:20, background:'#fdf2f5', color:'#ef4576', border:'1px solid #fbcfe8' }}>
+                                  📒 {recipeCounts[item.id]} recipe{recipeCounts[item.id] !== 1 ? 's' : ''}
+                                </span>
+                              ) : null}
                             </div>
                             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
                               <span style={{ fontSize:11, color:'#6b7280' }}>Unit: <strong>{item.unit}</strong></span>
-                              {item.avg_price != null && <span style={{ fontSize:11, color:'#6b7280' }}>Avg: <strong>₱ {Number(item.avg_price).toLocaleString('en-PH', { minimumFractionDigits:2 })}</strong></span>}
+                              {item.avg_price != null ? (
+                                <span style={{ fontSize:11, color:'#065f46', fontWeight:600 }}>₱{Number(item.avg_price).toLocaleString('en-PH', { minimumFractionDigits:2 })} / {item.unit}</span>
+                              ) : (
+                                <span style={{ fontSize:11, color:'#d97706', fontWeight:600 }}>⚠️ No unit cost</span>
+                              )}
                               {item.preferred_store && <span style={{ fontSize:11, color:'#6b7280' }}>Store: <strong>{item.preferred_store}</strong></span>}
                               {item.notes && <span style={{ fontSize:11, color:'#9ca3af', fontStyle:'italic' }}>{item.notes}</span>}
                             </div>
@@ -261,20 +288,20 @@ export default function CatalogPage() {
                               style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color:'#374151' }}>
                               Edit
                             </button>
-                           <button onClick={() => toggleActive(item)}
-  style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color: item.is_active ? '#9ca3af' : '#16a34a' }}>
-  {item.is_active ? 'Deactivate' : 'Reactivate'}
-</button>
-<button onClick={async () => {
-  if (!confirm(`Delete "${item.name}"? This cannot be undone.`)) return
-  const sb = createClient()
-  await sb.from('inventory_catalog').delete().eq('id', item.id)
-  showToast('Item deleted')
-  load()
-}}
-  style={{ padding:'5px 12px', fontSize:11, border:'1px solid #fca5a5', borderRadius:8, background:'white', cursor:'pointer', color:'#dc2626' }}>
-  Delete
-</button>
+                            <button onClick={() => toggleActive(item)}
+                              style={{ padding:'5px 12px', fontSize:11, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer', color: item.is_active ? '#9ca3af' : '#16a34a' }}>
+                              {item.is_active ? 'Deactivate' : 'Reactivate'}
+                            </button>
+                            <button onClick={async () => {
+                              if (!confirm(`Delete "${item.name}"? This cannot be undone.`)) return
+                              const sb = createClient()
+                              await sb.from('inventory_catalog').delete().eq('id', item.id)
+                              showToast('Item deleted')
+                              load()
+                            }}
+                              style={{ padding:'5px 12px', fontSize:11, border:'1px solid #fca5a5', borderRadius:8, background:'white', cursor:'pointer', color:'#dc2626' }}>
+                              Delete
+                            </button>
                           </div>
                         </div>
                       )}
