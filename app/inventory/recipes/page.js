@@ -335,7 +335,7 @@ function CategoryManager({ categories, onSave, onClose, saving }) {
 const blankRecipe = (cat, sub) => ({
   name: '', category: cat || '', subcategory: sub || '', description: '',
   serving_size: '', prep_time: '', junior_visible: false, is_active: true,
-  ingredients: [], packaging: [], assigned_roles: [], steps: [],
+  photo_url: '', ingredients: [], packaging: [], assigned_roles: [], steps: [],
 })
 
 export default function RecipesPage() {
@@ -359,6 +359,7 @@ export default function RecipesPage() {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
 
   const [viewRecipe, setViewRecipe] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -431,6 +432,7 @@ export default function RecipesPage() {
       prep_time: r.prep_time || '',
       junior_visible: r.junior_visible || false,
       is_active: r.is_active !== false,
+      photo_url: r.photo_url || '',
       ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
       packaging: Array.isArray(r.packaging) ? r.packaging : [],
       assigned_roles: Array.isArray(r.assigned_roles) ? r.assigned_roles : [],
@@ -472,6 +474,7 @@ export default function RecipesPage() {
       prep_time: form.prep_time.trim(),
       junior_visible: form.junior_visible,
       is_active: form.is_active,
+      photo_url: form.photo_url || '',
       ingredients: form.ingredients.filter(i => i.name.trim()),
       packaging: (form.packaging || []).filter(i => i.name.trim()),
       assigned_roles: form.assigned_roles || [],
@@ -488,6 +491,19 @@ export default function RecipesPage() {
     showToast(editing ? 'Recipe updated!' : 'Recipe added!')
     setShowForm(false)
     loadRecipes()
+  }
+
+  async function handlePhotoUpload(file) {
+    if (!file) return
+    setUploadingPhoto(true)
+    const ext = file.name.split('.').pop()
+    const path = `recipes/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+    const { error: uploadError } = await supabase.storage.from('recipe-photos').upload(path, file, { upsert: true })
+    if (uploadError) { showToast('Upload failed: ' + uploadError.message, 'error'); setUploadingPhoto(false); return }
+    const { data } = supabase.storage.from('recipe-photos').getPublicUrl(path)
+    setF('photo_url', data.publicUrl)
+    setUploadingPhoto(false)
+    showToast('Photo uploaded!')
   }
 
   async function handleDelete(id) {
@@ -644,8 +660,14 @@ export default function RecipesPage() {
                         onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,.1)'; e.currentTarget.style.borderColor = activePalette.border }}
                         onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = 'var(--border)' }}>
 
-                        {/* Color top strip */}
-                        <div style={{ height: 3, background: activePalette.dot }} />
+                        {/* Photo or color strip */}
+                        {r.photo_url ? (
+                          <div style={{ height: 140, overflow: 'hidden' }}>
+                            <img src={r.photo_url} alt={r.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                          </div>
+                        ) : (
+                          <div style={{ height: 3, background: activePalette.dot }} />
+                        )}
 
                         <div style={{ padding: '14px 16px' }}>
                           {/* Tags */}
@@ -713,6 +735,11 @@ export default function RecipesPage() {
             const p = getPalette(categories, viewRecipe.category)
             return (
               <div>
+                {viewRecipe.photo_url && (
+                  <div style={{ borderRadius: 12, overflow: 'hidden', marginBottom: 18, maxHeight: 260 }}>
+                    <img src={viewRecipe.photo_url} alt={viewRecipe.name} style={{ width: '100%', height: 260, objectFit: 'cover', display: 'block' }} />
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: p.bg, color: p.text }}>{viewRecipe.category}</span>
                   {viewRecipe.subcategory && (
@@ -806,6 +833,34 @@ export default function RecipesPage() {
               <div>
                 <label style={lStyle}>Recipe Name *</label>
                 <input style={iStyle} value={form.name} onChange={e => setF('name', e.target.value)} placeholder="e.g. Iced Matcha Latte" />
+              </div>
+
+              {/* Photo upload */}
+              <div>
+                <label style={lStyle}>Recipe Photo</label>
+                <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                  {/* Preview */}
+                  <div style={{ width: 100, height: 100, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {form.photo_url ? (
+                      <img src={form.photo_url} alt="Recipe" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <span style={{ fontSize: 28 }}>🍽</span>
+                    )}
+                  </div>
+                  {/* Upload controls */}
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 16px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', cursor: uploadingPhoto ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: "'DM Sans',sans-serif", opacity: uploadingPhoto ? 0.6 : 1 }}>
+                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handlePhotoUpload(e.target.files[0])} disabled={uploadingPhoto} />
+                      {uploadingPhoto ? '⏳ Uploading…' : '📷 Upload Photo'}
+                    </label>
+                    {form.photo_url && (
+                      <button onClick={() => setF('photo_url', '')} style={{ display: 'block', marginTop: 8, fontSize: 11, color: '#dc2626', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", padding: 0 }}>
+                        ✕ Remove photo
+                      </button>
+                    )}
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>JPG, PNG or WEBP. Recommended 800×800px.</div>
+                  </div>
+                </div>
               </div>
 
               {/* Category + Subcategory */}
