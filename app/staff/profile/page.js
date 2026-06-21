@@ -1,398 +1,268 @@
 'use client'
-export const dynamic = 'force-dynamic'
-// ─────────────────────────────────────────────
-// OHT Admin — Staff Profile
-// Place at: app/staff/profile/page.js
-// ─────────────────────────────────────────────
-import { useState, useEffect } from 'react'
-import AuthShell from '../../../components/AuthShell'
-import { createClient } from '../../../lib/supabase'
-import { getDailyRate } from '../../../lib/payroll'
 
-const ROLE_COLORS = {
-  'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4',
-  'Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843',
-  'Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b',
-  'Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e',
+const HR_EMAIL = 'hr.ohtgroup@gmail.com'
+import { useState, useEffect, useRef } from 'react'
+import AuthShell from '../../components/AuthShell'
+import { createClient } from '../../lib/supabase'
+import { notifyOne } from '../../lib/notify'
+
+// Read ?staff=id from URL to pre-filter to a specific employee
+function getStaffParam() {
+  if (typeof window === 'undefined') return ''
+  return new URLSearchParams(window.location.search).get('staff') || ''
 }
+
+const CATEGORIES = ['All','Contract','NDA','Government Forms','Performance Reviews','Training Materials','Incident Report','General']
+const CAT_COLORS = {'Contract':'#4a7a1e','NDA':'#c0392b','Government Forms':'#2d5a8a','Performance Reviews':'#8e44ad','Training Materials':'#a06000','General':'#7a6a50','Incident Report':'#c0392b'}
+const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
-const fmtDate = d => d ? new Date(d).toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'}) : '—'
-const fmtPeso = n => n != null ? `₱ ${Number(n).toLocaleString('en-PH',{minimumFractionDigits:2})}` : '—'
+const fmtDate = d => d ? new Date(d).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—'
+const fmtSize = b => b ? (b>1024*1024?`${(b/1024/1024).toFixed(1)}MB`:`${(b/1024).toFixed(0)}KB`) : '—'
+const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none'}
+const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
 
-function Section({ title, children }) {
-  return (
-    <div style={{ background:'var(--white)', border:'1px solid var(--border)', borderRadius:13, overflow:'hidden', marginBottom:16 }}>
-      <div style={{ padding:'12px 18px', borderBottom:'1px solid var(--border)', background:'var(--surface)' }}>
-        <p style={{ fontSize:11, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', color:'var(--text-muted)', margin:0 }}>{title}</p>
-      </div>
-      <div style={{ padding:'16px 18px' }}>{children}</div>
-    </div>
-  )
-}
+export default function FilesPage() {
+  const supabase = createClient()
+  const [files, setFiles]       = useState([])
+  const [staff, setStaff]       = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [saving, setSaving]     = useState(false)
+  const [catFilter, setCatFilter] = useState('All')
+  const [staffFilter, setStaffFilter] = useState(getStaffParam)
+  const [search, setSearch]     = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [selectedStaff, setSelectedStaff] = useState(null)
+  const [toast, setToast]       = useState(null)
+  const [userEmail, setUserEmail] = useState(null)
+  const [form, setForm] = useState({ staff_id:'', file_name:'', file_url:'', category:'General', description:'', can_download:true, can_upload:false })
+  const fileRef = useRef()
 
-function Field({ label, value }) {
-  return (
-    <div style={{ marginBottom:12 }}>
-      <p style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:'var(--text-muted)', margin:'0 0 3px' }}>{label}</p>
-      <p style={{ fontSize:13, color:'var(--text-primary)', margin:0, fontWeight:500 }}>{value || '—'}</p>
-    </div>
-  )
-}
+  useEffect(() => { fetchAll() }, [])
 
-function Grid({ children, cols=2 }) {
-  return (
-    <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols},1fr)`, gap:'0 24px' }}>
-      {children}
-    </div>
-  )
-}
-
-export default function StaffProfilePage() {
-  const [id, setId]               = useState(null)
-  const [staff, setStaff]         = useState(null)
-  const [contracts, setContracts] = useState([])
-  const [files, setFiles]         = useState([])
-  const [payroll, setPayroll]     = useState([])
-  const [schedules, setSchedules] = useState([])
-  const [rateOverrides, setRateOverrides] = useState(null)
-  const [loading, setLoading]     = useState(true)
-  const [activeTab, setActiveTab] = useState('overview')
-
-  useEffect(() => {
-    // Get id from query string
-    const params = new URLSearchParams(window.location.search)
-    const staffId = params.get('id')
-    setId(staffId)
-    if (staffId) fetchAll(staffId)
-    else setLoading(false)
-  }, [])
-
-  async function fetchAll(staffId) {
-    const supabase = createClient()
-    try {
-      const [
-        { data: s },
-        { data: c },
-        { data: f },
-        { data: p },
-        { data: sc },
-      ] = await Promise.all([
-        supabase.from('staff').select('*').eq('id', staffId).single(),
-        supabase.from('contracts').select('*').eq('staff_id', staffId).order('created_at', { ascending:false }),
-        supabase.from('staff_files').select('*').eq('staff_id', staffId).order('created_at', { ascending:false }),
-        supabase.from('payroll_runs').select('*').eq('staff_id', staffId).order('created_at', { ascending:false }).limit(12),
-        supabase.from('schedules').select('*').eq('staff_id', staffId).order('shift_date', { ascending:false }).limit(30),
-      ])
-      setStaff(s)
-      setContracts(c || [])
-      setFiles(f || [])
-      setPayroll(p || [])
-      setSchedules(sc || [])
-
-      // Load saved rate overrides from settings
-      const { data: rateRow } = await supabase.from('settings').select('value').eq('key', 'payroll_rates').single()
-      if (rateRow?.value) { try { setRateOverrides(JSON.parse(rateRow.value)) } catch(e) {} }
-    } catch(e) { console.error(e) }
-    setLoading(false)
+  async function fetchAll() {
+    setLoading(true)
+    const { data: { session } } = await supabase.auth.getSession()
+    setUserEmail(session?.user?.email?.toLowerCase() || '')
+    const [{ data:f },{ data:s }] = await Promise.all([
+      supabase.from('staff_files').select('*, staff(first_name,last_name,nickname,role)').order('created_at',{ascending:false}),
+      supabase.from('staff').select('*').order('last_name'),
+    ])
+    setFiles(f||[]); setStaff(s||[]); setLoading(false)
   }
 
-  const TABS = ['overview','personal','payroll','contracts','files','schedule']
+  function showToast(icon,msg){setToast({icon,msg});setTimeout(()=>setToast(null),3500)}
+  const fv = k => e => setForm(p=>({...p,[k]:typeof e==='boolean'?e:e.target.value}))
 
-  if (loading) return (
-    <AuthShell>
-      <div style={{ padding:40, textAlign:'center', color:'var(--text-muted)' }}>Loading…</div>
-    </AuthShell>
-  )
+  async function uploadFile(e) {
+    const file = e.target.files[0]; if(!file) return
+    setSaving(true)
+    // Upload to Supabase Storage
+    const path = `${form.staff_id||'general'}/${Date.now()}_${file.name}`
+    const { data: uploadData, error: uploadError } = await supabase.storage.from('staff-files').upload(path, file)
+    if (uploadError) { showToast('❌',uploadError.message); setSaving(false); return }
+    const { data: { publicUrl } } = supabase.storage.from('staff-files').getPublicUrl(path)
+    setForm(p=>({...p, file_name:file.name, file_url:publicUrl, file_size:file.size, file_type:file.type, storage_path:path}))
+    showToast('✅','File uploaded — fill in details and save')
+    setSaving(false)
+    e.target.value=''
+  }
 
-  if (!staff) return (
-    <AuthShell>
-      <div style={{ padding:40, textAlign:'center', color:'var(--text-muted)' }}>Staff member not found.</div>
-    </AuthShell>
-  )
+  async function saveFile() {
+    if (!form.file_url||!form.file_name) { showToast('⚠️','Upload a file first'); return }
+    if (!form.staff_id) { showToast('⚠️','Select an employee'); return }
+    setSaving(true)
+    const { error } = await supabase.from('staff_files').insert([{...form, uploaded_by:'alex'}])
+    if (error) { showToast('❌',error.message); setSaving(false); return }
+    // Notify staff
+    await notifyOne(form.staff_id, {
+      type:'general',
+      title:'📁 New File Added to Your 201',
+      message:`A new file "${form.file_name}" has been added to your ${form.category} folder.`,
+    })
+    await fetchAll()
+    setShowForm(false)
+    setForm({staff_id:'',file_name:'',file_url:'',category:'General',description:'',can_download:true,can_upload:false})
+    showToast('✅','File saved & employee notified')
+    setSaving(false)
+  }
 
-  const roleColor = getRoleColor(staff.role)
-  const shiftsThisMonth = schedules.filter(s => {
-    const d = new Date(s.shift_date)
-    const now = new Date()
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-  }).length
-  const latestPayroll = payroll[0]
-  const pendingContracts = contracts.filter(c => c.status === 'pending_signature').length
+  async function deleteFile(id, path) {
+    if (!confirm('Delete this file?')) return
+    if (path) await supabase.storage.from('staff-files').remove([path])
+    await supabase.from('staff_files').delete().eq('id',id)
+    setFiles(prev=>prev.filter(f=>f.id!==id))
+    showToast('🗑️','File deleted')
+  }
+
+  const filtered = files.filter(f => {
+    if (catFilter!=='All' && f.category!==catFilter) return false
+    if (staffFilter && f.staff_id!==staffFilter) return false
+    if (search && !`${f.file_name} ${f.description||''}`.toLowerCase().includes(search.toLowerCase())) return false
+    return true
+  })
+
+  // Group by staff
+  const byStaff = {}
+  filtered.forEach(f => {
+    const id = f.staff_id||'unassigned'
+    if (!byStaff[id]) byStaff[id] = { staff:f.staff, files:[] }
+    byStaff[id].files.push(f)
+  })
+
+  if (userEmail === HR_EMAIL) {
+    return (
+      <AuthShell>
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:12, fontFamily:"'DM Sans',sans-serif" }}>
+          <div style={{ fontSize:40 }}>🔒</div>
+          <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:16, fontWeight:700, color:'#1a1208' }}>Access Restricted</div>
+          <div style={{ fontSize:13, color:'#7a6a50', textAlign:'center', maxWidth:320, lineHeight:1.6 }}>
+            Staff files are only accessible to the Managing Director and CEO.
+          </div>
+        </div>
+      </AuthShell>
+    )
+  }
 
   return (
     <AuthShell>
       <div className="topbar">
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <a href="/staff" style={{ color:'var(--text-muted)', fontSize:13, textDecoration:'none' }}>← Staff</a>
-          <span style={{ color:'var(--border)' }}>/</span>
-          <span style={{ fontSize:13, fontWeight:600 }}>{staff.first_name} {staff.last_name}</span>
+        <div><div className="topbar-title">Files · Document 201</div><div className="topbar-sub">{files.length} files · {staff.length} employees</div></div>
+        <div style={{display:'flex',gap:9,alignItems:'center'}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search files…" style={{...iStyle,width:200,padding:'6px 12px'}}/>
+          <select style={{...iStyle,width:'auto'}} value={staffFilter} onChange={e=>setStaffFilter(e.target.value)}>
+            <option value="">All Employees</option>
+            {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
+          </select>
+          <button className="btn btn-primary" onClick={()=>setShowForm(!showForm)}>+ Upload File</button>
         </div>
       </div>
 
-      <div style={{ flex:1, overflowY:'auto', padding:'24px' }}>
-
-        {/* Profile header */}
-        <div style={{ background:'var(--white)', border:'1px solid var(--border)', borderRadius:16, padding:'24px', marginBottom:20, display:'flex', alignItems:'flex-start', gap:20, flexWrap:'wrap' }}>
-          <div style={{ width:72, height:72, borderRadius:'50%', background:roleColor, display:'flex', alignItems:'center', justifyContent:'center', fontSize:24, fontWeight:700, color:'white', flexShrink:0 }}>
-            {initials(staff.first_name, staff.last_name)}
-          </div>
-          <div style={{ flex:1, minWidth:200 }}>
-            <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-              <h1 style={{ fontFamily:"'Montserrat',sans-serif", fontSize:22, fontWeight:800, margin:0, color:'var(--text-primary)' }}>
-                {staff.first_name} {staff.last_name}
-              </h1>
-              {staff.nickname && <span style={{ fontSize:12, color:'var(--text-muted)' }}>"{staff.nickname}"</span>}
-            </div>
-            <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:8, flexWrap:'wrap' }}>
-              <span style={{ fontSize:11, fontWeight:700, padding:'3px 10px', borderRadius:8, background:roleColor+'22', color:roleColor }}>{staff.role}</span>
-              <span style={{ fontSize:11, color:'var(--text-muted)', background:'var(--surface)', padding:'3px 10px', borderRadius:8, border:'1px solid var(--border)' }}>{staff.employment_type || 'Full-time'}</span>
-              {staff.status && <span style={{ fontSize:11, padding:'3px 10px', borderRadius:8, background: staff.status==='active'?'#eef7e4':'#fff0f0', color: staff.status==='active'?'#4a7a1e':'#c0392b', fontWeight:600 }}>{staff.status}</span>}
-            </div>
-            <div style={{ display:'flex', gap:16, marginTop:12, flexWrap:'wrap' }}>
-              {staff.email && <span style={{ fontSize:12, color:'var(--text-muted)' }}>✉ {staff.email}</span>}
-              {staff.phone && <span style={{ fontSize:12, color:'var(--text-muted)' }}>📱 {staff.phone}</span>}
-            </div>
-          </div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, minWidth:300 }}>
-            {[
-              { label:'Shifts this month', value: shiftsThisMonth },
-              { label:'Pending contracts', value: pendingContracts, alert: pendingContracts > 0 },
-              { label:'Latest net pay', value: latestPayroll ? fmtPeso(latestPayroll.net_pay) : '—' },
-            ].map(s => (
-              <div key={s.label} style={{ background:'var(--surface)', borderRadius:10, padding:'12px', border:`1px solid ${s.alert?'#f5c6c6':'var(--border)'}` }}>
-                <p style={{ fontSize:9, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color: s.alert?'#c0392b':'var(--text-muted)', margin:'0 0 4px' }}>{s.label}</p>
-                <p style={{ fontSize:18, fontWeight:700, color: s.alert?'#c0392b':'var(--text-primary)', margin:0, fontFamily:"'Montserrat',sans-serif" }}>{s.value}</p>
+      <div className="page-content">
+        {/* Upload form */}
+        {showForm&&(
+          <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'20px',marginBottom:16}}>
+            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:16}}>Upload File to Employee 201</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:12}}>
+              <div>
+                <label style={lStyle}>Employee *</label>
+                <select style={iStyle} value={form.staff_id} onChange={fv('staff_id')}>
+                  <option value="">Select employee…</option>
+                  {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
+                </select>
               </div>
-            ))}
+              <div>
+                <label style={lStyle}>Category</label>
+                <select style={iStyle} value={form.category} onChange={fv('category')}>
+                  {CATEGORIES.filter(c=>c!=='All').map(c=><option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lStyle}>Description</label>
+                <input style={iStyle} placeholder="Brief description" value={form.description} onChange={fv('description')}/>
+              </div>
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={lStyle}>File</label>
+              {form.file_url?(
+                <div style={{background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:8,padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <span style={{fontSize:12,fontWeight:600,color:'var(--matcha-dark)'}}>✅ {form.file_name}</span>
+                  <button onClick={()=>setForm(p=>({...p,file_url:'',file_name:'',storage_path:''}))} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:12}}>Remove</button>
+                </div>
+              ):(
+                <label style={{display:'flex',alignItems:'center',gap:8,background:'var(--sky-pale)',border:'2px dashed var(--sky)',borderRadius:9,padding:'16px',cursor:'pointer',justifyContent:'center'}}>
+                  <span style={{fontSize:13,color:'var(--sky)',fontWeight:600}}>📁 Click to upload file</span>
+                  <input type="file" ref={fileRef} style={{display:'none'}} onChange={uploadFile} disabled={saving}/>
+                </label>
+              )}
+            </div>
+            <div style={{display:'flex',gap:12,marginBottom:12}}>
+              <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12}}>
+                <input type="checkbox" checked={form.can_download} onChange={e=>setForm(p=>({...p,can_download:e.target.checked}))}/> Employee can download
+              </label>
+              <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12}}>
+                <input type="checkbox" checked={form.can_upload} onChange={e=>setForm(p=>({...p,can_upload:e.target.checked}))}/> Employee can upload files
+              </label>
+            </div>
+            <div style={{display:'flex',gap:9}}>
+              <button onClick={()=>setShowForm(false)} style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:9,padding:'9px 16px',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Cancel</button>
+              <button onClick={saveFile} disabled={saving} style={{flex:1,background:'var(--matcha)',color:'white',border:'none',borderRadius:9,padding:9,fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                {saving?'Saving…':'✓ Save File'}
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Tabs */}
-        <div style={{ display:'flex', gap:4, marginBottom:16, borderBottom:'1px solid var(--border)' }}>
-          {TABS.map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)}
-              style={{ padding:'8px 16px', fontSize:12, fontWeight: activeTab===tab?700:400, border:'none', background:'transparent', cursor:'pointer', color: activeTab===tab?'var(--text-primary)':'var(--text-muted)', borderBottom: activeTab===tab?'2px solid #EF4576':'2px solid transparent', fontFamily:"'DM Sans',sans-serif", textTransform:'capitalize', marginBottom:-1 }}>
-              {tab}
+        {/* Category filter */}
+        <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
+          {CATEGORIES.map(c=>(
+            <button key={c} onClick={()=>setCatFilter(c)}
+              style={{padding:'6px 12px',borderRadius:20,border:`1.5px solid ${catFilter===c?(CAT_COLORS[c]||'var(--espresso)'):'var(--border)'}`,background:catFilter===c?(CAT_COLORS[c]||'var(--espresso)')+'22':'transparent',color:catFilter===c?(CAT_COLORS[c]||'var(--espresso)'):'var(--text-muted)',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s'}}>
+              {c} {c!=='All'?`(${files.filter(f=>f.category===c).length})`:``}
             </button>
           ))}
         </div>
 
-        {/* OVERVIEW */}
-        {activeTab === 'overview' && (
-          <div>
-            <Grid>
-              <Section title="Employment">
-                <Field label="Role" value={staff.role} />
-                <Field label="Employment type" value={staff.employment_type} />
-                <Field label="Status" value={staff.status} />
-                <Field label="Min shifts / week" value={staff.min_shifts_per_week} />
-                <Field label="Hours assigned" value={staff.hours_assigned} />
-              </Section>
-              <Section title="Compensation">
-                {(staff.employment_type === 'Part-time' || staff.employment_type === 'Freelancer') ? (
-                  <Field label="Daily rate" value={fmtPeso(getDailyRate(staff.employment_type, staff.role, rateOverrides))} />
-                ) : (
-                  <Field label="Monthly pay" value={
-                    staff.monthly_pay
-                      ? fmtPeso(staff.monthly_pay)
-                      : (() => { const r = rateOverrides?.[staff.employment_type]?.[staff.role]; return r?.type === 'monthly' && r.amount ? fmtPeso(r.amount) : '—' })()
-                  } />
-                )}
-                <Field label="Service charge eligible" value={staff.service_charge_eligible ? 'Yes' : 'No'} />
-              </Section>
-            </Grid>
-            <Grid>
-              <Section title="Government IDs">
-                <Field label="SSS" value={staff.sss} />
-                <Field label="PhilHealth" value={staff.philhealth} />
-                <Field label="Pag-IBIG" value={staff.pagibig} />
-                <Field label="TIN" value={staff.tin} />
-              </Section>
-              <Section title="Attendance">
-                <Field label="Late minutes" value={staff.late_minutes} />
-                <Field label="Absent days" value={staff.absent_days} />
-                <Field label="Late count this month" value={staff.late_count_this_month} />
-                <Field label="Violation count" value={staff.violation_count} />
-              </Section>
-            </Grid>
+        {/* Files grouped by employee */}
+        {loading?<div style={{textAlign:'center',padding:'40px',color:'var(--text-muted)'}}>Loading…</div>:Object.keys(byStaff).length===0?(
+          <div style={{textAlign:'center',padding:'60px',background:'var(--white)',border:'1px solid var(--border)',borderRadius:13}}>
+            <div style={{fontSize:40,marginBottom:12}}>📁</div>
+            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:16,fontWeight:700,marginBottom:6}}>No files yet</div>
+            <button className="btn btn-primary" onClick={()=>setShowForm(true)}>+ Upload First File</button>
           </div>
-        )}
-
-        {/* PERSONAL */}
-        {activeTab === 'personal' && (
-          <div>
-            <Grid>
-              <Section title="Basic info">
-                <Field label="First name" value={staff.first_name} />
-                <Field label="Last name" value={staff.last_name} />
-                <Field label="Middle name" value={staff.middle_name} />
-                <Field label="Nickname" value={staff.nickname} />
-                <Field label="Birthday" value={fmtDate(staff.birthday)} />
-                <Field label="Age" value={staff.age} />
-                <Field label="Birthplace" value={staff.birthplace} />
-              </Section>
-              <Section title="Contact">
-                <Field label="Email" value={staff.email} />
-                <Field label="Phone" value={staff.phone} />
-                <Field label="Mobile" value={staff.mobile} />
-              </Section>
-            </Grid>
-            <Section title="Address">
-              <Grid cols={3}>
-                <Field label="House no." value={staff.house_no} />
-                <Field label="Street" value={staff.street} />
-                <Field label="Village" value={staff.village} />
-                <Field label="Barangay" value={staff.barangay} />
-                <Field label="City" value={staff.city} />
-                <Field label="ZIP code" value={staff.zipcode} />
-              </Grid>
-            </Section>
-            <Grid>
-              <Section title="Father">
-                <Field label="Last name" value={staff.father_last} />
-                <Field label="First name" value={staff.father_first} />
-                <Field label="Middle name" value={staff.father_middle} />
-              </Section>
-              <Section title="Mother">
-                <Field label="Maiden name" value={staff.mother_maiden} />
-                <Field label="First name" value={staff.mother_first} />
-                <Field label="Middle name" value={staff.mother_middle} />
-              </Section>
-            </Grid>
-            <Section title="Emergency contact">
-              <Grid cols={3}>
-                <Field label="Name" value={staff.emergency_name} />
-                <Field label="Contact no." value={staff.emergency_contact} />
-                <Field label="Relationship" value={staff.emergency_relationship} />
-              </Grid>
-            </Section>
+        ):(
+          <div style={{display:'flex',flexDirection:'column',gap:16}}>
+            {Object.entries(byStaff).map(([staffId,{staff:s,files:sFiles}])=>(
+              <div key={staffId} style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+                <div style={{background:'var(--espresso)',padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+                  {s&&<div style={{width:32,height:32,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>}
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:'var(--cream)'}}>{s?`${s.first_name} ${s.last_name}`:'Unassigned'}</div>
+                    {s&&<div style={{fontSize:10,color:'rgba(255,255,255,.5)'}}>{s.role} · {sFiles.length} file{sFiles.length!==1?'s':''}</div>}
+                  </div>
+                </div>
+                <div style={{padding:'12px 16px'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:10}}>
+                    {sFiles.map(f=>{
+                      const color = CAT_COLORS[f.category]||'#7a6a50'
+                      const isPDF = f.file_type?.includes('pdf')||f.file_name?.endsWith('.pdf')
+                      const isImg = f.file_type?.includes('image')
+                      return(
+                        <div key={f.id} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'12px',borderLeft:`3px solid ${color}`}}>
+                          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:6}}>
+                            <div style={{fontSize:20}}>{isPDF?'📄':isImg?'🖼️':'📁'}</div>
+                            <span style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:5,background:color+'22',color}}>{f.category}</span>
+                          </div>
+                          <div style={{fontSize:12,fontWeight:600,color:'var(--espresso)',marginBottom:2,wordBreak:'break-word'}}>{f.file_name}</div>
+                          {f.description&&<div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6,lineHeight:1.4}}>{f.description}</div>}
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8,fontFamily:"'DM Mono',monospace"}}>{fmtDate(f.created_at)}</div>
+                          <div style={{display:'flex',gap:5}}>
+                            <a href={f.file_url} target="_blank" rel="noreferrer"
+                              style={{flex:1,background:'var(--sky-pale)',color:'var(--sky)',border:'none',borderRadius:6,padding:'5px 8px',fontSize:10,fontWeight:600,textDecoration:'none',textAlign:'center',display:'block'}}>
+                              👁 Preview
+                            </a>
+                            <a href={f.file_url} download={f.file_name}
+                              style={{flex:1,background:'var(--matcha-pale)',color:'var(--matcha-dark)',border:'none',borderRadius:6,padding:'5px 8px',fontSize:10,fontWeight:600,textDecoration:'none',textAlign:'center',display:'block'}}>
+                              ↓ Download
+                            </a>
+                            <button onClick={()=>deleteFile(f.id,f.storage_path)}
+                              style={{background:'transparent',border:'1px solid var(--border)',color:'var(--text-muted)',borderRadius:6,padding:'5px 7px',fontSize:11,cursor:'pointer'}}
+                              onMouseEnter={e=>e.currentTarget.style.color='#c0392b'} onMouseLeave={e=>e.currentTarget.style.color='var(--text-muted)'}>
+                              🗑
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
-        )}
-
-        {/* PAYROLL */}
-        {activeTab === 'payroll' && (
-          <Section title="Payroll history">
-            {payroll.length === 0 ? (
-              <p style={{ color:'var(--text-muted)', fontSize:13, textAlign:'center', padding:'24px 0' }}>No payroll records yet.</p>
-            ) : (
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
-                <thead>
-                  <tr style={{ borderBottom:'1px solid var(--border)' }}>
-                    {['Period','Gross','Deductions','Net Pay','Status'].map(h => (
-                      <th key={h} style={{ textAlign:'left', padding:'8px 12px', fontSize:11, fontWeight:700, color:'var(--text-muted)', letterSpacing:1, textTransform:'uppercase' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {payroll.map((p, i) => (
-                    <tr key={p.id} style={{ borderBottom:'1px solid var(--border)', background: i%2===0?'var(--surface)':'var(--white)' }}>
-                      <td style={{ padding:'10px 12px', fontWeight:500 }}>{fmtDate(p.period_start)} – {fmtDate(p.period_end)}</td>
-                      <td style={{ padding:'10px 12px' }}>{fmtPeso(p.gross_pay)}</td>
-                      <td style={{ padding:'10px 12px', color:'#c0392b' }}>{fmtPeso(p.total_deductions)}</td>
-                      <td style={{ padding:'10px 12px', fontWeight:700 }}>{fmtPeso(p.net_pay)}</td>
-                      <td style={{ padding:'10px 12px' }}>
-                        <span style={{ fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:6, background: p.status==='paid'?'#eef7e4':'#fef3e2', color: p.status==='paid'?'#4a7a1e':'#a06000' }}>
-                          {p.status || 'draft'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </Section>
-        )}
-
-        {/* CONTRACTS */}
-        {activeTab === 'contracts' && (
-          <Section title="Contracts">
-            {contracts.length === 0 ? (
-              <p style={{ color:'var(--text-muted)', fontSize:13, textAlign:'center', padding:'24px 0' }}>No contracts yet.</p>
-            ) : (
-              <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-                {contracts.map(c => (
-                  <div key={c.id} style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 14px', border:'1px solid var(--border)', borderRadius:10, background:'var(--surface)' }}>
-                    <span style={{ fontSize:24 }}>📄</span>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:13, fontWeight:600, margin:0 }}>{c.title || 'Contract'}</p>
-                      <p style={{ fontSize:11, color:'var(--text-muted)', margin:'2px 0 0' }}>Created {fmtDate(c.created_at)}</p>
-                    </div>
-                    <span style={{ fontSize:10, fontWeight:700, padding:'3px 10px', borderRadius:6,
-                      background: c.status==='active'?'#eef7e4':c.status==='pending_signature'?'#fef3e2':'var(--surface)',
-                      color: c.status==='active'?'#4a7a1e':c.status==='pending_signature'?'#a06000':'var(--text-muted)' }}>
-                      {c.status || 'draft'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Section>
-        )}
-
-        {/* FILES */}
-        {activeTab === 'files' && (
-          <Section title="Files · 201">
-            {files.length === 0 ? (
-              <p style={{ color:'var(--text-muted)', fontSize:13, textAlign:'center', padding:'24px 0' }}>No files uploaded yet.</p>
-            ) : (
-              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                {files.map(f => (
-                  <div key={f.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', border:'1px solid var(--border)', borderRadius:10, background:'var(--surface)' }}>
-                    <span style={{ fontSize:20 }}>📎</span>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:13, fontWeight:500, margin:0 }}>{f.file_name || f.name || 'File'}</p>
-                      <p style={{ fontSize:11, color:'var(--text-muted)', margin:'2px 0 0' }}>{fmtDate(f.created_at)}</p>
-                    </div>
-                    {f.file_url && (
-                      <a href={f.file_url} target="_blank" rel="noreferrer"
-                        style={{ fontSize:11, color:'#4a90c4', fontWeight:600, textDecoration:'none' }}>View →</a>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </Section>
-        )}
-
-        {/* SCHEDULE */}
-        {activeTab === 'schedule' && (
-          <Section title="Recent shifts">
-            {schedules.length === 0 ? (
-              <p style={{ color:'var(--text-muted)', fontSize:13, textAlign:'center', padding:'24px 0' }}>No scheduled shifts yet.</p>
-            ) : (
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
-                <thead>
-                  <tr style={{ borderBottom:'1px solid var(--border)' }}>
-                    {['Date','Shift','Published'].map(h => (
-                      <th key={h} style={{ textAlign:'left', padding:'8px 12px', fontSize:11, fontWeight:700, color:'var(--text-muted)', letterSpacing:1, textTransform:'uppercase' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {schedules.map((s, i) => {
-                    const SHIFT_COLORS = { am:'#4a7a1e', ops:'#7a3a8a', mid:'#a06000', pm:'#2d5a8a' }
-                    const color = SHIFT_COLORS[s.shift_type] || '#7a6a50'
-                    return (
-                      <tr key={s.id} style={{ borderBottom:'1px solid var(--border)', background: i%2===0?'var(--surface)':'var(--white)' }}>
-                        <td style={{ padding:'10px 12px', fontWeight:500 }}>{fmtDate(s.shift_date)}</td>
-                        <td style={{ padding:'10px 12px' }}>
-                          <span style={{ fontSize:11, fontWeight:700, padding:'2px 8px', borderRadius:6, background:color+'22', color }}>{s.shift_type?.toUpperCase()}</span>
-                        </td>
-                        <td style={{ padding:'10px 12px' }}>
-                          <span style={{ fontSize:11, color: s.published?'#4a7a1e':'var(--text-muted)', fontWeight: s.published?600:400 }}>
-                            {s.published ? '✓ Published' : 'Draft'}
-                          </span>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            )}
-          </Section>
         )}
       </div>
+
+      {toast&&<div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}><span>{toast.icon}</span><span>{toast.msg}</span></div>}
     </AuthShell>
   )
 }
