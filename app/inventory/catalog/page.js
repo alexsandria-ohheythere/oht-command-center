@@ -122,11 +122,7 @@ function ItemForm({ initial, onSave, onCancel, saving }) {
         </div>
       </div>
 
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-        <label style={{ display:'flex', alignItems:'center', gap:8, fontSize:13, color:'#374151', cursor:'pointer' }}>
-          <input type="checkbox" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} />
-          Active (visible to staff)
-        </label>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end' }}>
         <div style={{ display:'flex', gap:8 }}>
           <button onClick={onCancel} style={{ padding:'8px 16px', fontSize:12, border:'1px solid #e5e7eb', borderRadius:8, background:'white', cursor:'pointer' }}>Cancel</button>
           <button onClick={() => onSave(form)} disabled={saving || !form.name.trim()} style={{ padding:'8px 18px', fontSize:12, fontWeight:600, border:'none', borderRadius:8, background:'#EF4576', color:'white', cursor:'pointer', opacity: saving || !form.name.trim() ? 0.5 : 1 }}>
