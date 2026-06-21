@@ -90,7 +90,7 @@ function IngredientRow({ ing, onChange, onRemove, catalogItems }) {
   }
 
   const filteredCatalog = catalogItems.filter(c =>
-    c.is_active && c.name.toLowerCase().includes(pickerSearch.toLowerCase())
+    !pickerSearch || c.name.toLowerCase().includes(pickerSearch.toLowerCase())
   )
 
   return (
