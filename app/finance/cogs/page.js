@@ -7,6 +7,17 @@ import { createClient } from '../../../lib/supabase'
 const ADMIN_EMAILS = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
 const peso = n => '₱' + (parseFloat(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+const PALETTE = [
+  { bg: '#e8f4fd', text: '#1e40af', dot: '#2563eb', border: '#bfdbfe', light: '#f0f8ff' },
+  { bg: '#fef3c7', text: '#b45309', dot: '#d97706', border: '#fde68a', light: '#fffbeb' },
+  { bg: '#fce7f3', text: '#9d174d', dot: '#db2777', border: '#fbcfe8', light: '#fdf4f8' },
+  { bg: '#f3f4f6', text: '#4b5563', dot: '#6b7280', border: '#e5e7eb', light: '#f9fafb' },
+  { bg: '#d1fae5', text: '#065f46', dot: '#10b981', border: '#a7f3d0', light: '#f0fdf4' },
+  { bg: '#ede9fe', text: '#5b21b6', dot: '#7c3aed', border: '#ddd6fe', light: '#faf5ff' },
+  { bg: '#fee2e2', text: '#991b1b', dot: '#dc2626', border: '#fecaca', light: '#fff5f5' },
+  { bg: '#fef9c3', text: '#854d0e', dot: '#ca8a04', border: '#fef08a', light: '#fefce8' },
+]
+
 const iStyle = {
   width: '100%', background: 'var(--surface)', border: '1px solid var(--border)',
   borderRadius: 8, padding: '9px 12px', fontSize: 13,
@@ -42,7 +53,6 @@ function Modal({ open, onClose, title, children, wide }) {
   )
 }
 
-// Margin color helpers
 function marginColor(pct) {
   const n = parseFloat(pct)
   if (isNaN(n)) return 'var(--text-muted)'
@@ -58,21 +68,6 @@ function marginBg(pct) {
   return '#fee2e2'
 }
 
-// Build ingredient cost rows from a recipe's ingredients list
-function buildIngredientCosts(ingredients) {
-  return (ingredients || []).map(ing => ({
-    ingredient_name: ing.name || '',
-    brand: ing.brand || '',
-    variant: ing.variant || '',
-    qty: ing.qty || '',
-    unit: ing.unit || '',
-    cost_per_unit: '',   // to be filled by user
-    total_cost: 0,
-  }))
-}
-
-// Merge saved ingredient_costs with fresh recipe ingredients
-// Keeps user-entered costs, adds new ingredients, removes deleted ones
 function mergeIngredientCosts(recipeIngredients, savedCosts) {
   return (recipeIngredients || []).map(ing => {
     const existing = (savedCosts || []).find(c => c.ingredient_name === ing.name)
@@ -88,96 +83,70 @@ function mergeIngredientCosts(recipeIngredients, savedCosts) {
   })
 }
 
-function calcIngTotal(rows) {
-  return rows.reduce((sum, r) => sum + (parseFloat(r.cost_per_unit) || 0), 0)
+function calcTotals(form) {
+  const ingTotal = (form.ingredient_costs || []).reduce((s, r) => s + (parseFloat(r.cost_per_unit) || 0), 0)
+  const labor = parseFloat(form.labor_cost) || 0
+  const pack = parseFloat(form.packaging_cost) || 0
+  const over = parseFloat(form.overhead_cost) || 0
+  const total = ingTotal + labor + pack + over
+  const sp = parseFloat(form.selling_price) || 0
+  const margin = sp > 0 ? ((sp - total) / sp * 100) : null
+  return { ingTotal, total, margin }
 }
 
 // ─── COGS Form ────────────────────────────────────────────────────────────────
 function CogsForm({ recipes, item, onSave, onClose, saving }) {
   const isEdit = !!item
-
-  const [form, setForm] = useState(() => {
-    if (isEdit) {
-      return {
-        item_name: item.item_name || '',
-        recipe_id: item.recipe_id || '',
-        selling_price: item.selling_price ?? '',
-        labor_cost: item.labor_cost ?? '',
-        packaging_cost: item.packaging_cost ?? '',
-        overhead_cost: item.overhead_cost ?? '',
-        notes: item.notes || '',
-        is_active: item.is_active !== false,
-        ingredient_costs: item.ingredient_costs || [],
-      }
-    }
-    return {
-      item_name: '',
-      recipe_id: '',
-      selling_price: '',
-      labor_cost: '',
-      packaging_cost: '',
-      overhead_cost: '',
-      notes: '',
-      is_active: true,
-      ingredient_costs: [],
-    }
+  const [form, setForm] = useState(() => isEdit ? {
+    item_name: item.item_name || '',
+    recipe_id: item.recipe_id || '',
+    selling_price: item.selling_price ?? '',
+    labor_cost: item.labor_cost ?? '',
+    packaging_cost: item.packaging_cost ?? '',
+    overhead_cost: item.overhead_cost ?? '',
+    notes: item.notes || '',
+    is_active: item.is_active !== false,
+    ingredient_costs: item.ingredient_costs || [],
+  } : {
+    item_name: '', recipe_id: '', selling_price: '', labor_cost: '',
+    packaging_cost: '', overhead_cost: '', notes: '', is_active: true, ingredient_costs: [],
   })
 
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  // When recipe changes, merge ingredient costs
   function handleRecipeChange(recipeId) {
     const recipe = recipes.find(r => r.id === recipeId)
-    const merged = recipe
-      ? mergeIngredientCosts(recipe.ingredients, form.ingredient_costs)
-      : []
-    setForm(p => ({
-      ...p,
-      recipe_id: recipeId,
-      item_name: p.item_name || recipe?.name || '',
-      ingredient_costs: merged,
-    }))
+    const merged = recipe ? mergeIngredientCosts(recipe.ingredients, form.ingredient_costs) : []
+    setForm(p => ({ ...p, recipe_id: recipeId, item_name: p.item_name || recipe?.name || '', ingredient_costs: merged }))
   }
 
-  // On mount, if editing and recipe_id set, sync ingredient costs with recipe
   useEffect(() => {
     if (isEdit && item.recipe_id) {
       const recipe = recipes.find(r => r.id === item.recipe_id)
-      if (recipe) {
-        setF('ingredient_costs', mergeIngredientCosts(recipe.ingredients, item.ingredient_costs || []))
-      }
+      if (recipe) setF('ingredient_costs', mergeIngredientCosts(recipe.ingredients, item.ingredient_costs || []))
     }
   }, [])
 
-  function updateIngCost(i, field, val) {
+  function updateIngCost(i, val) {
     setForm(p => {
       const arr = [...p.ingredient_costs]
-      arr[i] = { ...arr[i], [field]: val, total_cost: parseFloat(val) || 0 }
+      arr[i] = { ...arr[i], cost_per_unit: val, total_cost: parseFloat(val) || 0 }
       return { ...p, ingredient_costs: arr }
     })
   }
 
   const linkedRecipe = recipes.find(r => r.id === form.recipe_id)
-  const ingTotal = calcIngTotal(form.ingredient_costs)
-  const laborCost = parseFloat(form.labor_cost) || 0
-  const packCost = parseFloat(form.packaging_cost) || 0
-  const overCost = parseFloat(form.overhead_cost) || 0
-  const totalCost = ingTotal + laborCost + packCost + overCost
-  const sellingPrice = parseFloat(form.selling_price) || 0
-  const margin = sellingPrice > 0 ? ((sellingPrice - totalCost) / sellingPrice * 100) : null
+  const { ingTotal, total, margin } = calcTotals(form)
+  const sp = parseFloat(form.selling_price) || 0
 
-  const btnStyle = (primary) => ({
+  const btn = (primary) => ({
     padding: '9px 18px', borderRadius: 9, border: primary ? 'none' : '1px solid var(--border)',
-    cursor: 'pointer', fontSize: 13, fontWeight: 600,
-    fontFamily: "'DM Sans',sans-serif",
-    background: primary ? '#ef4576' : 'var(--surface)',
-    color: primary ? 'white' : 'var(--text-primary)',
+    cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans',sans-serif",
+    background: primary ? '#ef4576' : 'var(--surface)', color: primary ? 'white' : 'var(--text-primary)',
   })
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-
-      {/* Item name + recipe */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
         <div>
           <label style={lStyle}>Menu Item Name *</label>
@@ -187,60 +156,37 @@ function CogsForm({ recipes, item, onSave, onClose, saving }) {
           <label style={lStyle}>Linked Recipe</label>
           <select style={iStyle} value={form.recipe_id} onChange={e => handleRecipeChange(e.target.value)}>
             <option value="">— Select a recipe —</option>
-            {recipes.map(r => (
-              <option key={r.id} value={r.id}>{r.name} ({r.category}{r.subcategory ? ` › ${r.subcategory}` : ''})</option>
-            ))}
+            {recipes.map(r => <option key={r.id} value={r.id}>{r.name} ({r.category}{r.subcategory ? ` › ${r.subcategory}` : ''})</option>)}
           </select>
         </div>
       </div>
 
-      {/* Selling price */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
-        <div>
-          <label style={lStyle}>Selling Price (₱)</label>
-          <input style={iStyle} type="number" min="0" step="0.01" value={form.selling_price} onChange={e => setF('selling_price', e.target.value)} placeholder="0.00" />
-        </div>
-        <div>
-          <label style={lStyle}>Labor Cost (₱)</label>
-          <input style={iStyle} type="number" min="0" step="0.01" value={form.labor_cost} onChange={e => setF('labor_cost', e.target.value)} placeholder="0.00" />
-        </div>
-        <div>
-          <label style={lStyle}>Packaging Cost (₱)</label>
-          <input style={iStyle} type="number" min="0" step="0.01" value={form.packaging_cost} onChange={e => setF('packaging_cost', e.target.value)} placeholder="0.00" />
-        </div>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 14 }}>
-        <div>
-          <label style={lStyle}>Overhead Cost (₱)</label>
-          <input style={iStyle} type="number" min="0" step="0.01" value={form.overhead_cost} onChange={e => setF('overhead_cost', e.target.value)} placeholder="0.00" />
-        </div>
-        <div>
-          <label style={lStyle}>Notes</label>
-          <input style={iStyle} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Any pricing notes…" />
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 14 }}>
+        {[['Selling Price (₱)', 'selling_price'], ['Labor Cost (₱)', 'labor_cost'], ['Packaging (₱)', 'packaging_cost'], ['Overhead (₱)', 'overhead_cost']].map(([label, key]) => (
+          <div key={key}>
+            <label style={lStyle}>{label}</label>
+            <input style={iStyle} type="number" min="0" step="0.01" value={form[key]} onChange={e => setF(key, e.target.value)} placeholder="0.00" />
+          </div>
+        ))}
       </div>
 
-      {/* Ingredient cost table — synced from recipe */}
+      {/* Ingredient cost table */}
       {linkedRecipe && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <label style={{ ...lStyle, marginBottom: 0 }}>Ingredient Costs <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10, color: 'var(--text-muted)' }}>— synced from {linkedRecipe.name}</span></label>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Enter cost per ingredient</span>
+            <label style={{ ...lStyle, marginBottom: 0 }}>Ingredient Costs <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>— from {linkedRecipe.name}</span></label>
           </div>
-
           {form.ingredient_costs.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0' }}>This recipe has no ingredients defined yet. Add them in the Recipes module first.</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>No ingredients on this recipe yet.</div>
           ) : (
             <div style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-              {/* Header */}
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 100px', gap: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 100px', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
                 {['Ingredient', 'Qty / Unit', 'Brand · Variant', 'Cost (₱)'].map(h => (
                   <div key={h} style={{ padding: '8px 12px', fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)' }}>{h}</div>
                 ))}
               </div>
-              {/* Rows */}
               {form.ingredient_costs.map((row, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 100px', gap: 0, borderBottom: i < form.ingredient_costs.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center' }}>
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 100px', borderBottom: i < form.ingredient_costs.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center' }}>
                   <div style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{row.ingredient_name}</div>
                   <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }}>{row.qty} {row.unit}</div>
                   <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
@@ -249,17 +195,12 @@ function CogsForm({ recipes, item, onSave, onClose, saving }) {
                     {!row.brand && !row.variant && <span style={{ fontStyle: 'italic' }}>—</span>}
                   </div>
                   <div style={{ padding: '6px 10px' }}>
-                    <input
-                      type="number" min="0" step="0.01"
-                      placeholder="0.00"
-                      value={row.cost_per_unit}
-                      onChange={e => updateIngCost(i, 'cost_per_unit', e.target.value)}
-                      style={{ ...iStyle, padding: '7px 10px', fontSize: 13, textAlign: 'right' }}
-                    />
+                    <input type="number" min="0" step="0.01" placeholder="0.00" value={row.cost_per_unit}
+                      onChange={e => updateIngCost(i, e.target.value)}
+                      style={{ ...iStyle, padding: '7px 10px', fontSize: 13, textAlign: 'right' }} />
                   </div>
                 </div>
               ))}
-              {/* Ingredient subtotal */}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Ingredient Subtotal</span>
                 <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{peso(ingTotal)}</span>
@@ -275,32 +216,28 @@ function CogsForm({ recipes, item, onSave, onClose, saving }) {
         </div>
       )}
 
-      {/* Live cost summary */}
+      {/* Live summary */}
       <div style={{ background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '1px solid var(--border)' }}>
-          {[
-            { label: 'Ingredient Cost', value: peso(ingTotal) },
-            { label: 'Labor + Pack + OH', value: peso(laborCost + packCost + overCost) },
-            { label: 'Total COGS', value: peso(totalCost) },
-            { label: 'Selling Price', value: sellingPrice ? peso(sellingPrice) : '—' },
-          ].map(({ label, value }) => (
-            <div key={label} style={{ padding: '12px 14px', borderRight: '1px solid var(--border)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', borderBottom: margin !== null ? '1px solid var(--border)' : 'none' }}>
+          {[['Ingredient Cost', peso(ingTotal)], ['Other Costs', peso((parseFloat(form.labor_cost)||0)+(parseFloat(form.packaging_cost)||0)+(parseFloat(form.overhead_cost)||0))], ['Total COGS', peso(total)], ['Selling Price', sp ? peso(sp) : '—']].map(([label, value], i) => (
+            <div key={label} style={{ padding: '12px 14px', borderRight: i < 3 ? '1px solid var(--border)' : 'none' }}>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>{label}</div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'Montserrat',sans-serif" }}>{value}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'Montserrat',sans-serif" }}>{value}</div>
             </div>
           ))}
         </div>
         {margin !== null && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' }}>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Gross Margin</span>
-            <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Montserrat',sans-serif", padding: '3px 10px', borderRadius: 20, background: marginBg(margin), color: marginColor(margin) }}>
-              {margin.toFixed(1)}%
-            </span>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {margin >= 60 ? '✅ Healthy margin' : margin >= 40 ? '⚠️ Tight margin' : '❌ Below target'}
-            </span>
+            <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Montserrat',sans-serif", padding: '3px 10px', borderRadius: 20, background: marginBg(margin), color: marginColor(margin) }}>{margin.toFixed(1)}%</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{margin >= 60 ? '✅ Healthy' : margin >= 40 ? '⚠️ Tight' : '❌ Below target'}</span>
           </div>
         )}
+      </div>
+
+      <div>
+        <label style={lStyle}>Notes</label>
+        <input style={iStyle} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Any pricing notes…" />
       </div>
 
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
@@ -309,9 +246,92 @@ function CogsForm({ recipes, item, onSave, onClose, saving }) {
       </label>
 
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 18 }}>
-        <button onClick={onClose} style={btnStyle(false)}>Cancel</button>
-        <button onClick={() => onSave(form, totalCost, margin)} disabled={saving} style={{ ...btnStyle(true), opacity: saving ? 0.6 : 1 }}>
+        <button onClick={onClose} style={btn(false)}>Cancel</button>
+        <button onClick={() => onSave(form, total, margin)} disabled={saving} style={{ ...btn(true), opacity: saving ? 0.6 : 1 }}>
           {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Item'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Gallery Card ─────────────────────────────────────────────────────────────
+function CogsCard({ item, palette, onClick, onEdit }) {
+  const margin = item.gross_margin
+  const recipe = item.recipes
+  const hasMargin = margin !== null && margin !== undefined
+
+  return (
+    <div
+      onClick={onClick}
+      style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden', cursor: 'pointer', transition: 'box-shadow .15s, border-color .15s' }}
+      onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 18px rgba(0,0,0,.1)'; e.currentTarget.style.borderColor = palette.border }}
+      onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = 'var(--border)' }}>
+
+      {/* Color top bar */}
+      <div style={{ height: 4, background: palette.dot }} />
+
+      {/* Card body */}
+      <div style={{ padding: '16px 18px' }}>
+        {/* Name + status */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)', lineHeight: 1.3, flex: 1 }}>{item.item_name}</div>
+          {!item.is_active && (
+            <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#fee2e2', color: '#991b1b', flexShrink: 0 }}>INACTIVE</span>
+          )}
+        </div>
+
+        {/* Linked recipe */}
+        {recipe ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+            <span style={{ fontSize: 10 }}>📒</span>
+            <span style={{ fontSize: 12, color: '#ef4576', fontWeight: 500 }}>{recipe.name}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>· {recipe.category}{recipe.subcategory ? ` › ${recipe.subcategory}` : ''}</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 14 }}>No recipe linked</div>
+        )}
+
+        {/* Cost + price + margin */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: hasMargin ? 12 : 0 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 3 }}>COGS</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'Montserrat',sans-serif" }}>
+              {item.total_cost ? peso(item.total_cost) : '—'}
+            </div>
+          </div>
+          <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 3 }}>Price</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'Montserrat',sans-serif" }}>
+              {item.selling_price ? peso(item.selling_price) : '—'}
+            </div>
+          </div>
+        </div>
+
+        {/* Margin pill */}
+        {hasMargin && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Gross Margin</span>
+            <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: marginBg(margin), color: marginColor(margin) }}>
+              {parseFloat(margin).toFixed(1)}%
+            </span>
+          </div>
+        )}
+
+        {/* Ingredient count */}
+        {Array.isArray(item.ingredient_costs) && item.ingredient_costs.length > 0 && (
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text-muted)' }}>
+            🧂 {item.ingredient_costs.filter(r => r.cost_per_unit).length} / {item.ingredient_costs.length} ingredients costed
+          </div>
+        )}
+      </div>
+
+      {/* Edit footer */}
+      <div style={{ padding: '10px 18px', borderTop: '1px solid var(--border)', background: palette.light, display: 'flex', justifyContent: 'flex-end' }}>
+        <button
+          onClick={e => { e.stopPropagation(); onEdit() }}
+          style={{ fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 7, border: `1px solid ${palette.border}`, background: 'transparent', color: palette.text, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+          Edit
         </button>
       </div>
     </div>
@@ -324,13 +344,12 @@ export default function CogsPage() {
   const [authorized, setAuthorized] = useState(null)
   const [cogsItems, setCogsItems] = useState([])
   const [recipes, setRecipes] = useState([])
+  const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState(null)
   const showToast = (msg, type = 'success') => setToast({ msg, type })
 
   const [search, setSearch] = useState('')
-  const [filterCat, setFilterCat] = useState('All')
-
   const [showForm, setShowForm] = useState(false)
   const [editItem, setEditItem] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -344,7 +363,7 @@ export default function CogsPage() {
         setAuthorized(false); setLoading(false); return
       }
       setAuthorized(true)
-      await Promise.allSettled([loadCogs(), loadRecipes()])
+      await Promise.allSettled([loadCogs(), loadRecipes(), loadCategories()])
       setLoading(false)
     }
     init()
@@ -367,6 +386,18 @@ export default function CogsPage() {
     setRecipes(data || [])
   }
 
+  async function loadCategories() {
+    const { data } = await supabase.from('settings').select('value').eq('key', 'recipe_categories').single()
+    if (data?.value) {
+      try { setCategories(JSON.parse(data.value)) } catch {}
+    }
+  }
+
+  function getPalette(catName) {
+    const found = categories.find(c => c.name === catName)
+    return found ? PALETTE[found.colorIdx % PALETTE.length] : PALETTE[3]
+  }
+
   async function handleSave(form, totalCost, margin) {
     if (!form.item_name.trim()) return showToast('Item name required', 'error')
     setSaving(true)
@@ -380,7 +411,7 @@ export default function CogsPage() {
       total_cost: totalCost,
       gross_margin: margin !== null ? parseFloat(margin.toFixed(2)) : null,
       ingredient_costs: form.ingredient_costs,
-      notes: form.notes.trim(),
+      notes: form.notes?.trim() || '',
       is_active: form.is_active,
     }
     let error
@@ -392,8 +423,7 @@ export default function CogsPage() {
     setSaving(false)
     if (error) return showToast('Save failed: ' + error.message, 'error')
     showToast(editItem ? 'Updated!' : 'Added!')
-    setShowForm(false)
-    setEditItem(null)
+    setShowForm(false); setEditItem(null)
     loadCogs()
   }
 
@@ -401,20 +431,33 @@ export default function CogsPage() {
     const { error } = await supabase.from('cogs').delete().eq('id', id)
     if (error) return showToast('Delete failed', 'error')
     showToast('Deleted')
-    setConfirmDelete(null)
-    setViewItem(null)
+    setConfirmDelete(null); setViewItem(null)
     loadCogs()
   }
 
-  // Get unique recipe categories for filter
-  const recipeCats = [...new Set(recipes.map(r => r.category).filter(Boolean))]
+  const filtered = cogsItems.filter(item =>
+    !search || item.item_name.toLowerCase().includes(search.toLowerCase())
+  )
 
-  const filtered = cogsItems.filter(item => {
-    const recipe = recipes.find(r => r.id === item.recipe_id)
-    if (filterCat !== 'All' && recipe?.category !== filterCat) return false
-    if (search && !`${item.item_name}`.toLowerCase().includes(search.toLowerCase())) return false
-    return true
-  })
+  // Group by recipe category, preserving settings order
+  const catOrder = categories.length > 0
+    ? categories.map(c => c.name)
+    : [...new Set(filtered.map(i => i.recipes?.category).filter(Boolean))]
+
+  const grouped = []
+  const seen = new Set()
+  for (const cat of catOrder) {
+    const items = filtered.filter(i => i.recipes?.category === cat)
+    if (items.length > 0) { grouped.push({ cat, items }); seen.add(cat) }
+  }
+  // Uncategorized (no recipe, or category not in settings)
+  const uncat = filtered.filter(i => !seen.has(i.recipes?.category))
+  if (uncat.length > 0) grouped.push({ cat: 'Uncategorized', items: uncat })
+
+  const totalItems = cogsItems.length
+  const avgMargin = cogsItems.filter(i => i.gross_margin !== null).length > 0
+    ? cogsItems.filter(i => i.gross_margin !== null).reduce((s, i) => s + i.gross_margin, 0) / cogsItems.filter(i => i.gross_margin !== null).length
+    : null
 
   const btnStyle = (primary) => ({
     display: 'flex', alignItems: 'center', gap: 6,
@@ -426,7 +469,7 @@ export default function CogsPage() {
   if (authorized === false) {
     return (
       <AuthShell>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', flexDirection: 'column', gap: 12, fontFamily: "'DM Sans',sans-serif" }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', flexDirection: 'column', gap: 12 }}>
           <div style={{ fontSize: 40 }}>🔒</div>
           <div style={{ fontFamily: "'Montserrat',sans-serif", fontSize: 18, fontWeight: 700 }}>Access Restricted</div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>COGS is only accessible to Alex and CJ.</div>
@@ -435,38 +478,29 @@ export default function CogsPage() {
     )
   }
 
-  // Summary stats
-  const activeItems = cogsItems.filter(i => i.is_active)
-  const avgMargin = activeItems.filter(i => i.gross_margin !== null).length > 0
-    ? activeItems.filter(i => i.gross_margin !== null).reduce((s, i) => s + i.gross_margin, 0) / activeItems.filter(i => i.gross_margin !== null).length
-    : null
-  const avgCost = activeItems.length > 0
-    ? activeItems.reduce((s, i) => s + (i.total_cost || 0), 0) / activeItems.length
-    : null
-
   return (
     <AuthShell>
-      <div style={{ padding: '24px 28px', fontFamily: "'DM Sans',sans-serif", maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{ padding: '24px 28px', fontFamily: "'DM Sans',sans-serif" }}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontFamily: "'Montserrat',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>🧮 Cost of Goods Sold</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>Per-item cost tracking synced to Recipes. Visible to Alex &amp; CJ only.</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>Per-item cost tracking synced to Recipes. Alex &amp; CJ only.</div>
           </div>
           <button onClick={() => { setEditItem(null); setShowForm(true) }} style={btnStyle(true)}>
             <span style={{ fontSize: 16 }}>+</span> Add Item
           </button>
         </div>
 
-        {/* Summary cards */}
-        {!loading && cogsItems.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 22 }}>
+        {/* Summary strip */}
+        {!loading && totalItems > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 12, marginBottom: 22 }}>
             {[
-              { label: 'Menu Items', value: cogsItems.length },
-              { label: 'Avg COGS', value: avgCost !== null ? peso(avgCost) : '—' },
+              { label: 'Total Items', value: totalItems },
+              { label: 'With Recipe', value: `${cogsItems.filter(i => i.recipe_id).length} / ${totalItems}` },
               { label: 'Avg Margin', value: avgMargin !== null ? avgMargin.toFixed(1) + '%' : '—' },
-              { label: 'With Recipe', value: cogsItems.filter(i => i.recipe_id).length + ' / ' + cogsItems.length },
+              { label: 'Avg COGS', value: totalItems > 0 ? peso(cogsItems.reduce((s, i) => s + (i.total_cost || 0), 0) / totalItems) : '—' },
             ].map(({ label, value }) => (
               <div key={label} style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px' }}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>{label}</div>
@@ -476,103 +510,87 @@ export default function CogsPage() {
           </div>
         )}
 
-        {/* Filters */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input style={{ ...iStyle, width: 220 }} placeholder="🔍  Search items…" value={search} onChange={e => setSearch(e.target.value)} />
-          <select style={{ ...iStyle, width: 160 }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
-            <option value="All">All Recipe Categories</option>
-            {recipeCats.map(c => <option key={c}>{c}</option>)}
-          </select>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' }}>{filtered.length} item{filtered.length !== 1 ? 's' : ''}</div>
+        {/* Search */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 28, alignItems: 'center' }}>
+          <input style={{ ...iStyle, width: 240 }} placeholder="🔍  Search items…" value={search} onChange={e => setSearch(e.target.value)} />
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{filtered.length} item{filtered.length !== 1 ? 's' : ''}</span>
         </div>
 
-        {/* Table */}
+        {/* Gallery by category */}
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>
+          <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>
         ) : filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 14 }}>
-            {cogsItems.length === 0 ? 'No items yet. Click + Add Item to get started.' : 'No items match your filters.'}
+          <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)', fontSize: 14 }}>
+            {cogsItems.length === 0 ? 'No items yet. Click + Add Item to get started.' : 'No items match your search.'}
           </div>
         ) : (
-          <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-                  {['Item', 'Linked Recipe', 'COGS', 'Selling Price', 'Margin', ''].map(h => (
-                    <th key={h} style={{ padding: '11px 14px', textAlign: 'left', fontSize: 9, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((item, idx) => {
-                  const margin = item.gross_margin
-                  const recipe = item.recipes
-                  return (
-                    <tr key={item.id}
+          grouped.map(({ cat, items }) => {
+            const p = getPalette(cat)
+            return (
+              <div key={cat} style={{ marginBottom: 36 }}>
+                {/* Category header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: p.dot, flexShrink: 0 }} />
+                  <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>{cat}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{items.length} item{items.length !== 1 ? 's' : ''}</span>
+                  <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                  {/* Category avg margin */}
+                  {(() => {
+                    const withMargin = items.filter(i => i.gross_margin !== null)
+                    if (!withMargin.length) return null
+                    const avg = withMargin.reduce((s, i) => s + i.gross_margin, 0) / withMargin.length
+                    return (
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: marginBg(avg), color: marginColor(avg) }}>
+                        avg {avg.toFixed(1)}%
+                      </span>
+                    )
+                  })()}
+                </div>
+
+                {/* Cards grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
+                  {items.map(item => (
+                    <CogsCard
+                      key={item.id}
+                      item={item}
+                      palette={p}
                       onClick={() => setViewItem(item)}
-                      style={{ borderBottom: idx < filtered.length - 1 ? '1px solid var(--border)' : 'none', cursor: 'pointer', transition: 'background .1s' }}
-                      onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                      <td style={{ padding: '13px 14px' }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>{item.item_name}</div>
-                        {!item.is_active && <span style={{ fontSize: 9, color: '#dc2626', fontWeight: 700 }}>INACTIVE</span>}
-                      </td>
-                      <td style={{ padding: '13px 14px' }}>
-                        {recipe ? (
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 500, color: '#ef4576' }}>📒 {recipe.name}</div>
-                            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{recipe.category}{recipe.subcategory ? ` › ${recipe.subcategory}` : ''}</div>
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>None</span>
-                        )}
-                      </td>
-                      <td style={{ padding: '13px 14px', fontSize: 13, color: 'var(--text-muted)' }}>{item.total_cost ? peso(item.total_cost) : '—'}</td>
-                      <td style={{ padding: '13px 14px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{item.selling_price ? peso(item.selling_price) : '—'}</td>
-                      <td style={{ padding: '13px 14px' }}>
-                        {margin !== null && margin !== undefined ? (
-                          <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 20, background: marginBg(margin), color: marginColor(margin) }}>{parseFloat(margin).toFixed(1)}%</span>
-                        ) : '—'}
-                      </td>
-                      <td style={{ padding: '13px 14px' }}>
-                        <button onClick={e => { e.stopPropagation(); setEditItem(item); setShowForm(true) }}
-                          style={{ fontSize: 11, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', color: 'var(--text-primary)', fontFamily: "'DM Sans',sans-serif" }}>
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                      onEdit={() => { setEditItem(item); setShowForm(true) }}
+                    />
+                  ))}
+                  {/* Ghost add card */}
+                  <div
+                    onClick={() => { setEditItem(null); setShowForm(true) }}
+                    style={{ border: '1px dashed var(--border)', borderRadius: 16, minHeight: 160, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', transition: 'background .15s, color .15s' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = p.bg; e.currentTarget.style.color = p.text }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}>
+                    <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
+                    <span>Add item</span>
+                  </div>
+                </div>
+              </div>
+            )
+          })
         )}
 
         {/* FORM MODAL */}
         <Modal open={showForm} onClose={() => { setShowForm(false); setEditItem(null) }} title={editItem ? 'Edit COGS Entry' : 'New COGS Entry'} wide>
-          <CogsForm
-            key={editItem?.id || 'new'}
-            recipes={recipes}
-            item={editItem}
-            onSave={handleSave}
-            onClose={() => { setShowForm(false); setEditItem(null) }}
-            saving={saving}
-          />
+          <CogsForm key={editItem?.id || 'new'} recipes={recipes} item={editItem} onSave={handleSave} onClose={() => { setShowForm(false); setEditItem(null) }} saving={saving} />
         </Modal>
 
         {/* VIEW MODAL */}
         <Modal open={!!viewItem} onClose={() => setViewItem(null)} title={viewItem?.item_name || ''} wide>
           {viewItem && (() => {
-            const margin = viewItem.gross_margin
-            const recipe = viewItem.recipes
+            const p = getPalette(viewItem.recipes?.category)
             return (
               <div>
+                <div style={{ height: 4, background: p.dot, borderRadius: 4, marginBottom: 20 }} />
                 {/* Stats */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 12, marginBottom: 20 }}>
                   {[
                     { label: 'Selling Price', value: viewItem.selling_price ? peso(viewItem.selling_price) : '—' },
                     { label: 'Total COGS', value: viewItem.total_cost ? peso(viewItem.total_cost) : '—' },
-                    { label: 'Gross Margin', value: margin !== null && margin !== undefined ? parseFloat(margin).toFixed(1) + '%' : '—' },
+                    { label: 'Gross Margin', value: viewItem.gross_margin !== null && viewItem.gross_margin !== undefined ? parseFloat(viewItem.gross_margin).toFixed(1) + '%' : '—' },
                     { label: 'Labor', value: viewItem.labor_cost ? peso(viewItem.labor_cost) : '—' },
                   ].map(({ label, value }) => (
                     <div key={label} style={{ background: 'var(--surface)', borderRadius: 10, padding: '12px 14px', border: '1px solid var(--border)' }}>
@@ -582,22 +600,22 @@ export default function CogsPage() {
                   ))}
                 </div>
 
-                {/* Linked Recipe */}
-                {recipe && (
-                  <div style={{ background: '#fff7f0', border: '1px solid #fed7aa', borderRadius: 10, padding: '12px 16px', marginBottom: 18 }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: '#c2410c', marginBottom: 6 }}>Linked Recipe</div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>📒 {recipe.name}</div>
-                    <div style={{ fontSize: 11, color: '#92400e', marginTop: 3 }}>{recipe.category}{recipe.subcategory ? ` › ${recipe.subcategory}` : ''}</div>
+                {/* Linked recipe */}
+                {viewItem.recipes && (
+                  <div style={{ background: p.light, border: `1px solid ${p.border}`, borderRadius: 10, padding: '12px 16px', marginBottom: 18 }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: p.text, marginBottom: 6 }}>Linked Recipe</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>📒 {viewItem.recipes.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{viewItem.recipes.category}{viewItem.recipes.subcategory ? ` › ${viewItem.recipes.subcategory}` : ''}</div>
                   </div>
                 )}
 
                 {/* Ingredient cost breakdown */}
-                {Array.isArray(viewItem.ingredient_costs) && viewItem.ingredient_costs.length > 0 && (
+                {Array.isArray(viewItem.ingredient_costs) && viewItem.ingredient_costs.filter(r => r.cost_per_unit).length > 0 && (
                   <div style={{ marginBottom: 18 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Ingredient Cost Breakdown</div>
                     <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
                       {viewItem.ingredient_costs.filter(r => r.cost_per_unit).map((row, i, arr) => (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 80px', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 80px', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center' }}>
                           <div style={{ padding: '9px 12px', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{row.ingredient_name}</div>
                           <div style={{ padding: '9px 12px', fontSize: 11, color: 'var(--text-muted)' }}>{row.qty} {row.unit}</div>
                           <div style={{ padding: '9px 12px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
