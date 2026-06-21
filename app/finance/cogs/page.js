@@ -69,30 +69,43 @@ function marginBg(pct) {
 }
 
 // Merge saved ingredient costs with fresh recipe ingredients
-function syncIngredientCosts(recipeIngredients, savedCosts) {
+function syncIngredientCosts(recipeIngredients, savedCosts, catalogMap) {
   return (recipeIngredients || []).map(ing => {
     const existing = (savedCosts || []).find(c => c.ingredient_name === ing.name)
+    // If linked to catalog, auto-calculate cost = qty × avg_price
+    const catalogItem = ing.catalog_id ? catalogMap[ing.catalog_id] : null
+    const autoCost = catalogItem && ing.qty
+      ? (parseFloat(catalogItem.avg_price) || 0) * (parseFloat(ing.qty) || 0)
+      : null
     return {
       ingredient_name: ing.name || '',
+      catalog_id: ing.catalog_id || null,
       brand: ing.brand || '',
       variant: ing.variant || '',
       qty: ing.qty || '',
       unit: ing.unit || '',
-      cost_per_unit: existing ? existing.cost_per_unit : '',
+      auto_cost: autoCost,
+      cost_per_unit: autoCost !== null ? autoCost.toFixed(2) : (existing ? existing.cost_per_unit : ''),
     }
   })
 }
 
-function syncPackagingCosts(recipePackaging, savedCosts) {
+function syncPackagingCosts(recipePackaging, savedCosts, catalogMap) {
   return (recipePackaging || []).map(pkg => {
     const existing = (savedCosts || []).find(c => c.item_name === pkg.name)
+    const catalogItem = pkg.catalog_id ? catalogMap[pkg.catalog_id] : null
+    const autoCost = catalogItem && pkg.qty
+      ? (parseFloat(catalogItem.avg_price) || 0) * (parseFloat(pkg.qty) || 0)
+      : null
     return {
       item_name: pkg.name || '',
+      catalog_id: pkg.catalog_id || null,
       brand: pkg.brand || '',
       variant: pkg.variant || '',
       qty: pkg.qty || '',
       unit: pkg.unit || '',
-      cost_per_unit: existing ? existing.cost_per_unit : '',
+      auto_cost: autoCost,
+      cost_per_unit: autoCost !== null ? autoCost.toFixed(2) : (existing ? existing.cost_per_unit : ''),
     }
   })
 }
@@ -140,16 +153,20 @@ function CostEditor({ entry, onSave, onClose, saving }) {
     )
     return (
       <div style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 90px 1fr 110px', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 90px 1fr 130px', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
           {['Item', 'Qty', 'Brand · Variant', 'Cost (₱)'].map(h => (
             <div key={h} style={{ padding: '8px 12px', fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)' }}>{h}</div>
           ))}
         </div>
         {rows.map((row, i) => {
           const name = row.ingredient_name || row.item_name || ''
+          const isAuto = row.auto_cost !== null && row.auto_cost !== undefined
           return (
-            <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 90px 1fr 110px', borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', background: row.cost_per_unit ? 'transparent' : '#fffaf8' }}>
-              <div style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{name}</div>
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 90px 1fr 130px', borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center' }}>
+              <div style={{ padding: '10px 12px' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{name}</div>
+                {isAuto && <div style={{ fontSize: 9, fontWeight: 700, color: '#065f46', marginTop: 2 }}>📦 From Catalog</div>}
+              </div>
               <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }}>{row.qty} {row.unit}</div>
               <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 {row.brand && <div style={{ fontWeight: 500 }}>{row.brand}</div>}
@@ -157,14 +174,20 @@ function CostEditor({ entry, onSave, onClose, saving }) {
                 {!row.brand && !row.variant && <span style={{ fontStyle: 'italic' }}>—</span>}
               </div>
               <div style={{ padding: '6px 10px' }}>
-                <input type="number" min="0" step="0.01" placeholder="0.00"
-                  value={row.cost_per_unit}
-                  onChange={e => onUpdate(i, e.target.value)}
-                  style={{ ...iStyle, padding: '7px 10px', fontSize: 13, textAlign: 'right',
-                    background: row.cost_per_unit ? '#f0fdf4' : 'var(--surface)',
-                    borderColor: row.cost_per_unit ? '#a7f3d0' : 'var(--border)',
-                  }}
-                />
+                {isAuto ? (
+                  <div style={{ padding: '7px 10px', fontSize: 13, fontWeight: 700, color: '#065f46', background: '#d1fae5', borderRadius: 8, textAlign: 'right' }}>
+                    ₱{parseFloat(row.cost_per_unit).toFixed(2)}
+                  </div>
+                ) : (
+                  <input type="number" min="0" step="0.01" placeholder="0.00"
+                    value={row.cost_per_unit}
+                    onChange={e => onUpdate(i, e.target.value)}
+                    style={{ ...iStyle, padding: '7px 10px', fontSize: 13, textAlign: 'right',
+                      background: row.cost_per_unit ? '#f0fdf4' : 'var(--surface)',
+                      borderColor: row.cost_per_unit ? '#a7f3d0' : 'var(--border)',
+                    }}
+                  />
+                )}
               </div>
             </div>
           )
@@ -402,20 +425,23 @@ export default function CogsPage() {
       .order('category').order('subcategory').order('name')
 
     // Load all cogs entries (keyed by recipe_id)
-    const { data: cogsRows } = await supabase
-      .from('cogs')
-      .select('*')
+    const { data: cogsRows } = await supabase.from('cogs').select('*')
+
+    // Load catalog for auto-cost calculation
+    const { data: catalogData } = await supabase.from('inventory_catalog').select('id, name, unit, avg_price').eq('is_active', true)
+    const catalogMap = {}
+    for (const item of (catalogData || [])) { catalogMap[item.id] = item }
 
     const cogsMap = {}
     for (const row of (cogsRows || [])) {
       if (row.recipe_id) cogsMap[row.recipe_id] = row
     }
 
-    // Merge: every recipe gets an entry, syncing ingredients
+    // Merge: every recipe gets an entry, syncing ingredients with catalog auto-cost
     const merged = (recipes || []).map(recipe => {
       const cogs = cogsMap[recipe.id] || {}
-      const ingredient_costs = syncIngredientCosts(recipe.ingredients, cogs.ingredient_costs)
-      const packaging_costs = syncPackagingCosts(recipe.packaging, cogs.packaging_costs)
+      const ingredient_costs = syncIngredientCosts(recipe.ingredients, cogs.ingredient_costs, catalogMap)
+      const packaging_costs = syncPackagingCosts(recipe.packaging, cogs.packaging_costs, catalogMap)
       return {
         recipe_id: recipe.id,
         recipe_name: recipe.name,
