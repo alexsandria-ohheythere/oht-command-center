@@ -95,7 +95,7 @@ export default function ReportsPage() {
       const q = search.toLowerCase()
       list = list.filter(r =>
         r.incident_type?.toLowerCase().includes(q) ||
-        r.reported_by?.toLowerCase().includes(q) ||
+        (!isHR && r.reported_by?.toLowerCase().includes(q)) ||
         r.description?.toLowerCase().includes(q) ||
         r.department?.toLowerCase().includes(q)
       )
@@ -136,6 +136,7 @@ export default function ReportsPage() {
   }
 
   const canDelete = DELETE_AUTHORIZED.includes(userEmail)
+  const isHR = userEmail === HR_EMAIL
 
   const DEPTS = ['Operations', 'Creatives', 'Cafe Bar', 'Commissary']
 
@@ -252,7 +253,7 @@ export default function ReportsPage() {
                           <div>
                             <div style={{ fontSize:13, fontWeight:700, color:'#1a1208' }}>{r.incident_type}</div>
                             <div style={{ fontSize:11, color:'#9a8a7a', marginTop:1 }}>
-                              {r.reported_by} · {fmtDate(r.date_of_report)}
+                              {isHR ? 'Anonymous' : r.reported_by} · {fmtDate(r.date_of_report)}
                             </div>
                           </div>
                         </div>
@@ -318,7 +319,7 @@ export default function ReportsPage() {
                 <div style={{ background:'#faf8f5', borderRadius:10, padding:'14px', marginBottom:16 }}>
                   <Row label="Incident Type" value={`${TYPE_ICONS[selected.incident_type] || '📋'} ${selected.incident_type}`} />
                   <Row label="Date & Time" value={`${fmtDate(selected.date_of_report)} at ${selected.time_of_report}`} />
-                  <Row label="Reported By" value={selected.reported_by} />
+                  <Row label="Reported By" value={isHR ? 'Anonymous' : selected.reported_by} />
                   <Row label="Department" value={selected.department} />
                   <Row label="Submitted" value={fmtCreated(selected.created_at)} last />
                 </div>
@@ -386,7 +387,7 @@ export default function ReportsPage() {
             <div style={{ fontSize:28, marginBottom:12, textAlign:'center' }}>🗑️</div>
             <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:15, fontWeight:700, color:'#1a1208', textAlign:'center', marginBottom:8 }}>Delete this report?</div>
             <div style={{ fontSize:12, color:'#7a6a50', textAlign:'center', lineHeight:1.6, marginBottom:20 }}>
-              <strong>{selected.incident_type}</strong> — {selected.reported_by}<br />
+              <strong>{selected.incident_type}</strong> — {isHR ? 'Anonymous' : selected.reported_by}<br />
               This action cannot be undone.
             </div>
             <div style={{ display:'flex', gap:10 }}>
