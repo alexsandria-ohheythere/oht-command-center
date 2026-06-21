@@ -4,19 +4,25 @@ import { useState, useEffect } from 'react'
 import AuthShell from '../../../components/AuthShell'
 import { createClient } from '../../../lib/supabase'
 
-const DEFAULT_CATEGORIES = ['Bar', 'Kitchen', 'Pastry', 'Other']
 const UNITS = ['g', 'kg', 'ml', 'L', 'pcs', 'tbsp', 'tsp', 'cup', 'oz', 'slice', 'pack']
 const SETTINGS_KEY = 'recipe_categories'
 
+// Each category: { name, colorIdx, subcategories: [{ name }] }
+const DEFAULT_CATEGORIES = [
+  { name: 'Bar', colorIdx: 0, subcategories: [{ name: 'Cold Drinks' }, { name: 'Hot Drinks' }] },
+  { name: 'Kitchen', colorIdx: 1, subcategories: [{ name: 'Mains' }, { name: 'Sides' }] },
+  { name: 'Pastry', colorIdx: 2, subcategories: [{ name: 'Baked Goods' }] },
+]
+
 const PALETTE = [
-  { bg: '#e8f4fd', text: '#2563eb', border: '#bfdbfe' },
-  { bg: '#fef3c7', text: '#d97706', border: '#fde68a' },
-  { bg: '#fce7f3', text: '#db2777', border: '#fbcfe8' },
-  { bg: '#f3f4f6', text: '#6b7280', border: '#e5e7eb' },
-  { bg: '#d1fae5', text: '#065f46', border: '#a7f3d0' },
-  { bg: '#ede9fe', text: '#7c3aed', border: '#ddd6fe' },
-  { bg: '#fee2e2', text: '#dc2626', border: '#fecaca' },
-  { bg: '#fef9c3', text: '#ca8a04', border: '#fef08a' },
+  { bg: '#e8f4fd', text: '#1e40af', dot: '#2563eb', border: '#bfdbfe' },
+  { bg: '#fef3c7', text: '#b45309', dot: '#d97706', border: '#fde68a' },
+  { bg: '#fce7f3', text: '#9d174d', dot: '#db2777', border: '#fbcfe8' },
+  { bg: '#f3f4f6', text: '#4b5563', dot: '#6b7280', border: '#e5e7eb' },
+  { bg: '#d1fae5', text: '#065f46', dot: '#10b981', border: '#a7f3d0' },
+  { bg: '#ede9fe', text: '#5b21b6', dot: '#7c3aed', border: '#ddd6fe' },
+  { bg: '#fee2e2', text: '#991b1b', dot: '#dc2626', border: '#fecaca' },
+  { bg: '#fef9c3', text: '#854d0e', dot: '#ca8a04', border: '#fef08a' },
 ]
 
 const iStyle = {
@@ -43,7 +49,7 @@ function Modal({ open, onClose, title, children, wide }) {
   if (!open) return null
   return (
     <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, background: 'rgba(26,18,8,.6)', backdropFilter: 'blur(4px)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-      <div style={{ background: 'var(--white)', borderRadius: 18, padding: 28, width: '100%', maxWidth: wide ? 720 : 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.2)' }}>
+      <div style={{ background: 'var(--white)', borderRadius: 18, padding: 28, width: '100%', maxWidth: wide ? 760 : 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.2)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div style={{ fontFamily: "'Montserrat',sans-serif", fontSize: 17, fontWeight: 700 }}>{title}</div>
           <button onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
@@ -54,14 +60,9 @@ function Modal({ open, onClose, title, children, wide }) {
   )
 }
 
-function CategoryBadge({ cat, categories }) {
-  const found = categories.find(c => c.name === cat)
-  const c = found ? PALETTE[found.colorIdx % PALETTE.length] : PALETTE[3]
-  return (
-    <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, background: c.bg, color: c.text, border: `1px solid ${c.border}`, letterSpacing: 0.5, whiteSpace: 'nowrap' }}>
-      {cat}
-    </span>
-  )
+function getPalette(categories, catName) {
+  const found = categories.find(c => c.name === catName)
+  return found ? PALETTE[found.colorIdx % PALETTE.length] : PALETTE[3]
 }
 
 function IngredientRow({ ing, onChange, onRemove }) {
@@ -77,97 +78,157 @@ function IngredientRow({ ing, onChange, onRemove }) {
   )
 }
 
-const blankRecipe = (defaultCat) => ({
-  name: '', category: defaultCat || 'Bar', description: '', serving_size: '', prep_time: '',
-  junior_visible: false, is_active: true, ingredients: [], steps: [],
-})
-
-// Category Manager Panel
+// ─── Category Manager ────────────────────────────────────────────────────────
 function CategoryManager({ categories, onSave, onClose, saving }) {
-  const [cats, setCats] = useState(categories.map(c => ({ ...c })))
-  const [newName, setNewName] = useState('')
-  const [newColorIdx, setNewColorIdx] = useState(0)
+  const [cats, setCats] = useState(categories.map(c => ({
+    ...c,
+    subcategories: (c.subcategories || []).map(s => ({ ...s }))
+  })))
+  const [newCatName, setNewCatName] = useState('')
+  const [newCatColor, setNewCatColor] = useState(0)
+  // per-category new subcategory input state
+  const [newSubInputs, setNewSubInputs] = useState({})
 
   function addCat() {
-    const name = newName.trim()
-    if (!name) return
-    if (cats.find(c => c.name.toLowerCase() === name.toLowerCase())) return
-    setCats(prev => [...prev, { name, colorIdx: newColorIdx }])
-    setNewName('')
-    setNewColorIdx((newColorIdx + 1) % PALETTE.length)
+    const name = newCatName.trim()
+    if (!name || cats.find(c => c.name.toLowerCase() === name.toLowerCase())) return
+    setCats(prev => [...prev, { name, colorIdx: newCatColor, subcategories: [] }])
+    setNewCatName('')
+    setNewCatColor((newCatColor + 1) % PALETTE.length)
   }
 
-  function removeCat(i) {
-    setCats(prev => prev.filter((_, idx) => idx !== i))
-  }
+  function removeCat(i) { setCats(prev => prev.filter((_, idx) => idx !== i)) }
 
-  function recolor(i, colorIdx) {
+  function recolorCat(i, colorIdx) {
     setCats(prev => prev.map((c, idx) => idx === i ? { ...c, colorIdx } : c))
   }
 
-  function rename(i, name) {
+  function renameCat(i, name) {
     setCats(prev => prev.map((c, idx) => idx === i ? { ...c, name } : c))
   }
 
-  function move(i, dir) {
-    const arr = [...cats]
-    const j = i + dir
+  function moveCat(i, dir) {
+    const arr = [...cats]; const j = i + dir
     if (j < 0 || j >= arr.length) return
-    ;[arr[i], arr[j]] = [arr[j], arr[i]]
-    setCats(arr)
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]; setCats(arr)
+  }
+
+  function addSub(catIdx) {
+    const name = (newSubInputs[catIdx] || '').trim()
+    if (!name) return
+    setCats(prev => prev.map((c, idx) => {
+      if (idx !== catIdx) return c
+      const already = (c.subcategories || []).find(s => s.name.toLowerCase() === name.toLowerCase())
+      if (already) return c
+      return { ...c, subcategories: [...(c.subcategories || []), { name }] }
+    }))
+    setNewSubInputs(prev => ({ ...prev, [catIdx]: '' }))
+  }
+
+  function removeSub(catIdx, subIdx) {
+    setCats(prev => prev.map((c, idx) => {
+      if (idx !== catIdx) return c
+      return { ...c, subcategories: (c.subcategories || []).filter((_, si) => si !== subIdx) }
+    }))
+  }
+
+  function renameSub(catIdx, subIdx, name) {
+    setCats(prev => prev.map((c, idx) => {
+      if (idx !== catIdx) return c
+      return { ...c, subcategories: (c.subcategories || []).map((s, si) => si === subIdx ? { ...s, name } : s) }
+    }))
+  }
+
+  function moveSub(catIdx, subIdx, dir) {
+    setCats(prev => prev.map((c, idx) => {
+      if (idx !== catIdx) return c
+      const arr = [...(c.subcategories || [])]; const j = subIdx + dir
+      if (j < 0 || j >= arr.length) return c
+      ;[arr[subIdx], arr[j]] = [arr[j], arr[subIdx]]
+      return { ...c, subcategories: arr }
+    }))
   }
 
   return (
     <div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 18, lineHeight: 1.6 }}>
-        Add, rename, recolor, or reorder recipe categories. Changes apply across all recipes and the Staff Portal.
+        Manage top-level categories and their subcategories. Every recipe must belong to a subcategory.
       </div>
 
-      {/* Existing categories */}
-      <div style={{ marginBottom: 20 }}>
-        {cats.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '10px 0' }}>No categories yet.</div>}
-        {cats.map((cat, i) => {
-          const c = PALETTE[cat.colorIdx % PALETTE.length]
-          return (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, background: 'var(--surface)', borderRadius: 10, padding: '10px 12px', border: '1px solid var(--border)' }}>
-              {/* Color picker dots */}
-              <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-                {PALETTE.map((p, pi) => (
-                  <button key={pi} onClick={() => recolor(i, pi)} title={`Color ${pi + 1}`} style={{ width: 16, height: 16, borderRadius: '50%', background: p.bg, border: cat.colorIdx % PALETTE.length === pi ? `2px solid ${p.text}` : `1px solid ${p.border}`, cursor: 'pointer', padding: 0, flexShrink: 0 }} />
+      {cats.map((cat, ci) => {
+        const p = PALETTE[cat.colorIdx % PALETTE.length]
+        return (
+          <div key={ci} style={{ marginBottom: 14, border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+            {/* Category row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'var(--surface)', flexWrap: 'wrap' }}>
+              {/* Color dots */}
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                {PALETTE.map((p2, pi) => (
+                  <button key={pi} onClick={() => recolorCat(ci, pi)} style={{ width: 14, height: 14, borderRadius: '50%', background: p2.dot, border: cat.colorIdx % PALETTE.length === pi ? '2px solid #111' : '1px solid transparent', cursor: 'pointer', padding: 0, opacity: cat.colorIdx % PALETTE.length === pi ? 1 : 0.4, flexShrink: 0 }} />
                 ))}
               </div>
-              {/* Name input */}
               <input
-                style={{ ...iStyle, flex: 1, padding: '6px 10px', fontSize: 13, background: 'var(--white)' }}
+                style={{ ...iStyle, flex: 1, minWidth: 100, padding: '6px 10px', fontSize: 13, background: 'var(--white)', fontWeight: 700 }}
                 value={cat.name}
-                onChange={e => rename(i, e.target.value)}
+                onChange={e => renameCat(ci, e.target.value)}
+                placeholder="Category name"
               />
-              {/* Preview badge */}
-              <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, background: c.bg, color: c.text, border: `1px solid ${c.border}`, whiteSpace: 'nowrap', flexShrink: 0 }}>{cat.name || '…'}</span>
-              {/* Move up/down */}
-              <button onClick={() => move(i, -1)} disabled={i === 0} style={{ background: 'transparent', border: 'none', cursor: i === 0 ? 'default' : 'pointer', color: i === 0 ? 'var(--border)' : 'var(--text-muted)', fontSize: 14, padding: '2px 4px', lineHeight: 1 }}>↑</button>
-              <button onClick={() => move(i, 1)} disabled={i === cats.length - 1} style={{ background: 'transparent', border: 'none', cursor: i === cats.length - 1 ? 'default' : 'pointer', color: i === cats.length - 1 ? 'var(--border)' : 'var(--text-muted)', fontSize: 14, padding: '2px 4px', lineHeight: 1 }}>↓</button>
-              {/* Remove */}
-              <button onClick={() => removeCat(i)} style={{ background: '#fee2e2', border: 'none', borderRadius: 6, color: '#dc2626', cursor: 'pointer', fontWeight: 700, fontSize: 13, width: 26, height: 26, flexShrink: 0 }}>×</button>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: p.bg, color: p.text, flexShrink: 0 }}>{cat.name || '…'}</span>
+              <button onClick={() => moveCat(ci, -1)} disabled={ci === 0} style={{ background: 'transparent', border: 'none', cursor: ci === 0 ? 'default' : 'pointer', color: ci === 0 ? 'var(--border)' : 'var(--text-muted)', fontSize: 14, padding: '2px 3px' }}>↑</button>
+              <button onClick={() => moveCat(ci, 1)} disabled={ci === cats.length - 1} style={{ background: 'transparent', border: 'none', cursor: ci === cats.length - 1 ? 'default' : 'pointer', color: ci === cats.length - 1 ? 'var(--border)' : 'var(--text-muted)', fontSize: 14, padding: '2px 3px' }}>↓</button>
+              <button onClick={() => removeCat(ci)} style={{ background: '#fee2e2', border: 'none', borderRadius: 6, color: '#dc2626', cursor: 'pointer', fontWeight: 700, fontSize: 13, width: 24, height: 24, flexShrink: 0 }}>×</button>
             </div>
-          )
-        })}
-      </div>
 
-      {/* Add new */}
-      <div style={{ background: 'var(--surface)', borderRadius: 10, padding: '14px 14px', border: '1px solid var(--border)', marginBottom: 20 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Add New Category</div>
+            {/* Subcategory rows */}
+            <div style={{ padding: '8px 12px 12px 28px' }}>
+              {(cat.subcategories || []).length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', padding: '4px 0 8px' }}>No subcategories yet — add one below.</div>
+              )}
+              {(cat.subcategories || []).map((sub, si) => (
+                <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: p.dot, display: 'inline-block', flexShrink: 0, opacity: 0.5 }} />
+                  <input
+                    style={{ ...iStyle, flex: 1, padding: '6px 10px', fontSize: 12, background: 'var(--white)' }}
+                    value={sub.name}
+                    onChange={e => renameSub(ci, si, e.target.value)}
+                    placeholder="Subcategory name"
+                  />
+                  <button onClick={() => moveSub(ci, si, -1)} disabled={si === 0} style={{ background: 'transparent', border: 'none', cursor: si === 0 ? 'default' : 'pointer', color: si === 0 ? 'var(--border)' : 'var(--text-muted)', fontSize: 13, padding: '2px 3px' }}>↑</button>
+                  <button onClick={() => moveSub(ci, si, 1)} disabled={si === (cat.subcategories || []).length - 1} style={{ background: 'transparent', border: 'none', cursor: si === (cat.subcategories || []).length - 1 ? 'default' : 'pointer', color: si === (cat.subcategories || []).length - 1 ? 'var(--border)' : 'var(--text-muted)', fontSize: 13, padding: '2px 3px' }}>↓</button>
+                  <button onClick={() => removeSub(ci, si)} style={{ background: '#fee2e2', border: 'none', borderRadius: 6, color: '#dc2626', cursor: 'pointer', fontWeight: 700, fontSize: 12, width: 22, height: 22, flexShrink: 0 }}>×</button>
+                </div>
+              ))}
+              {/* Add subcategory */}
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: p.dot, display: 'inline-block', flexShrink: 0, opacity: 0.3, marginTop: 10 }} />
+                <input
+                  style={{ ...iStyle, flex: 1, padding: '6px 10px', fontSize: 12, background: 'var(--white)', borderStyle: 'dashed' }}
+                  placeholder="New subcategory…"
+                  value={newSubInputs[ci] || ''}
+                  onChange={e => setNewSubInputs(prev => ({ ...prev, [ci]: e.target.value }))}
+                  onKeyDown={e => e.key === 'Enter' && addSub(ci)}
+                />
+                <button onClick={() => addSub(ci)} style={{ padding: '6px 12px', borderRadius: 7, border: 'none', background: p.bg, color: p.text, fontWeight: 600, fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>+ Add</button>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+
+      {/* Add new category */}
+      <div style={{ background: 'var(--surface)', borderRadius: 10, padding: '14px', border: '1px solid var(--border)', marginBottom: 20, marginTop: 4 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Add new category</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: 5 }}>
-            {PALETTE.map((p, pi) => (
-              <button key={pi} onClick={() => setNewColorIdx(pi)} style={{ width: 18, height: 18, borderRadius: '50%', background: p.bg, border: newColorIdx === pi ? `2px solid ${p.text}` : `1px solid ${p.border}`, cursor: 'pointer', padding: 0 }} />
+          <div style={{ display: 'flex', gap: 4 }}>
+            {PALETTE.map((p2, pi) => (
+              <button key={pi} onClick={() => setNewCatColor(pi)} style={{ width: 18, height: 18, borderRadius: '50%', background: p2.dot, border: newCatColor === pi ? '2px solid #111' : '1px solid transparent', cursor: 'pointer', padding: 0, opacity: newCatColor === pi ? 1 : 0.4 }} />
             ))}
           </div>
           <input
             style={{ ...iStyle, flex: 1, minWidth: 140, padding: '8px 12px' }}
             placeholder="Category name…"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
+            value={newCatName}
+            onChange={e => setNewCatName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && addCat()}
           />
           <button onClick={addCat} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: 'var(--text-primary)', color: 'white', fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", whiteSpace: 'nowrap' }}>+ Add</button>
@@ -184,6 +245,13 @@ function CategoryManager({ categories, onSave, onClose, saving }) {
   )
 }
 
+// ─── Main Page ───────────────────────────────────────────────────────────────
+const blankRecipe = (cat, sub) => ({
+  name: '', category: cat || '', subcategory: sub || '', description: '',
+  serving_size: '', prep_time: '', junior_visible: false, is_active: true,
+  ingredients: [], steps: [],
+})
+
 export default function RecipesPage() {
   const supabase = createClient()
   const [categories, setCategories] = useState([])
@@ -192,8 +260,9 @@ export default function RecipesPage() {
   const [toast, setToast] = useState(null)
   const showToast = (msg, type = 'success') => setToast({ msg, type })
 
-  const [filterCat, setFilterCat] = useState('All')
-  const [filterJunior, setFilterJunior] = useState('All')
+  // Which top-level categories are expanded
+  const [expandedCats, setExpandedCats] = useState({})
+  const [filterJunior, setFilterJunior] = useState('all')
   const [search, setSearch] = useState('')
 
   const [showCatManager, setShowCatManager] = useState(false)
@@ -216,14 +285,12 @@ export default function RecipesPage() {
         return parsed
       } catch {}
     }
-    // Default
-    const defaults = DEFAULT_CATEGORIES.map((name, i) => ({ name, colorIdx: i % PALETTE.length }))
-    setCategories(defaults)
-    return defaults
+    setCategories(DEFAULT_CATEGORIES)
+    return DEFAULT_CATEGORIES
   }
 
   async function loadRecipes() {
-    const { data, error } = await supabase.from('recipes').select('*').order('category').order('name')
+    const { data, error } = await supabase.from('recipes').select('*').order('category').order('subcategory').order('name')
     if (error) showToast('Failed to load recipes', 'error')
     else setRecipes(data || [])
   }
@@ -239,24 +306,27 @@ export default function RecipesPage() {
   }, [])
 
   async function handleSaveCategories(cats) {
-    const cleaned = cats.filter(c => c.name.trim()).map(c => ({ ...c, name: c.name.trim() }))
+    const cleaned = cats.filter(c => c.name.trim()).map(c => ({
+      name: c.name.trim(),
+      colorIdx: c.colorIdx,
+      subcategories: (c.subcategories || []).filter(s => s.name.trim()).map(s => ({ name: s.name.trim() }))
+    }))
     setSavingCats(true)
-    // Upsert into settings
     const { error } = await supabase.from('settings').upsert({ key: SETTINGS_KEY, value: JSON.stringify(cleaned) }, { onConflict: 'key' })
     setSavingCats(false)
-    if (error) return showToast('Failed to save categories: ' + error.message, 'error')
+    if (error) return showToast('Failed to save: ' + error.message, 'error')
     setCategories(cleaned)
     setShowCatManager(false)
-    // Reset category filter if no longer valid
-    setFilterCat('All')
     showToast('Categories saved!')
   }
 
-  const catNames = categories.map(c => c.name)
+  function toggleCat(catName) {
+    setExpandedCats(prev => ({ ...prev, [catName]: !prev[catName] }))
+  }
 
-  function openNew() {
+  function openNew(cat, sub) {
     setEditing(null)
-    setForm(blankRecipe(catNames[0] || 'Bar'))
+    setForm(blankRecipe(cat, sub))
     setShowForm(true)
   }
 
@@ -264,7 +334,8 @@ export default function RecipesPage() {
     setEditing(r.id)
     setForm({
       name: r.name || '',
-      category: r.category || catNames[0] || '',
+      category: r.category || '',
+      subcategory: r.subcategory || '',
       description: r.description || '',
       serving_size: r.serving_size || '',
       prep_time: r.prep_time || '',
@@ -278,6 +349,13 @@ export default function RecipesPage() {
 
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
+  // When category changes in form, reset subcategory to first of new category
+  function handleFormCatChange(catName) {
+    const cat = categories.find(c => c.name === catName)
+    const firstSub = (cat?.subcategories || [])[0]?.name || ''
+    setForm(p => ({ ...p, category: catName, subcategory: firstSub }))
+  }
+
   function addIngredient() { setF('ingredients', [...form.ingredients, { name: '', qty: '', unit: 'g' }]) }
   function updateIngredient(i, val) { const a = [...form.ingredients]; a[i] = val; setF('ingredients', a) }
   function removeIngredient(i) { setF('ingredients', form.ingredients.filter((_, idx) => idx !== i)) }
@@ -287,10 +365,12 @@ export default function RecipesPage() {
 
   async function handleSave() {
     if (!form.name.trim()) return showToast('Recipe name required', 'error')
+    if (!form.subcategory) return showToast('Please select a subcategory', 'error')
     setSaving(true)
     const payload = {
       name: form.name.trim(),
       category: form.category,
+      subcategory: form.subcategory,
       description: form.description.trim(),
       serving_size: form.serving_size.trim(),
       prep_time: form.prep_time.trim(),
@@ -322,217 +402,292 @@ export default function RecipesPage() {
   }
 
   const filtered = recipes.filter(r => {
-    if (filterCat !== 'All' && r.category !== filterCat) return false
-    if (filterJunior === 'Junior Only' && !r.junior_visible) return false
-    if (filterJunior === 'Senior Only' && r.junior_visible) return false
-    if (search && !`${r.name} ${r.category} ${r.description}`.toLowerCase().includes(search.toLowerCase())) return false
+    if (filterJunior === 'junior' && !r.junior_visible) return false
+    if (filterJunior === 'senior' && r.junior_visible) return false
+    if (search && !`${r.name} ${r.category} ${r.subcategory || ''} ${r.description || ''}`.toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
 
-  // Group by category order
-  const grouped = []
-  const catOrder = catNames.length > 0 ? catNames : DEFAULT_CATEGORIES
-  for (const cat of catOrder) {
-    const recs = filtered.filter(r => r.category === cat)
-    if (recs.length > 0) grouped.push({ cat, recs })
-  }
-  // Uncategorized (category name no longer in list)
-  const knownCats = new Set(catOrder)
-  const orphans = filtered.filter(r => !knownCats.has(r.category))
-  if (orphans.length > 0) grouped.push({ cat: 'Other', recs: orphans })
-
   const btnStyle = (primary) => ({
-    padding: '9px 18px', borderRadius: 9, border: primary ? 'none' : '1px solid var(--border)', cursor: 'pointer',
-    fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans',sans-serif",
-    background: primary ? '#ef4576' : 'var(--surface)', color: primary ? 'white' : 'var(--text-primary)',
+    display: 'flex', alignItems: 'center', gap: 6,
+    padding: '8px 16px', borderRadius: 9,
+    border: primary ? 'none' : '1px solid var(--border)',
+    cursor: 'pointer', fontSize: 13, fontWeight: 600,
+    fontFamily: "'DM Sans',sans-serif",
+    background: primary ? '#ef4576' : 'var(--surface)',
+    color: primary ? 'white' : 'var(--text-primary)',
   })
+
+  // Subcategories for current form category
+  const formCat = categories.find(c => c.name === form?.category)
+  const formSubs = formCat?.subcategories || []
 
   return (
     <AuthShell>
-      <div style={{ padding: '24px 28px', fontFamily: "'DM Sans',sans-serif", maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{ padding: '24px 28px', fontFamily: "'DM Sans',sans-serif", minHeight: '100vh' }}>
 
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        {/* Top bar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontFamily: "'Montserrat',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>📒 Recipes</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>Manage bar, kitchen, and pastry recipes. Role-based visibility in Staff Portal.</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>Role-based visibility in Staff Portal</div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setShowCatManager(true)} style={{ ...btnStyle(false), display: 'flex', alignItems: 'center', gap: 6 }}>
-              ⚙️ Categories
-            </button>
-            <button onClick={openNew} style={{ ...btnStyle(true), display: 'flex', alignItems: 'center', gap: 7 }}>
-              <span style={{ fontSize: 16 }}>+</span> New Recipe
-            </button>
+            <button onClick={() => setShowCatManager(true)} style={btnStyle(false)}>⚙️ Categories</button>
+            <button onClick={() => {
+              const firstCat = categories[0]
+              const firstSub = firstCat?.subcategories?.[0]?.name || ''
+              openNew(firstCat?.name || '', firstSub)
+            }} style={btnStyle(true)}><span style={{ fontSize: 16 }}>+</span> New Recipe</button>
           </div>
         </div>
 
-        {/* Filters */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+        {/* Filter bar */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
           <input
             style={{ ...iStyle, width: 220 }}
             placeholder="🔍  Search recipes…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
-          <select style={{ ...iStyle, width: 160 }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
-            <option value="All">All Categories</option>
-            {catNames.map(c => <option key={c}>{c}</option>)}
-          </select>
-          <select style={{ ...iStyle, width: 170 }} value={filterJunior} onChange={e => setFilterJunior(e.target.value)}>
-            <option value="All">All Access Levels</option>
-            <option value="Junior Only">Junior-visible only</option>
-            <option value="Senior Only">Senior/Full access only</option>
-          </select>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' }}>{filtered.length} recipe{filtered.length !== 1 ? 's' : ''}</div>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{filtered.length} recipe{filtered.length !== 1 ? 's' : ''}</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Access:</span>
+            {[['all', 'All'], ['junior', 'Junior only'], ['senior', 'Senior only']].map(([val, label]) => (
+              <button key={val} onClick={() => setFilterJunior(val)} style={{
+                padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: 500,
+                cursor: 'pointer', fontFamily: "'DM Sans',sans-serif",
+                background: filterJunior === val ? '#fdf2f5' : 'var(--white)',
+                color: filterJunior === val ? '#ef4576' : 'var(--text-muted)',
+                border: filterJunior === val ? '1.5px solid #ef4576' : '1px solid var(--border)',
+              }}>{label}</button>
+            ))}
+          </div>
         </div>
 
-        {/* Category pill strip */}
-        {catNames.length > 0 && (
-          <div style={{ display: 'flex', gap: 7, marginBottom: 24, flexWrap: 'wrap' }}>
-            <button onClick={() => setFilterCat('All')} style={{ fontSize: 11, fontWeight: filterCat === 'All' ? 700 : 500, padding: '5px 12px', borderRadius: 20, border: filterCat === 'All' ? '2px solid #ef4576' : '1px solid var(--border)', background: filterCat === 'All' ? '#fdf2f5' : 'var(--white)', color: filterCat === 'All' ? '#ef4576' : 'var(--text-muted)', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-              All ({recipes.length})
-            </button>
-            {catNames.map(cat => {
-              const count = recipes.filter(r => r.category === cat).length
-              const active = filterCat === cat
-              const found = categories.find(c => c.name === cat)
-              const palette = found ? PALETTE[found.colorIdx % PALETTE.length] : PALETTE[3]
+        {/* Board — top-level category columns */}
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)', fontSize: 14 }}>Loading recipes…</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 20, alignItems: 'start' }}>
+            {categories.map(cat => {
+              const p = PALETTE[cat.colorIdx % PALETTE.length]
+              const isExpanded = !!expandedCats[cat.name]
+              const catRecipes = filtered.filter(r => r.category === cat.name)
+              const totalInCat = recipes.filter(r => r.category === cat.name).length
+
               return (
-                <button key={cat} onClick={() => setFilterCat(active ? 'All' : cat)}
-                  style={{ fontSize: 11, fontWeight: active ? 700 : 500, padding: '5px 12px', borderRadius: 20, border: active ? `2px solid ${palette.text}` : `1px solid ${palette.border}`, background: active ? palette.bg : 'var(--white)', color: active ? palette.text : 'var(--text-muted)', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-                  {cat} ({count})
-                </button>
+                <div key={cat.name} style={{ background: 'var(--white)', border: `1px solid ${isExpanded ? p.border : 'var(--border)'}`, borderRadius: 16, overflow: 'hidden', transition: 'border-color .2s' }}>
+
+                  {/* Category header — clickable */}
+                  <div
+                    onClick={() => toggleCat(cat.name)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', cursor: 'pointer', background: isExpanded ? p.bg : 'transparent', transition: 'background .2s', userSelect: 'none' }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: p.dot, flexShrink: 0 }} />
+                    <span style={{ fontWeight: 700, fontSize: 14, color: isExpanded ? p.text : 'var(--text-primary)', flex: 1, transition: 'color .2s' }}>{cat.name}</span>
+                    <span style={{ fontSize: 11, color: isExpanded ? p.text : 'var(--text-muted)', opacity: 0.7 }}>
+                      {catRecipes.length}{catRecipes.length !== totalInCat ? `/${totalInCat}` : ''}
+                    </span>
+                    <span style={{ fontSize: 13, color: isExpanded ? p.text : 'var(--text-muted)', transition: 'transform .2s', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span>
+                  </div>
+
+                  {/* Subcategory sections — accordion body */}
+                  {isExpanded && (
+                    <div style={{ borderTop: `1px solid ${p.border}` }}>
+                      {(cat.subcategories || []).length === 0 ? (
+                        <div style={{ padding: '16px', fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                          No subcategories. Add one via ⚙️ Categories.
+                        </div>
+                      ) : (
+                        (cat.subcategories || []).map((sub, si) => {
+                          const subRecipes = catRecipes.filter(r => r.subcategory === sub.name)
+                          const isLast = si === (cat.subcategories || []).length - 1
+
+                          return (
+                            <div key={sub.name} style={{ borderBottom: isLast ? 'none' : `1px solid ${p.border}` }}>
+                              {/* Subcategory header */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', background: 'var(--surface)' }}>
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: p.dot, opacity: 0.5, flexShrink: 0 }} />
+                                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: 'var(--text-muted)', textTransform: 'uppercase', flex: 1 }}>{sub.name}</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{subRecipes.length}</span>
+                              </div>
+
+                              {/* Recipe cards in this subcategory */}
+                              <div style={{ padding: '8px 12px' }}>
+                                {subRecipes.length === 0 && (
+                                  <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic', padding: '4px 4px 8px' }}>No recipes yet.</div>
+                                )}
+                                {subRecipes.map(r => (
+                                  <div key={r.id}
+                                    onClick={e => { e.stopPropagation(); setViewRecipe(r) }}
+                                    style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', marginBottom: 8, cursor: 'pointer', transition: 'border-color .15s, box-shadow .15s' }}
+                                    onMouseEnter={e => { e.currentTarget.style.borderColor = p.dot; e.currentTarget.style.boxShadow = '0 2px 10px rgba(0,0,0,.07)' }}
+                                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none' }}>
+
+                                    {/* Tags */}
+                                    {(r.junior_visible || !r.is_active) && (
+                                      <div style={{ display: 'flex', gap: 5, marginBottom: 7, flexWrap: 'wrap' }}>
+                                        {r.junior_visible && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#d1fae5', color: '#065f46', letterSpacing: 0.3 }}>Junior ✓</span>}
+                                        {!r.is_active && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#fee2e2', color: '#991b1b', letterSpacing: 0.3 }}>Inactive</span>}
+                                      </div>
+                                    )}
+
+                                    {/* Name */}
+                                    <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.35, marginBottom: r.description ? 5 : 8 }}>{r.name}</div>
+
+                                    {/* Description */}
+                                    {r.description && (
+                                      <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 8 }}>
+                                        {r.description.length > 70 ? r.description.slice(0, 70) + '…' : r.description}
+                                      </div>
+                                    )}
+
+                                    {/* Meta */}
+                                    <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+                                      {r.serving_size && <span>🍽 {r.serving_size}</span>}
+                                      {r.prep_time && <span>⏱ {r.prep_time}</span>}
+                                      {Array.isArray(r.ingredients) && r.ingredients.length > 0 && <span>🧂 {r.ingredients.length}</span>}
+                                      {Array.isArray(r.steps) && r.steps.length > 0 && <span>📋 {r.steps.length} steps</span>}
+                                    </div>
+                                  </div>
+                                ))}
+
+                                {/* Ghost add card */}
+                                <div
+                                  onClick={e => { e.stopPropagation(); openNew(cat.name, sub.name) }}
+                                  style={{ border: '1px dashed var(--border)', borderRadius: 12, padding: '9px 14px', display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', marginBottom: 4, transition: 'background .15s, color .15s' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = p.bg; e.currentTarget.style.color = p.text }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}>
+                                  <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add recipe
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })
+                      )}
+                    </div>
+                  )}
+
+                  {/* Collapsed state: show subcategory pills */}
+                  {!isExpanded && (cat.subcategories || []).length > 0 && (
+                    <div style={{ padding: '0 16px 14px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {(cat.subcategories || []).map(sub => {
+                        const count = recipes.filter(r => r.category === cat.name && r.subcategory === sub.name).length
+                        return (
+                          <span key={sub.name} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: p.bg, color: p.text, border: `1px solid ${p.border}` }}>
+                            {sub.name} {count > 0 ? `·${count}` : ''}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               )
             })}
           </div>
         )}
 
-        {/* Recipe Grid */}
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 14 }}>Loading recipes…</div>
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 14 }}>
-            {recipes.length === 0 ? 'No recipes yet. Click + New Recipe to get started!' : 'No recipes match your filters.'}
-          </div>
-        ) : (
-          grouped.map(({ cat, recs }) => (
-            <div key={cat} style={{ marginBottom: 32 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                <CategoryBadge cat={cat} categories={categories} />
-                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{recs.length} recipe{recs.length !== 1 ? 's' : ''}</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 14 }}>
-                {recs.map(r => (
-                  <div key={r.id} onClick={() => setViewRecipe(r)}
-                    style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 18px', cursor: 'pointer', transition: 'box-shadow .15s', boxShadow: '0 1px 4px rgba(0,0,0,.06)' }}
-                    onMouseEnter={e => e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,.12)'}
-                    onMouseLeave={e => e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,.06)'}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.3 }}>{r.name}</div>
-                      <div style={{ display: 'flex', gap: 5, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                        {r.junior_visible && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#d1fae5', color: '#065f46', letterSpacing: 0.5 }}>JUNIOR ✓</span>}
-                        {!r.is_active && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#fee2e2', color: '#991b1b', letterSpacing: 0.5 }}>INACTIVE</span>}
-                      </div>
-                    </div>
-                    {r.description && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.5 }}>{r.description.length > 90 ? r.description.slice(0, 90) + '…' : r.description}</div>}
-                    <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-                      {r.serving_size && <span>🍽 {r.serving_size}</span>}
-                      {r.prep_time && <span>⏱ {r.prep_time}</span>}
-                      {Array.isArray(r.ingredients) && r.ingredients.length > 0 && <span>🧂 {r.ingredients.length} ingredient{r.ingredients.length !== 1 ? 's' : ''}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))
-        )}
-
         {/* CATEGORY MANAGER MODAL */}
         <Modal open={showCatManager} onClose={() => setShowCatManager(false)} title="⚙️ Manage Categories" wide>
-          <CategoryManager
-            categories={categories}
-            onSave={handleSaveCategories}
-            onClose={() => setShowCatManager(false)}
-            saving={savingCats}
-          />
+          <CategoryManager categories={categories} onSave={handleSaveCategories} onClose={() => setShowCatManager(false)} saving={savingCats} />
         </Modal>
 
         {/* VIEW MODAL */}
         <Modal open={!!viewRecipe} onClose={() => setViewRecipe(null)} title={viewRecipe?.name || ''} wide>
-          {viewRecipe && (
-            <div>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-                <CategoryBadge cat={viewRecipe.category} categories={categories} />
-                {viewRecipe.junior_visible && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#d1fae5', color: '#065f46' }}>Junior Visible</span>}
-                {!viewRecipe.is_active && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#fee2e2', color: '#991b1b' }}>Inactive</span>}
-                {viewRecipe.serving_size && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>🍽 {viewRecipe.serving_size}</span>}
-                {viewRecipe.prep_time && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>⏱ {viewRecipe.prep_time}</span>}
-              </div>
-              {viewRecipe.description && <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>{viewRecipe.description}</p>}
-              {Array.isArray(viewRecipe.ingredients) && viewRecipe.ingredients.length > 0 && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Ingredients</div>
-                  <div style={{ background: 'var(--surface)', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                    {viewRecipe.ingredients.map((ing, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderBottom: i < viewRecipe.ingredients.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 13 }}>
-                        <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{ing.name}</span>
-                        <span style={{ color: 'var(--text-muted)' }}>{ing.qty} {ing.unit}</span>
-                      </div>
-                    ))}
+          {viewRecipe && (() => {
+            const p = getPalette(categories, viewRecipe.category)
+            return (
+              <div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: p.bg, color: p.text }}>{viewRecipe.category}</span>
+                  {viewRecipe.subcategory && (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>{viewRecipe.subcategory}</span>
+                  )}
+                  {viewRecipe.junior_visible && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#d1fae5', color: '#065f46' }}>Junior Visible</span>}
+                  {!viewRecipe.is_active && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#fee2e2', color: '#991b1b' }}>Inactive</span>}
+                  {viewRecipe.serving_size && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>🍽 {viewRecipe.serving_size}</span>}
+                  {viewRecipe.prep_time && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>⏱ {viewRecipe.prep_time}</span>}
+                </div>
+                {viewRecipe.description && <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>{viewRecipe.description}</p>}
+                {Array.isArray(viewRecipe.ingredients) && viewRecipe.ingredients.length > 0 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Ingredients</div>
+                    <div style={{ background: 'var(--surface)', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                      {viewRecipe.ingredients.map((ing, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderBottom: i < viewRecipe.ingredients.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 13 }}>
+                          <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{ing.name}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>{ing.qty} {ing.unit}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                )}
+                {Array.isArray(viewRecipe.steps) && viewRecipe.steps.length > 0 && (
+                  <div style={{ marginBottom: 24 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Steps</div>
+                    <ol style={{ margin: 0, paddingLeft: 20 }}>
+                      {viewRecipe.steps.map((step, i) => (
+                        <li key={i} style={{ fontSize: 13, color: 'var(--text-primary)', marginBottom: 8, lineHeight: 1.6 }}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 18 }}>
+                  <button onClick={() => setConfirmDelete(viewRecipe.id)} style={{ ...btnStyle(false), color: '#dc2626', border: '1px solid #fecaca' }}>Delete</button>
+                  <button onClick={() => { openEdit(viewRecipe); setViewRecipe(null) }} style={btnStyle(false)}>Edit</button>
+                  <button onClick={() => setViewRecipe(null)} style={btnStyle(true)}>Close</button>
                 </div>
-              )}
-              {Array.isArray(viewRecipe.steps) && viewRecipe.steps.length > 0 && (
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Steps</div>
-                  <ol style={{ margin: 0, paddingLeft: 20 }}>
-                    {viewRecipe.steps.map((step, i) => (
-                      <li key={i} style={{ fontSize: 13, color: 'var(--text-primary)', marginBottom: 8, lineHeight: 1.6 }}>{step}</li>
-                    ))}
-                  </ol>
-                </div>
-              )}
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 18 }}>
-                <button onClick={() => setConfirmDelete(viewRecipe.id)} style={{ ...btnStyle(false), color: '#dc2626', border: '1px solid #fecaca' }}>Delete</button>
-                <button onClick={() => { openEdit(viewRecipe); setViewRecipe(null) }} style={btnStyle(false)}>Edit</button>
-                <button onClick={() => setViewRecipe(null)} style={btnStyle(true)}>Close</button>
               </div>
-            </div>
-          )}
+            )
+          })()}
         </Modal>
 
-        {/* FORM MODAL */}
+        {/* RECIPE FORM MODAL */}
         <Modal open={showForm} onClose={() => setShowForm(false)} title={editing ? 'Edit Recipe' : 'New Recipe'} wide>
           {form && (
             <div style={{ display: 'grid', gap: 14 }}>
+              {/* Name */}
+              <div>
+                <label style={lStyle}>Recipe Name *</label>
+                <input style={iStyle} value={form.name} onChange={e => setF('name', e.target.value)} placeholder="e.g. Iced Matcha Latte" />
+              </div>
+
+              {/* Category + Subcategory */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div>
-                  <label style={lStyle}>Recipe Name *</label>
-                  <input style={iStyle} value={form.name} onChange={e => setF('name', e.target.value)} placeholder="e.g. Matcha Latte" />
+                  <label style={lStyle}>Category</label>
+                  <select style={iStyle} value={form.category} onChange={e => handleFormCatChange(e.target.value)}>
+                    {categories.map(c => <option key={c.name}>{c.name}</option>)}
+                  </select>
                 </div>
                 <div>
-                  <label style={lStyle}>Category</label>
-                  <select style={iStyle} value={form.category} onChange={e => setF('category', e.target.value)}>
-                    {catNames.map(c => <option key={c}>{c}</option>)}
+                  <label style={lStyle}>Subcategory *</label>
+                  <select style={iStyle} value={form.subcategory} onChange={e => setF('subcategory', e.target.value)}>
+                    {formSubs.length === 0 && <option value="">No subcategories — add via ⚙️</option>}
+                    {formSubs.map(s => <option key={s.name}>{s.name}</option>)}
                   </select>
                 </div>
               </div>
+
+              {/* Description */}
               <div>
                 <label style={lStyle}>Description / Notes</label>
                 <textarea style={{ ...iStyle, height: 70, resize: 'vertical' }} value={form.description} onChange={e => setF('description', e.target.value)} placeholder="Brief description or special notes…" />
               </div>
+
+              {/* Serving + Prep */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div>
                   <label style={lStyle}>Serving Size</label>
-                  <input style={iStyle} value={form.serving_size} onChange={e => setF('serving_size', e.target.value)} placeholder="e.g. 12 oz, 1 serving" />
+                  <input style={iStyle} value={form.serving_size} onChange={e => setF('serving_size', e.target.value)} placeholder="e.g. 12 oz" />
                 </div>
                 <div>
                   <label style={lStyle}>Prep Time</label>
                   <input style={iStyle} value={form.prep_time} onChange={e => setF('prep_time', e.target.value)} placeholder="e.g. 3 mins" />
                 </div>
               </div>
+
+              {/* Toggles */}
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
                 <input type="checkbox" checked={form.junior_visible} onChange={e => setF('junior_visible', e.target.checked)} style={{ width: 16, height: 16, accentColor: '#ef4576' }} />
                 <span>Visible to Junior staff</span>
@@ -549,7 +704,7 @@ export default function RecipesPage() {
                   <label style={{ ...lStyle, marginBottom: 0 }}>Ingredients</label>
                   <button onClick={addIngredient} style={{ fontSize: 12, background: '#f3f4f6', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', color: 'var(--text-primary)' }}>+ Add</button>
                 </div>
-                {form.ingredients.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>No ingredients yet.</div>}
+                {form.ingredients.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 0' }}>No ingredients yet.</div>}
                 {form.ingredients.length > 0 && (
                   <div style={{ fontSize: 10, color: 'var(--text-muted)', display: 'grid', gridTemplateColumns: '1fr 80px 80px 28px', gap: 8, marginBottom: 6, paddingLeft: 4 }}>
                     <span>Ingredient</span><span>Qty</span><span>Unit</span><span></span>
@@ -566,7 +721,7 @@ export default function RecipesPage() {
                   <label style={{ ...lStyle, marginBottom: 0 }}>Preparation Steps</label>
                   <button onClick={addStep} style={{ fontSize: 12, background: '#f3f4f6', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', color: 'var(--text-primary)' }}>+ Add Step</button>
                 </div>
-                {form.steps.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>No steps yet.</div>}
+                {form.steps.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 0' }}>No steps yet.</div>}
                 {form.steps.map((step, i) => (
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 28px', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
@@ -590,9 +745,7 @@ export default function RecipesPage() {
 
         {/* DELETE CONFIRM */}
         <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} title="Delete Recipe?">
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24, lineHeight: 1.6 }}>
-            This will permanently delete this recipe and remove it from any linked COGS entries. This cannot be undone.
-          </p>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24, lineHeight: 1.6 }}>This will permanently delete this recipe. This cannot be undone.</p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <button onClick={() => setConfirmDelete(null)} style={btnStyle(false)}>Cancel</button>
             <button onClick={() => handleDelete(confirmDelete)} style={{ ...btnStyle(true), background: '#dc2626' }}>Delete</button>
