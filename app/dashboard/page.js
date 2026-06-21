@@ -313,8 +313,8 @@ export default function DashboardPage() {
         </div>
         )}
 
-        {/* TARGET ALERTS */}
-        {!financeLoading && (salesTargets.daily_target > 0 || salesTargets.monthly_target > 0) && (() => {
+        {/* TARGET ALERTS — hidden for HR */}
+        {userRole !== 'hr' && !financeLoading && (salesTargets.daily_target > 0 || salesTargets.monthly_target > 0) && (() => {
           const dailyPct  = salesTargets.daily_target  > 0 ? (todaySalesTotal  / salesTargets.daily_target)  * 100 : null
           const monthlyPct = salesTargets.monthly_target > 0 ? (totalSales / salesTargets.monthly_target) * 100 : null
           const items = []
