@@ -67,13 +67,27 @@ function getPalette(categories, catName) {
 
 function IngredientRow({ ing, onChange, onRemove }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 28px', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-      <input style={iStyle} placeholder="Ingredient name" value={ing.name} onChange={e => onChange({ ...ing, name: e.target.value })} />
-      <input style={iStyle} placeholder="Qty" type="number" min="0" step="any" value={ing.qty} onChange={e => onChange({ ...ing, qty: e.target.value })} />
-      <select style={iStyle} value={ing.unit} onChange={e => onChange({ ...ing, unit: e.target.value })}>
-        {UNITS.map(u => <option key={u}>{u}</option>)}
-      </select>
-      <button onClick={onRemove} style={{ background: '#fee2e2', border: 'none', borderRadius: 6, color: '#dc2626', cursor: 'pointer', fontWeight: 700, fontSize: 14, width: 28, height: 28 }}>×</button>
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+      {/* Row 1: name, qty, unit, remove */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 28px', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+        <input style={{ ...iStyle, background: 'var(--white)' }} placeholder="Ingredient name" value={ing.name} onChange={e => onChange({ ...ing, name: e.target.value })} />
+        <input style={{ ...iStyle, background: 'var(--white)' }} placeholder="Qty" type="number" min="0" step="any" value={ing.qty} onChange={e => onChange({ ...ing, qty: e.target.value })} />
+        <select style={{ ...iStyle, background: 'var(--white)' }} value={ing.unit} onChange={e => onChange({ ...ing, unit: e.target.value })}>
+          {UNITS.map(u => <option key={u}>{u}</option>)}
+        </select>
+        <button onClick={onRemove} style={{ background: '#fee2e2', border: 'none', borderRadius: 6, color: '#dc2626', cursor: 'pointer', fontWeight: 700, fontSize: 14, width: 28, height: 28 }}>×</button>
+      </div>
+      {/* Row 2: brand, variant */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Brand</div>
+          <input style={{ ...iStyle, background: 'var(--white)', fontSize: 12 }} placeholder="e.g. Superfood Grocer" value={ing.brand || ''} onChange={e => onChange({ ...ing, brand: e.target.value })} />
+        </div>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Variant</div>
+          <input style={{ ...iStyle, background: 'var(--white)', fontSize: 12 }} placeholder="e.g. Uji Tea" value={ing.variant || ''} onChange={e => onChange({ ...ing, variant: e.target.value })} />
+        </div>
+      </div>
     </div>
   )
 }
@@ -614,9 +628,25 @@ export default function RecipesPage() {
                     <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Ingredients</div>
                     <div style={{ background: 'var(--surface)', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
                       {viewRecipe.ingredients.map((ing, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderBottom: i < viewRecipe.ingredients.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 13 }}>
-                          <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{ing.name}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>{ing.qty} {ing.unit}</span>
+                        <div key={i} style={{ padding: '10px 14px', borderBottom: i < viewRecipe.ingredients.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (ing.brand || ing.variant) ? 6 : 0 }}>
+                            <span style={{ color: 'var(--text-primary)', fontWeight: 500, fontSize: 13 }}>{ing.name}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{ing.qty} {ing.unit}</span>
+                          </div>
+                          {(ing.brand || ing.variant) && (
+                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                              {ing.brand && (
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  <span style={{ fontWeight: 600 }}>Brand:</span> {ing.brand}
+                                </span>
+                              )}
+                              {ing.variant && (
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  <span style={{ fontWeight: 600 }}>Variant:</span> {ing.variant}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -705,11 +735,6 @@ export default function RecipesPage() {
                   <button onClick={addIngredient} style={{ fontSize: 12, background: '#f3f4f6', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', color: 'var(--text-primary)' }}>+ Add</button>
                 </div>
                 {form.ingredients.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 0' }}>No ingredients yet.</div>}
-                {form.ingredients.length > 0 && (
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', display: 'grid', gridTemplateColumns: '1fr 80px 80px 28px', gap: 8, marginBottom: 6, paddingLeft: 4 }}>
-                    <span>Ingredient</span><span>Qty</span><span>Unit</span><span></span>
-                  </div>
-                )}
                 {form.ingredients.map((ing, i) => (
                   <IngredientRow key={i} ing={ing} onChange={val => updateIngredient(i, val)} onRemove={() => removeIngredient(i)} />
                 ))}
