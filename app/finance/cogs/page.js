@@ -83,41 +83,101 @@ function syncIngredientCosts(recipeIngredients, savedCosts) {
   })
 }
 
-function calcTotals(ingredientCosts, laborCost, packCost, overCost, sellingPrice) {
+function syncPackagingCosts(recipePackaging, savedCosts) {
+  return (recipePackaging || []).map(pkg => {
+    const existing = (savedCosts || []).find(c => c.item_name === pkg.name)
+    return {
+      item_name: pkg.name || '',
+      brand: pkg.brand || '',
+      variant: pkg.variant || '',
+      qty: pkg.qty || '',
+      unit: pkg.unit || '',
+      cost_per_unit: existing ? existing.cost_per_unit : '',
+    }
+  })
+}
+
+function calcTotals(ingredientCosts, packagingCosts, laborCost, overCost, sellingPrice) {
   const ingTotal = (ingredientCosts || []).reduce((s, r) => s + (parseFloat(r.cost_per_unit) || 0), 0)
-  const other = (parseFloat(laborCost) || 0) + (parseFloat(packCost) || 0) + (parseFloat(overCost) || 0)
-  const total = ingTotal + other
+  const pkgTotal = (packagingCosts || []).reduce((s, r) => s + (parseFloat(r.cost_per_unit) || 0), 0)
+  const other = (parseFloat(laborCost) || 0) + (parseFloat(overCost) || 0)
+  const total = ingTotal + pkgTotal + other
   const sp = parseFloat(sellingPrice) || 0
   const margin = sp > 0 ? ((sp - total) / sp * 100) : null
-  return { ingTotal, other, total, margin }
+  return { ingTotal, pkgTotal, other, total, margin }
 }
 
 // ─── Cost Editor Modal ────────────────────────────────────────────────────────
-// This opens when you click a recipe card — lets you fill in costs
 function CostEditor({ entry, onSave, onClose, saving }) {
-  // entry is a merged object: recipe + any saved cogs data
-  const [costs, setCosts] = useState(
-    (entry.ingredient_costs || []).map(r => ({ ...r }))
-  )
+  const [ingCosts, setIngCosts] = useState((entry.ingredient_costs || []).map(r => ({ ...r })))
+  const [pkgCosts, setPkgCosts] = useState((entry.packaging_costs || []).map(r => ({ ...r })))
   const [sellingPrice, setSellingPrice] = useState(entry.selling_price ?? '')
   const [laborCost, setLaborCost] = useState(entry.labor_cost ?? '')
-  const [packCost, setPackCost] = useState(entry.packaging_cost ?? '')
   const [overCost, setOverCost] = useState(entry.overhead_cost ?? '')
   const [notes, setNotes] = useState(entry.notes || '')
 
-  function updateCost(i, val) {
-    setCosts(prev => prev.map((r, idx) => idx === i ? { ...r, cost_per_unit: val } : r))
+  function updateIngCost(i, val) {
+    setIngCosts(prev => prev.map((r, idx) => idx === i ? { ...r, cost_per_unit: val } : r))
+  }
+  function updatePkgCost(i, val) {
+    setPkgCosts(prev => prev.map((r, idx) => idx === i ? { ...r, cost_per_unit: val } : r))
   }
 
-  const { ingTotal, other, total, margin } = calcTotals(costs, laborCost, packCost, overCost, sellingPrice)
+  const { ingTotal, pkgTotal, other, total, margin } = calcTotals(ingCosts, pkgCosts, laborCost, overCost, sellingPrice)
 
-  const btn = (primary, danger) => ({
+  const btn = (primary) => ({
     padding: '9px 18px', borderRadius: 9,
-    border: danger ? '1px solid #fecaca' : primary ? 'none' : '1px solid var(--border)',
+    border: primary ? 'none' : '1px solid var(--border)',
     cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans',sans-serif",
     background: primary ? '#ef4576' : 'var(--surface)',
-    color: danger ? '#dc2626' : primary ? 'white' : 'var(--text-primary)',
+    color: primary ? 'white' : 'var(--text-primary)',
   })
+
+  // Reusable cost table renderer
+  function CostTable({ rows, onUpdate, emptyMsg }) {
+    if (rows.length === 0) return (
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0' }}>{emptyMsg}</div>
+    )
+    return (
+      <div style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 90px 1fr 110px', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+          {['Item', 'Qty', 'Brand · Variant', 'Cost (₱)'].map(h => (
+            <div key={h} style={{ padding: '8px 12px', fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)' }}>{h}</div>
+          ))}
+        </div>
+        {rows.map((row, i) => {
+          const name = row.ingredient_name || row.item_name || ''
+          return (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 90px 1fr 110px', borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', background: row.cost_per_unit ? 'transparent' : '#fffaf8' }}>
+              <div style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{name}</div>
+              <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }}>{row.qty} {row.unit}</div>
+              <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {row.brand && <div style={{ fontWeight: 500 }}>{row.brand}</div>}
+                {row.variant && <div style={{ opacity: 0.75 }}>{row.variant}</div>}
+                {!row.brand && !row.variant && <span style={{ fontStyle: 'italic' }}>—</span>}
+              </div>
+              <div style={{ padding: '6px 10px' }}>
+                <input type="number" min="0" step="0.01" placeholder="0.00"
+                  value={row.cost_per_unit}
+                  onChange={e => onUpdate(i, e.target.value)}
+                  style={{ ...iStyle, padding: '7px 10px', fontSize: 13, textAlign: 'right',
+                    background: row.cost_per_unit ? '#f0fdf4' : 'var(--surface)',
+                    borderColor: row.cost_per_unit ? '#a7f3d0' : 'var(--border)',
+                  }}
+                />
+              </div>
+            </div>
+          )
+        })}
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Subtotal</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+            {peso(rows.reduce((s, r) => s + (parseFloat(r.cost_per_unit) || 0), 0))}
+          </span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -127,14 +187,21 @@ function CostEditor({ entry, onSave, onClose, saving }) {
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Recipe</div>
         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>📒 {entry.recipe_name}</div>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{entry.category}{entry.subcategory ? ` › ${entry.subcategory}` : ''}</div>
+        {entry.assigned_roles && entry.assigned_roles.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', alignSelf: 'center' }}>Assigned:</span>
+            {entry.assigned_roles.map(role => (
+              <span key={role} style={{ fontSize: 11, fontWeight: 500, padding: '2px 10px', borderRadius: 20, background: '#fdf2f5', color: '#ef4576', border: '1px solid #fbcfe8' }}>{role}</span>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Selling price + other costs */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+      {/* Selling price + overhead + labor */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
         {[
           ['Selling Price (₱)', sellingPrice, setSellingPrice],
           ['Labor Cost (₱)', laborCost, setLaborCost],
-          ['Packaging (₱)', packCost, setPackCost],
           ['Overhead (₱)', overCost, setOverCost],
         ].map(([label, val, setter]) => (
           <div key={label}>
@@ -144,51 +211,16 @@ function CostEditor({ entry, onSave, onClose, saving }) {
         ))}
       </div>
 
-      {/* Ingredient cost table */}
+      {/* Ingredients */}
       <div>
-        <label style={{ ...lStyle, marginBottom: 10 }}>Ingredient Costs — enter ₱ cost per ingredient</label>
-        {costs.length === 0 ? (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0' }}>
-            No ingredients on this recipe. Add them in Recipes first, then come back here.
-          </div>
-        ) : (
-          <div style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-            {/* Header */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 90px 1fr 110px', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-              {['Ingredient', 'Qty', 'Brand · Variant', 'Cost (₱)'].map(h => (
-                <div key={h} style={{ padding: '8px 12px', fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)' }}>{h}</div>
-              ))}
-            </div>
-            {/* Rows */}
-            {costs.map((row, i) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 90px 1fr 110px', borderBottom: i < costs.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', background: row.cost_per_unit ? 'transparent' : '#fffaf8' }}>
-                <div style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{row.ingredient_name}</div>
-                <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }}>{row.qty} {row.unit}</div>
-                <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                  {row.brand && <div style={{ fontWeight: 500 }}>{row.brand}</div>}
-                  {row.variant && <div style={{ opacity: 0.75 }}>{row.variant}</div>}
-                  {!row.brand && !row.variant && <span style={{ fontStyle: 'italic' }}>—</span>}
-                </div>
-                <div style={{ padding: '6px 10px' }}>
-                  <input
-                    type="number" min="0" step="0.01" placeholder="0.00"
-                    value={row.cost_per_unit}
-                    onChange={e => updateCost(i, e.target.value)}
-                    style={{ ...iStyle, padding: '7px 10px', fontSize: 13, textAlign: 'right',
-                      background: row.cost_per_unit ? '#f0fdf4' : 'var(--surface)',
-                      borderColor: row.cost_per_unit ? '#a7f3d0' : 'var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-            {/* Ingredient subtotal */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Ingredient Subtotal</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{peso(ingTotal)}</span>
-            </div>
-          </div>
-        )}
+        <label style={{ ...lStyle, marginBottom: 10 }}>Ingredients</label>
+        <CostTable rows={ingCosts} onUpdate={updateIngCost} emptyMsg="No ingredients on this recipe. Add them in Recipes first." />
+      </div>
+
+      {/* Packaging */}
+      <div>
+        <label style={{ ...lStyle, marginBottom: 10 }}>Packaging</label>
+        <CostTable rows={pkgCosts} onUpdate={updatePkgCost} emptyMsg="No packaging on this recipe. Add items like cups, lids, straws in Recipes first." />
       </div>
 
       {/* Live summary */}
@@ -196,7 +228,7 @@ function CostEditor({ entry, onSave, onClose, saving }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', borderBottom: margin !== null ? '1px solid var(--border)' : 'none' }}>
           {[
             ['Ingredients', peso(ingTotal)],
-            ['Labor + Pack + OH', peso(other)],
+            ['Packaging', peso(pkgTotal)],
             ['Total COGS', peso(total)],
             ['Selling Price', parseFloat(sellingPrice) > 0 ? peso(sellingPrice) : '—'],
           ].map(([label, value], i) => (
@@ -226,10 +258,8 @@ function CostEditor({ entry, onSave, onClose, saving }) {
 
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 18 }}>
         <button onClick={onClose} style={btn(false)}>Cancel</button>
-        <button
-          onClick={() => onSave({ costs, sellingPrice, laborCost, packCost, overCost, notes, total, margin })}
-          disabled={saving}
-          style={{ ...btn(true), opacity: saving ? 0.6 : 1 }}>
+        <button onClick={() => onSave({ ingCosts, pkgCosts, sellingPrice, laborCost, overCost, notes, total, margin })}
+          disabled={saving} style={{ ...btn(true), opacity: saving ? 0.6 : 1 }}>
           {saving ? 'Saving…' : 'Save Costs'}
         </button>
       </div>
@@ -239,8 +269,10 @@ function CostEditor({ entry, onSave, onClose, saving }) {
 
 // ─── Gallery Card ─────────────────────────────────────────────────────────────
 function RecipeCogsCard({ entry, palette, onClick }) {
-  const costed = (entry.ingredient_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
-  const total_ing = (entry.ingredient_costs || []).length
+  const ingCosted = (entry.ingredient_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
+  const pkgCosted = (entry.packaging_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
+  const costed = ingCosted + pkgCosted
+  const total_ing = (entry.ingredient_costs || []).length + (entry.packaging_costs || []).length
   const allCosted = total_ing > 0 && costed === total_ing
   const noneCosted = costed === 0
   const margin = entry.gross_margin
@@ -365,7 +397,7 @@ export default function CogsPage() {
     // Load all active recipes
     const { data: recipes } = await supabase
       .from('recipes')
-      .select('id, name, category, subcategory, ingredients, is_active')
+      .select('id, name, category, subcategory, ingredients, packaging, assigned_roles, is_active')
       .eq('is_active', true)
       .order('category').order('subcategory').order('name')
 
@@ -383,20 +415,22 @@ export default function CogsPage() {
     const merged = (recipes || []).map(recipe => {
       const cogs = cogsMap[recipe.id] || {}
       const ingredient_costs = syncIngredientCosts(recipe.ingredients, cogs.ingredient_costs)
+      const packaging_costs = syncPackagingCosts(recipe.packaging, cogs.packaging_costs)
       return {
         recipe_id: recipe.id,
         recipe_name: recipe.name,
         category: recipe.category,
         subcategory: recipe.subcategory,
+        assigned_roles: recipe.assigned_roles || [],
         cogs_id: cogs.id || null,
         selling_price: cogs.selling_price ?? '',
         labor_cost: cogs.labor_cost ?? '',
-        packaging_cost: cogs.packaging_cost ?? '',
         overhead_cost: cogs.overhead_cost ?? '',
         total_cost: cogs.total_cost || null,
         gross_margin: cogs.gross_margin ?? null,
         notes: cogs.notes || '',
         ingredient_costs,
+        packaging_costs,
       }
     })
 
@@ -415,20 +449,19 @@ export default function CogsPage() {
     return found ? PALETTE[found.colorIdx % PALETTE.length] : PALETTE[3]
   }
 
-  async function handleSave({ costs, sellingPrice, laborCost, packCost, overCost, notes, total, margin }) {
+  async function handleSave({ ingCosts, pkgCosts, sellingPrice, laborCost, overCost, notes, total, margin }) {
     if (!editEntry) return
     setSaving(true)
-
     const payload = {
       recipe_id: editEntry.recipe_id,
       item_name: editEntry.recipe_name,
       selling_price: parseFloat(sellingPrice) || null,
       labor_cost: parseFloat(laborCost) || 0,
-      packaging_cost: parseFloat(packCost) || 0,
       overhead_cost: parseFloat(overCost) || 0,
       total_cost: total,
       gross_margin: margin !== null ? parseFloat(margin.toFixed(2)) : null,
-      ingredient_costs: costs,
+      ingredient_costs: ingCosts,
+      packaging_costs: pkgCosts,
       notes: notes?.trim() || '',
       is_active: true,
     }
@@ -450,13 +483,16 @@ export default function CogsPage() {
   const filtered = entries.filter(e => {
     if (search && !e.recipe_name.toLowerCase().includes(search.toLowerCase())) return false
     if (filterStatus === 'pending') {
-      const costed = (e.ingredient_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
-      if (costed > 0) return false
+      const ingC = (e.ingredient_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
+      const pkgC = (e.packaging_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
+      if (ingC + pkgC > 0) return false
     }
     if (filterStatus === 'costed') {
-      const costed = (e.ingredient_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
-      const total = (e.ingredient_costs || []).length
-      if (total === 0 || costed < total) return false
+      const ingC = (e.ingredient_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
+      const pkgC = (e.packaging_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
+      const ingT = (e.ingredient_costs || []).length
+      const pkgT = (e.packaging_costs || []).length
+      if ((ingT + pkgT) === 0 || (ingC + pkgC) < (ingT + pkgT)) return false
     }
     return true
   })
@@ -477,9 +513,11 @@ export default function CogsPage() {
 
   // Summary stats
   const totalCosted = entries.filter(e => {
-    const c = (e.ingredient_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
-    const t = (e.ingredient_costs || []).length
-    return t > 0 && c === t
+    const ingC = (e.ingredient_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
+    const pkgC = (e.packaging_costs || []).filter(r => r.cost_per_unit && parseFloat(r.cost_per_unit) > 0).length
+    const ingT = (e.ingredient_costs || []).length
+    const pkgT = (e.packaging_costs || []).length
+    return (ingT + pkgT) > 0 && (ingC + pkgC) === (ingT + pkgT)
   }).length
   const withMargin = entries.filter(e => e.gross_margin !== null)
   const avgMargin = withMargin.length > 0
