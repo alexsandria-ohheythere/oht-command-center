@@ -263,7 +263,7 @@ function CategoryManager({ categories, onSave, onClose, saving }) {
 const blankRecipe = (cat, sub) => ({
   name: '', category: cat || '', subcategory: sub || '', description: '',
   serving_size: '', prep_time: '', junior_visible: false, is_active: true,
-  ingredients: [], steps: [],
+  ingredients: [], packaging: [], assigned_roles: [], steps: [],
 })
 
 export default function RecipesPage() {
@@ -356,6 +356,8 @@ export default function RecipesPage() {
       junior_visible: r.junior_visible || false,
       is_active: r.is_active !== false,
       ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
+      packaging: Array.isArray(r.packaging) ? r.packaging : [],
+      assigned_roles: Array.isArray(r.assigned_roles) ? r.assigned_roles : [],
       steps: Array.isArray(r.steps) ? r.steps : [],
     })
     setShowForm(true)
@@ -373,6 +375,10 @@ export default function RecipesPage() {
   function addIngredient() { setF('ingredients', [...form.ingredients, { name: '', qty: '', unit: 'g' }]) }
   function updateIngredient(i, val) { const a = [...form.ingredients]; a[i] = val; setF('ingredients', a) }
   function removeIngredient(i) { setF('ingredients', form.ingredients.filter((_, idx) => idx !== i)) }
+  function addPackaging() { setF('packaging', [...(form.packaging || []), { name: '', qty: '', unit: 'pcs', brand: '', variant: '' }]) }
+  function updatePackaging(i, val) { const a = [...(form.packaging || [])]; a[i] = val; setF('packaging', a) }
+  function removePackaging(i) { setF('packaging', (form.packaging || []).filter((_, idx) => idx !== i)) }
+  function toggleRole(role) { const cur = form.assigned_roles || []; setF('assigned_roles', cur.includes(role) ? cur.filter(r => r !== role) : [...cur, role]) }
   function addStep() { setF('steps', [...form.steps, '']) }
   function updateStep(i, val) { const a = [...form.steps]; a[i] = val; setF('steps', a) }
   function removeStep(i) { setF('steps', form.steps.filter((_, idx) => idx !== i)) }
@@ -391,6 +397,8 @@ export default function RecipesPage() {
       junior_visible: form.junior_visible,
       is_active: form.is_active,
       ingredients: form.ingredients.filter(i => i.name.trim()),
+      packaging: (form.packaging || []).filter(i => i.name.trim()),
+      assigned_roles: form.assigned_roles || [],
       steps: form.steps.filter(s => s.trim()),
     }
     let error
@@ -635,19 +643,44 @@ export default function RecipesPage() {
                           </div>
                           {(ing.brand || ing.variant) && (
                             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                              {ing.brand && (
-                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  <span style={{ fontWeight: 600 }}>Brand:</span> {ing.brand}
-                                </span>
-                              )}
-                              {ing.variant && (
-                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  <span style={{ fontWeight: 600 }}>Variant:</span> {ing.variant}
-                                </span>
-                              )}
+                              {ing.brand && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}><span style={{ fontWeight: 600 }}>Brand:</span> {ing.brand}</span>}
+                              {ing.variant && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}><span style={{ fontWeight: 600 }}>Variant:</span> {ing.variant}</span>}
                             </div>
                           )}
                         </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {Array.isArray(viewRecipe.packaging) && viewRecipe.packaging.length > 0 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Packaging</div>
+                    <div style={{ background: 'var(--surface)', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                      {viewRecipe.packaging.map((pkg, i) => (
+                        <div key={i} style={{ padding: '10px 14px', borderBottom: i < viewRecipe.packaging.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (pkg.brand || pkg.variant) ? 6 : 0 }}>
+                            <span style={{ color: 'var(--text-primary)', fontWeight: 500, fontSize: 13 }}>{pkg.name}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{pkg.qty} {pkg.unit}</span>
+                          </div>
+                          {(pkg.brand || pkg.variant) && (
+                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                              {pkg.brand && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}><span style={{ fontWeight: 600 }}>Brand:</span> {pkg.brand}</span>}
+                              {pkg.variant && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}><span style={{ fontWeight: 600 }}>Variant:</span> {pkg.variant}</span>}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {Array.isArray(viewRecipe.assigned_roles) && viewRecipe.assigned_roles.length > 0 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10 }}>Assigned Employee</div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {viewRecipe.assigned_roles.map(role => (
+                        <span key={role} style={{ fontSize: 12, fontWeight: 500, padding: '5px 12px', borderRadius: 20, background: '#fdf2f5', color: '#ef4576', border: '1px solid #fbcfe8' }}>{role}</span>
                       ))}
                     </div>
                   </div>
@@ -738,6 +771,37 @@ export default function RecipesPage() {
                 {form.ingredients.map((ing, i) => (
                   <IngredientRow key={i} ing={ing} onChange={val => updateIngredient(i, val)} onRemove={() => removeIngredient(i)} />
                 ))}
+              </div>
+
+              {/* Packaging */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <label style={{ ...lStyle, marginBottom: 0 }}>Packaging</label>
+                  <button onClick={addPackaging} style={{ fontSize: 12, background: '#f3f4f6', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', color: 'var(--text-primary)' }}>+ Add</button>
+                </div>
+                {(form.packaging || []).length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 0' }}>No packaging yet. e.g. 12oz Cup, Lid, Straw</div>}
+                {(form.packaging || []).map((pkg, i) => (
+                  <IngredientRow key={i} ing={pkg} onChange={val => updatePackaging(i, val)} onRemove={() => removePackaging(i)} />
+                ))}
+              </div>
+
+              {/* Assigned Employee */}
+              <div>
+                <label style={{ ...lStyle, marginBottom: 10 }}>Assigned Employee</label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {['Senior Barista', 'Junior Barista - Milk Station', 'Junior Barista - Cashier', 'Executive Chef', 'Sous Chef', 'Kitchen Staff'].map(role => {
+                    const selected = (form.assigned_roles || []).includes(role)
+                    return (
+                      <button key={role} type="button" onClick={() => toggleRole(role)} style={{
+                        padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 500,
+                        cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", transition: 'all .15s',
+                        background: selected ? '#fdf2f5' : 'var(--surface)',
+                        color: selected ? '#ef4576' : 'var(--text-muted)',
+                        border: selected ? '1.5px solid #ef4576' : '1px solid var(--border)',
+                      }}>{role}</button>
+                    )
+                  })}
+                </div>
               </div>
 
               {/* Steps */}
