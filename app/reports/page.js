@@ -9,6 +9,7 @@ import { createClient } from '../../lib/supabase'
 const INCIDENT_AUTHORIZED = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com', 'hr.ohtgroup@gmail.com']
 const DELETE_AUTHORIZED   = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
 const HR_EMAIL = 'hr.ohtgroup@gmail.com'
+const HR_STAFF_EMAIL = 'nazar.richelleann@gmail.com' // Richelle's staff portal email
 
 const STATUS_STYLE = {
   pending:  { bg:'#fef3e2', color:'#a06000', label:'Pending' },
@@ -64,9 +65,22 @@ export default function ReportsPage() {
         .order('created_at', { ascending: false })
       const isHR = session?.user?.email?.toLowerCase() === HR_EMAIL
       let allReports = data || []
-      // HR cannot see reports involving a Cafe Supervisor
+      // HR cannot see reports involving a Cafe Supervisor,
+      // and cannot see reports where they are listed as a person involved
       if (isHR) {
-        allReports = allReports.filter(r => r.staff?.role !== 'supervisor')
+        allReports = allReports.filter(r => r.staff?.role !== 'Cafe Supervisor')
+        // Fetch HR staff record to get their full name
+        const { data: hrStaff } = await supabase
+          .from('staff')
+          .select('first_name, last_name')
+          .eq('email', HR_STAFF_EMAIL)
+          .single()
+        if (hrStaff) {
+          const hrFullName = `${hrStaff.first_name} ${hrStaff.last_name}`.toLowerCase()
+          allReports = allReports.filter(r =>
+            !r.persons_involved?.toLowerCase().includes(hrFullName)
+          )
+        }
       }
       setReports(allReports)
     } catch(e) { console.error(e) }
