@@ -75,7 +75,7 @@ export default function ReportsPage() {
         const supabase = createClient()
         const { data } = await supabase
           .from('handbook_entries')
-          .select('id, violation_code, title, category, severity')
+          .select('id, violation_code, title, category, severity, sanction_1st, sanction_2nd, sanction_3rd, sanction_4th, sanction_5th')
           .eq('is_active', true)
           .order('violation_code', { ascending: true })
         setHandbookEntries(data || [])
