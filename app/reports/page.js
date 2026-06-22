@@ -52,6 +52,7 @@ export default function ReportsPage() {
   const [filterStage, setFilterStage] = useState('all')
   const [filterDept, setFilterDept]   = useState('all')
   const [search, setSearch]           = useState('')
+  const [expandedStages, setExpandedStages] = useState(new Set())
 
   // Panel state per stage
   const [hrNotes,          setHrNotes]          = useState('')
@@ -113,6 +114,7 @@ export default function ReportsPage() {
 
   function openReport(r) {
     setSelected(r)
+    setExpandedStages(new Set())
     setHrNotes(r.hr_notes || '')
     setMgtNotes(r.mgt_notes || '')
     setInvestigationFindings(r.investigation_findings || '')
@@ -379,6 +381,8 @@ export default function ReportsPage() {
                   bg="#f5eeff"
                   active={(selected.stage || 'hr_review') === 'hr_review'}
                   done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 1}
+                  expanded={expandedStages.has('hr_review')}
+                  onToggle={() => setExpandedStages(s => { const n = new Set(s); n.has('hr_review') ? n.delete('hr_review') : n.add('hr_review'); return n })}
                   viewContent={
                     <div>
                       <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>HR Screening Notes</div>
@@ -426,6 +430,8 @@ export default function ReportsPage() {
                   active={(selected.stage || 'hr_review') === 'mgt_review'}
                   done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 2}
                   locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 2}
+                  expanded={expandedStages.has('mgt_review')}
+                  onToggle={() => setExpandedStages(s => { const n = new Set(s); n.has('mgt_review') ? n.delete('mgt_review') : n.add('mgt_review'); return n })}
                   viewContent={
                     <div>
                       <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Management Notes</div>
@@ -476,6 +482,8 @@ export default function ReportsPage() {
                   active={(selected.stage || 'hr_review') === 'investigation'}
                   done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 3}
                   locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 3}
+                  expanded={expandedStages.has('investigation')}
+                  onToggle={() => setExpandedStages(s => { const n = new Set(s); n.has('investigation') ? n.delete('investigation') : n.add('investigation'); return n })}
                   viewContent={
                     <div>
                       <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Investigation Findings</div>
@@ -528,6 +536,8 @@ export default function ReportsPage() {
                   active={(selected.stage || 'hr_review') === 'final_sanction'}
                   done={(selected.stage || 'hr_review') === 'closed'}
                   locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4}
+                  expanded={expandedStages.has('final_sanction')}
+                  onToggle={() => setExpandedStages(s => { const n = new Set(s); n.has('final_sanction') ? n.delete('final_sanction') : n.add('final_sanction'); return n })}
                   viewContent={
                     <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                       {selected.handbook_ref && (
@@ -654,8 +664,7 @@ function StageProgress({ report }) {
   )
 }
 
-function StageBlock({ num, title, color, bg, active, done, locked, viewContent, children }) {
-  const [open, setOpen] = useState(false)
+function StageBlock({ num, title, color, bg, active, done, locked, viewContent, children, expanded, onToggle }) {
   const hasView = viewContent && (done || locked)
 
   return (
@@ -665,10 +674,10 @@ function StageBlock({ num, title, color, bg, active, done, locked, viewContent, 
       padding:'14px',
       marginBottom:12,
       background: active ? bg : done ? '#f7fcf4' : '#faf8f5',
-      opacity: locked && !open ? 0.65 : 1,
+      opacity: locked && !expanded ? 0.65 : 1,
       transition:'opacity .15s',
     }}>
-      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom: active || open ? 10 : 0 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom: active || expanded ? 10 : 0 }}>
         <div style={{
           width:22, height:22, borderRadius:'50%', fontSize:10, fontWeight:700,
           display:'flex', alignItems:'center', justifyContent:'center',
@@ -684,14 +693,14 @@ function StageBlock({ num, title, color, bg, active, done, locked, viewContent, 
         </div>
         {hasView && (
           <button
-            onClick={() => setOpen(v => !v)}
+            onClick={onToggle}
             style={{ background:'transparent', border:'none', cursor:'pointer', fontSize:11, color: done ? '#4a7a1e' : '#9a8a7a', fontWeight:600, padding:'2px 6px', borderRadius:6, display:'flex', alignItems:'center', gap:3, fontFamily:"'DM Sans',sans-serif" }}>
-            {open ? '▲ Hide' : '▾ View'}
+            {expanded ? '▲ Hide' : '▾ View'}
           </button>
         )}
       </div>
       {active && children}
-      {!active && open && hasView && (
+      {!active && expanded && hasView && (
         <div style={{ marginTop:4 }}>
           {viewContent}
         </div>
