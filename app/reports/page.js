@@ -652,14 +652,29 @@ export default function ReportsPage() {
                     Final sanction must be supported by the OHT Employee Handbook.
                     Reference the applicable section below.
                   </div>
-                  <label style={labelStyle}>Handbook Reference</label>
-                  <input
+                  <label style={labelStyle}>Handbook Violation Reference</label>
+                  <select
                     value={handbookRef}
                     onChange={e => setHandbookRef(e.target.value)}
                     disabled={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4}
-                    placeholder="e.g. Section 8.3 — Progressive Discipline"
-                    style={{ ...inputStyle, opacity: STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4 ? 0.5 : 1, marginBottom:8 }}
-                  />
+                    style={{ width:'100%', border:'1px solid #d8cebb', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color: handbookRef ? '#1a1208' : '#9a8a7a', outline:'none', background:'white', opacity: STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4 ? 0.5 : 1, boxSizing:'border-box', marginBottom:8 }}>
+                    <option value="">— Select handbook violation —</option>
+                    {Object.entries(
+                      handbookEntries.reduce((acc, e) => {
+                        if (!acc[e.category]) acc[e.category] = []
+                        acc[e.category].push(e)
+                        return acc
+                      }, {})
+                    ).map(([cat, entries]) => (
+                      <optgroup key={cat} label={cat}>
+                        {entries.map(e => (
+                          <option key={e.id} value={`${e.violation_code} — ${e.title}`}>
+                            {e.violation_code} — {e.title} ({e.severity})
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
                   <label style={labelStyle}>Sanction Details</label>
                   <textarea
                     value={sanctionDetails}
