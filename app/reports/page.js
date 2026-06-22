@@ -53,11 +53,13 @@ export default function ReportsPage() {
   const [filterDept, setFilterDept]   = useState('all')
   const [search, setSearch]           = useState('')
   const [expandedStages, setExpandedStages] = useState(new Set())
+  const [handbookEntries, setHandbookEntries] = useState([])
 
   // Panel state per stage
   const [hrNotes,          setHrNotes]          = useState('')
   const [hrSanction,       setHrSanction]       = useState('')
   const [hrSanctionNotes,  setHrSanctionNotes]  = useState('')
+  const [hrViolation,      setHrViolation]      = useState('')
   const [mgtNotes,         setMgtNotes]          = useState('')
   const [investigationFindings, setInvestigationFindings] = useState('')
   const [sanctionDetails,  setSanctionDetails]  = useState('')
@@ -65,6 +67,20 @@ export default function ReportsPage() {
 
   useEffect(() => { fetchReports() }, [])
   useEffect(() => { applyFilters() }, [reports, filterStage, filterDept, search])
+  useEffect(() => {
+    async function fetchHandbook() {
+      try {
+        const supabase = createClient()
+        const { data } = await supabase
+          .from('handbook_entries')
+          .select('id, violation_code, title, category, severity')
+          .eq('is_active', true)
+          .order('violation_code', { ascending: true })
+        setHandbookEntries(data || [])
+      } catch(e) { console.error('handbook fetch', e) }
+    }
+    fetchHandbook()
+  }, [])
 
   async function fetchReports() {
     setLoading(true)
@@ -120,6 +136,7 @@ export default function ReportsPage() {
     setHrNotes(r.hr_notes || '')
     setHrSanction(r.hr_sanction || '')
     setHrSanctionNotes(r.hr_sanction_notes || '')
+    setHrViolation(r.hr_violation || '')
     setMgtNotes(r.mgt_notes || '')
     setInvestigationFindings(r.investigation_findings || '')
     setSanctionDetails(r.sanction_details || '')
@@ -136,6 +153,7 @@ export default function ReportsPage() {
         hr_notes: hrNotes || null,
         hr_sanction: hrSanction || null,
         hr_sanction_notes: hrSanctionNotes || null,
+        hr_violation: hrViolation || null,
         mgt_notes: mgtNotes || null,
         investigation_findings: investigationFindings || null,
         sanction_details: sanctionDetails || null,
@@ -162,6 +180,7 @@ export default function ReportsPage() {
         hr_notes: hrNotes || null,
         hr_sanction: hrSanction || null,
         hr_sanction_notes: hrSanctionNotes || null,
+        hr_violation: hrViolation || null,
         mgt_notes: mgtNotes || null,
         investigation_findings: investigationFindings || null,
         sanction_details: sanctionDetails || null,
@@ -401,10 +420,16 @@ export default function ReportsPage() {
                           {selected.hr_notes || <em style={{ color:'#9a8a7a' }}>No notes recorded</em>}
                         </div>
                       </div>
+                      {selected.hr_violation && (
+                        <div>
+                          <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Handbook Violation</div>
+                          <div style={{ fontSize:12, color:'#1a1208', background:'#f0eaf8', borderRadius:8, padding:'8px 12px', fontWeight:600 }}>📖 {selected.hr_violation}</div>
+                        </div>
+                      )}
                       {selected.hr_sanction && (
                         <div>
                           <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Recommended Sanction</div>
-                          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                             <span style={{ background:'#7a3a8a', color:'white', borderRadius:20, padding:'3px 10px', fontSize:11, fontWeight:700 }}>{selected.hr_sanction}</span>
                             {selected.hr_sanction_notes && <span style={{ fontSize:11, color:'#5a4a3a' }}>{selected.hr_sanction_notes}</span>}
                           </div>
@@ -426,6 +451,29 @@ export default function ReportsPage() {
                     placeholder="Initial screening observations, completeness check, etc."
                     style={{ ...textareaStyle, opacity: (!isHR && !isMgt) ? 0.6 : 1 }}
                   />
+                  <label style={{ ...labelStyle, marginTop:10 }}>Handbook Violation</label>
+                  <select
+                    value={hrViolation}
+                    onChange={e => setHrViolation(e.target.value)}
+                    disabled={!isHR && !isMgt}
+                    style={{ width:'100%', border:'1px solid #d8cebb', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color: hrViolation ? '#1a1208' : '#9a8a7a', outline:'none', background:'white', opacity: (!isHR && !isMgt) ? 0.6 : 1, boxSizing:'border-box' }}>
+                    <option value="">— Tag a handbook violation —</option>
+                    {Object.entries(
+                      handbookEntries.reduce((acc, e) => {
+                        if (!acc[e.category]) acc[e.category] = []
+                        acc[e.category].push(e)
+                        return acc
+                      }, {})
+                    ).map(([cat, entries]) => (
+                      <optgroup key={cat} label={cat}>
+                        {entries.map(e => (
+                          <option key={e.id} value={`${e.violation_code} — ${e.title}`}>
+                            {e.violation_code} — {e.title} ({e.severity})
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
                   <label style={{ ...labelStyle, marginTop:10 }}>Recommended Sanction</label>
                   <select
                     value={hrSanction}
