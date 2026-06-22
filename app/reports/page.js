@@ -4,18 +4,24 @@ import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 
-// Managing Director (Alex), CEO (CJ), and HR (Richelle) may view incident reports
-// HR may NOT see reports involving a Cafe Supervisor
+// Access control
 const INCIDENT_AUTHORIZED = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com', 'hr.ohtgroup@gmail.com']
-const DELETE_AUTHORIZED   = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
-const HR_EMAIL = 'hr.ohtgroup@gmail.com'
-const HR_STAFF_EMAIL = 'nazar.richelleann@gmail.com' // Richelle's staff portal email
+const MGT_EMAILS           = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
+const HR_EMAIL             = 'hr.ohtgroup@gmail.com'
+const HR_STAFF_EMAIL       = 'nazar.richelleann@gmail.com'
 
-const STATUS_STYLE = {
-  pending:  { bg:'#fef3e2', color:'#a06000', label:'Pending' },
-  reviewed: { bg:'#e8f0fb', color:'#2d5a8a', label:'Reviewed' },
-  resolved: { bg:'#eef7e4', color:'#4a7a1e', label:'Resolved' },
-}
+// ─── Workflow stages ───────────────────────────────────────────────────────────
+// Each incoming report starts at stage 1: hr_review
+// hr_review  → mgt_review → investigation → final_sanction → closed
+const STAGES = [
+  { key: 'hr_review',       label: 'HR Review',       short: 'HR Review',    color: '#7a3a8a', bg: '#f5eeff', num: 1 },
+  { key: 'mgt_review',      label: 'Mgt. Review',     short: 'Mgt. Review',  color: '#2d5a8a', bg: '#e8f0fb', num: 2 },
+  { key: 'investigation',   label: 'Investigation',   short: 'Investigate',  color: '#a06000', bg: '#fef3e2', num: 3 },
+  { key: 'final_sanction',  label: 'Final Sanction',  short: 'Final',        color: '#c0392b', bg: '#fff0f0', num: 4 },
+  { key: 'closed',          label: 'Closed',          short: 'Closed',       color: '#4a7a1e', bg: '#eef7e4', num: 5 },
+]
+const STAGE_MAP = Object.fromEntries(STAGES.map(s => [s.key, s]))
+
 const TYPE_ICONS = {
   'Injury/Accident':    '🩹',
   'Property Damage':    '🔧',
@@ -36,22 +42,26 @@ const fmtDate = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-PH', {
 const fmtCreated = s => s ? new Date(s).toLocaleDateString('en-PH', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }) : '—'
 
 export default function ReportsPage() {
-  const [userEmail, setUserEmail]   = useState(null)
-  const [reports, setReports]       = useState([])
-  const [filtered, setFiltered]     = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [selected, setSelected]     = useState(null)
-  const [saving, setSaving]         = useState(false)
-  const [toast, setToast]           = useState(null)
-  const [filterStatus, setFilter]   = useState('all')
-  const [filterDept, setFilterDept] = useState('all')
-  const [search, setSearch]         = useState('')
-  const [adminNotes, setAdminNotes]       = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  const [deleting, setDeleting]           = useState(false)
+  const [userEmail, setUserEmail]     = useState(null)
+  const [reports, setReports]         = useState([])
+  const [filtered, setFiltered]       = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [selected, setSelected]       = useState(null)
+  const [saving, setSaving]           = useState(false)
+  const [toast, setToast]             = useState(null)
+  const [filterStage, setFilterStage] = useState('all')
+  const [filterDept, setFilterDept]   = useState('all')
+  const [search, setSearch]           = useState('')
+
+  // Panel state per stage
+  const [hrNotes,          setHrNotes]          = useState('')
+  const [mgtNotes,         setMgtNotes]          = useState('')
+  const [investigationFindings, setInvestigationFindings] = useState('')
+  const [sanctionDetails,  setSanctionDetails]  = useState('')
+  const [handbookRef,      setHandbookRef]      = useState('')
 
   useEffect(() => { fetchReports() }, [])
-  useEffect(() => { applyFilters() }, [reports, filterStatus, filterDept, search])
+  useEffect(() => { applyFilters() }, [reports, filterStage, filterDept, search])
 
   async function fetchReports() {
     setLoading(true)
@@ -65,11 +75,8 @@ export default function ReportsPage() {
         .order('created_at', { ascending: false })
       const isHR = session?.user?.email?.toLowerCase() === HR_EMAIL
       let allReports = data || []
-      // HR cannot see reports involving a Cafe Supervisor,
-      // and cannot see reports where they are listed as a person involved
       if (isHR) {
         allReports = allReports.filter(r => r.staff?.role !== 'Cafe Supervisor')
-        // Fetch HR staff record to get their full name
         const { data: hrStaff } = await supabase
           .from('staff')
           .select('first_name, last_name')
@@ -89,13 +96,12 @@ export default function ReportsPage() {
 
   function applyFilters() {
     let list = [...reports]
-    if (filterStatus !== 'all') list = list.filter(r => r.status === filterStatus)
-    if (filterDept !== 'all')   list = list.filter(r => r.department === filterDept)
+    if (filterStage !== 'all') list = list.filter(r => (r.stage || 'hr_review') === filterStage)
+    if (filterDept !== 'all')  list = list.filter(r => r.department === filterDept)
     if (search.trim()) {
       const q = search.toLowerCase()
       list = list.filter(r =>
         r.incident_type?.toLowerCase().includes(q) ||
-        (!isHR && r.reported_by?.toLowerCase().includes(q)) ||
         r.description?.toLowerCase().includes(q) ||
         r.department?.toLowerCase().includes(q)
       )
@@ -103,57 +109,73 @@ export default function ReportsPage() {
     setFiltered(list)
   }
 
-  function showToast(icon, msg) { setToast({ icon, msg }); setTimeout(() => setToast(null), 3000) }
+  function showToast(icon, msg) { setToast({ icon, msg }); setTimeout(() => setToast(null), 3500) }
 
-  async function updateStatus(id, status) {
+  function openReport(r) {
+    setSelected(r)
+    setHrNotes(r.hr_notes || '')
+    setMgtNotes(r.mgt_notes || '')
+    setInvestigationFindings(r.investigation_findings || '')
+    setSanctionDetails(r.sanction_details || '')
+    setHandbookRef(r.handbook_ref || '')
+  }
+
+  // Advance to next stage (or set any stage for mgt)
+  async function advanceStage(report, newStage) {
     setSaving(true)
     try {
       const supabase = createClient()
+      const updates = {
+        stage: newStage,
+        hr_notes: hrNotes || null,
+        mgt_notes: mgtNotes || null,
+        investigation_findings: investigationFindings || null,
+        sanction_details: sanctionDetails || null,
+        handbook_ref: handbookRef || null,
+      }
       const { error } = await supabase
         .from('incident_reports')
-        .update({ status, admin_notes: adminNotes || null })
-        .eq('id', id)
+        .update(updates)
+        .eq('id', report.id)
       if (error) { showToast('❌', error.message); setSaving(false); return }
       await fetchReports()
-      setSelected(s => ({ ...s, status, admin_notes: adminNotes || s.admin_notes }))
-      showToast('✅', `Status updated to ${status}`)
+      setSelected(s => s ? { ...s, ...updates } : null)
+      showToast('✅', `Moved to ${STAGE_MAP[newStage]?.label}`)
     } catch(e) { showToast('❌', 'Update failed') }
     setSaving(false)
   }
 
-  async function deleteReport(id) {
-    setDeleting(true)
+  // Save notes only (no stage change)
+  async function saveNotes(report) {
+    setSaving(true)
     try {
       const supabase = createClient()
-      const { error } = await supabase.from('incident_reports').delete().eq('id', id)
-      if (error) { showToast('❌', error.message); setDeleting(false); return }
-      setSelected(null)
-      setConfirmDelete(false)
+      const updates = {
+        hr_notes: hrNotes || null,
+        mgt_notes: mgtNotes || null,
+        investigation_findings: investigationFindings || null,
+        sanction_details: sanctionDetails || null,
+        handbook_ref: handbookRef || null,
+      }
+      const { error } = await supabase
+        .from('incident_reports')
+        .update(updates)
+        .eq('id', report.id)
+      if (error) { showToast('❌', error.message); setSaving(false); return }
       await fetchReports()
-      showToast('🗑️', 'Report deleted')
-    } catch(e) { showToast('❌', 'Delete failed') }
-    setDeleting(false)
+      showToast('✅', 'Notes saved')
+    } catch(e) { showToast('❌', 'Save failed') }
+    setSaving(false)
   }
 
-  const canDelete = DELETE_AUTHORIZED.includes(userEmail)
-  const isHR = userEmail === HR_EMAIL
-
+  const isHR  = userEmail === HR_EMAIL
+  const isMgt = MGT_EMAILS.includes(userEmail)
   const DEPTS = ['Operations', 'Creatives', 'Cafe Bar', 'Commissary']
 
-  const counts = {
-    all:      reports.length,
-    pending:  reports.filter(r => r.status === 'pending').length,
-    reviewed: reports.filter(r => r.status === 'reviewed').length,
-    resolved: reports.filter(r => r.status === 'resolved').length,
-  }
+  const stageCounts = {}
+  STAGES.forEach(s => { stageCounts[s.key] = reports.filter(r => (r.stage || 'hr_review') === s.key).length })
 
-  if (userEmail === null) {
-    return (
-      <AuthShell>
-        <div style={{ height:'100%' }} />
-      </AuthShell>
-    )
-  }
+  if (userEmail === null) return <AuthShell><div style={{ height:'100%' }} /></AuthShell>
 
   if (!INCIDENT_AUTHORIZED.includes(userEmail)) {
     return (
@@ -173,40 +195,44 @@ export default function ReportsPage() {
     <AuthShell>
       <div style={{ display:'flex', flexDirection:'column', height:'100%', overflow:'hidden', fontFamily:"'DM Sans',sans-serif" }}>
 
+        {/* Header */}
         <div style={{ background:'white', borderBottom:'1px solid #e5e0d8', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
           <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:17, fontWeight:700 }}>Incident Reports</div>
           <div style={{ fontSize:11, color:'#9a8a7a' }}>{filtered.length} of {reports.length} reports</div>
         </div>
 
+        {/* Stage filter tabs */}
         <div style={{ background:'white', borderBottom:'1px solid #e5e0d8', padding:'0 24px', display:'flex', gap:4, overflowX:'auto', flexShrink:0 }}>
-          {[
-            { key:'all',      label:'All',      count: counts.all },
-            { key:'pending',  label:'Pending',  count: counts.pending },
-            { key:'reviewed', label:'Reviewed', count: counts.reviewed },
-            { key:'resolved', label:'Resolved', count: counts.resolved },
-          ].map(tab => (
-            <button key={tab.key}
-              onClick={() => setFilter(tab.key)}
-              style={{
-                background:'transparent', border:'none', borderBottom: filterStatus === tab.key ? '2px solid #EF4576' : '2px solid transparent',
-                padding:'12px 14px', fontSize:12, fontWeight: filterStatus === tab.key ? 700 : 400,
-                color: filterStatus === tab.key ? '#EF4576' : '#9a8a7a', cursor:'pointer', whiteSpace:'nowrap',
-                display:'flex', alignItems:'center', gap:6,
-              }}>
-              {tab.label}
-              {tab.count > 0 && (
-                <span style={{
-                  background: filterStatus === tab.key ? '#EF4576' : '#e5e0d8',
-                  color: filterStatus === tab.key ? 'white' : '#7a6a50',
-                  borderRadius:20, padding:'1px 7px', fontSize:10, fontWeight:700
-                }}>{tab.count}</span>
-              )}
-            </button>
-          ))}
+          {[{ key:'all', label:'All', count: reports.length }, ...STAGES].map(tab => {
+            const count = tab.key === 'all' ? reports.length : stageCounts[tab.key]
+            const isActive = filterStage === tab.key
+            const stg = STAGE_MAP[tab.key]
+            return (
+              <button key={tab.key}
+                onClick={() => setFilterStage(tab.key)}
+                style={{
+                  background:'transparent', border:'none',
+                  borderBottom: isActive ? `2px solid ${stg?.color || '#EF4576'}` : '2px solid transparent',
+                  padding:'12px 12px', fontSize:11, fontWeight: isActive ? 700 : 400,
+                  color: isActive ? (stg?.color || '#EF4576') : '#9a8a7a', cursor:'pointer', whiteSpace:'nowrap',
+                  display:'flex', alignItems:'center', gap:6,
+                }}>
+                {tab.label || tab.short}
+                {count > 0 && (
+                  <span style={{
+                    background: isActive ? (stg?.color || '#EF4576') : '#e5e0d8',
+                    color: isActive ? 'white' : '#7a6a50',
+                    borderRadius:20, padding:'1px 7px', fontSize:10, fontWeight:700
+                  }}>{count}</span>
+                )}
+              </button>
+            )
+          })}
         </div>
 
         <div style={{ flex:1, overflow:'hidden', display:'flex' }}>
 
+          {/* Report List */}
           <div style={{ flex:1, overflowY:'auto', padding:'16px 20px', minWidth:0 }}>
             <div style={{ display:'flex', gap:10, marginBottom:16 }}>
               <input
@@ -234,13 +260,14 @@ export default function ReportsPage() {
             ) : (
               <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                 {filtered.map(r => {
-                  const st = STATUS_STYLE[r.status] || STATUS_STYLE.pending
+                  const stage = r.stage || 'hr_review'
+                  const stg = STAGE_MAP[stage] || STAGE_MAP.hr_review
                   const dc = DEPT_COLORS[r.department] || { bg:'#f0ede8', color:'#7a6a50' }
                   const icon = TYPE_ICONS[r.incident_type] || '📋'
                   const isActive = selected?.id === r.id
                   return (
                     <div key={r.id}
-                      onClick={() => { setSelected(r); setAdminNotes(r.admin_notes || '') }}
+                      onClick={() => openReport(r)}
                       style={{
                         background: isActive ? '#fde8ee' : 'white',
                         border: `1px solid ${isActive ? '#EF4576' : '#e5e0d8'}`,
@@ -258,7 +285,9 @@ export default function ReportsPage() {
                           </div>
                         </div>
                         <div style={{ display:'flex', flexDirection:'column', gap:4, alignItems:'flex-end', flexShrink:0 }}>
-                          <span style={{ background:st.bg, color:st.color, borderRadius:20, padding:'2px 8px', fontSize:10, fontWeight:700 }}>{st.label}</span>
+                          <span style={{ background:stg.bg, color:stg.color, borderRadius:20, padding:'2px 8px', fontSize:10, fontWeight:700 }}>
+                            {stg.num}. {stg.short}
+                          </span>
                           <span style={{ background:dc.bg, color:dc.color, borderRadius:20, padding:'2px 8px', fontSize:10, fontWeight:600 }}>{r.department}</span>
                         </div>
                       </div>
@@ -272,50 +301,29 @@ export default function ReportsPage() {
             )}
           </div>
 
+          {/* Detail Panel */}
           {selected && (
-            <div style={{ width:400, borderLeft:'1px solid #e5e0d8', overflowY:'auto', background:'white', flexShrink:0 }}>
+            <div style={{ width:440, borderLeft:'1px solid #e5e0d8', overflowY:'auto', background:'white', flexShrink:0 }}>
               <div style={{ padding:'14px 20px', borderBottom:'1px solid #e5e0d8', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                 <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:14, fontWeight:700 }}>Report Detail</div>
                 <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                   {selected.staff_id && (
                     <a href={`/files?staff=${selected.staff_id}`}
                       style={{ background:'#fde8ee', color:'#EF4576', border:'1px solid #f5b8ca', borderRadius:7, padding:'4px 10px', fontSize:10, fontWeight:700, textDecoration:'none' }}>
-                      📁 View 201
+                      📁 201 File
                     </a>
-                  )}
-                  {canDelete && (
-                    <button onClick={() => setConfirmDelete(true)}
-                      style={{ background:'#fff0f0', color:'#c0392b', border:'1px solid #f5b8ca', borderRadius:7, padding:'4px 10px', fontSize:10, fontWeight:700, cursor:'pointer' }}>
-                      🗑️ Delete
-                    </button>
                   )}
                   <button onClick={() => setSelected(null)}
                     style={{ background:'#f0ede8', border:'none', borderRadius:7, width:28, height:28, cursor:'pointer', fontSize:14 }}>✕</button>
                 </div>
               </div>
 
-              <div style={{ padding:'20px' }}>
-                <div style={{ display:'flex', gap:8, marginBottom:20, flexWrap:'wrap' }}>
-                  {['pending','reviewed','resolved'].map(s => {
-                    const st = STATUS_STYLE[s]
-                    const isActive = selected.status === s
-                    return (
-                      <button key={s}
-                        onClick={() => updateStatus(selected.id, s)}
-                        disabled={saving || isActive}
-                        style={{
-                          background: isActive ? st.bg : '#f0ede8',
-                          color: isActive ? st.color : '#7a6a50',
-                          border: isActive ? `1.5px solid ${st.color}` : '1.5px solid #d8cebb',
-                          borderRadius:20, padding:'5px 12px', fontSize:11, fontWeight:700,
-                          cursor: isActive ? 'default' : 'pointer',
-                        }}>
-                        {isActive ? '✓ ' : ''}{st.label}
-                      </button>
-                    )
-                  })}
-                </div>
+              {/* Stage progress bar */}
+              <StageProgress report={selected} />
 
+              <div style={{ padding:'16px 20px' }}>
+
+                {/* Report Facts */}
                 <div style={{ background:'#faf8f5', borderRadius:10, padding:'14px', marginBottom:16 }}>
                   <Row label="Incident Type" value={`${TYPE_ICONS[selected.incident_type] || '📋'} ${selected.incident_type}`} />
                   <Row label="Date & Time" value={`${fmtDate(selected.date_of_report)} at ${selected.time_of_report}`} />
@@ -338,16 +346,17 @@ export default function ReportsPage() {
                   </Section>
                 )}
 
-                <Section title="Resolution">
-                  <p style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.7, margin:0 }}>{selected.resolution || <em style={{ color:'#9a8a7a' }}>Not provided</em>}</p>
-                </Section>
+                {selected.resolution && (
+                  <Section title="Resolution (from report)">
+                    <p style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.7, margin:0 }}>{selected.resolution}</p>
+                  </Section>
+                )}
 
                 {selected.photo_url && (
                   <Section title="Attached Photo">
                     <a href={selected.photo_url} target="_blank" rel="noreferrer">
-                      <img src={selected.photo_url} alt="Incident" style={{ width:'100%', borderRadius:8, objectFit:'cover', maxHeight:220 }} />
+                      <img src={selected.photo_url} alt="Incident" style={{ width:'100%', borderRadius:8, objectFit:'cover', maxHeight:200 }} />
                     </a>
-                    <div style={{ fontSize:10, color:'#9a8a7a', marginTop:4 }}>Click to open full size</div>
                   </Section>
                 )}
 
@@ -360,52 +369,201 @@ export default function ReportsPage() {
                   </div>
                 </Section>
 
-                <Section title="Admin Notes">
+                <div style={{ height:1, background:'#e5e0d8', margin:'20px 0' }} />
+
+                {/* ── STAGE 1: HR REVIEW ── */}
+                <StageBlock
+                  num={1}
+                  title="HR Review"
+                  color="#7a3a8a"
+                  bg="#f5eeff"
+                  active={(selected.stage || 'hr_review') === 'hr_review'}
+                  done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 1}
+                >
+                  <div style={{ fontSize:11, color:'#7a6a50', lineHeight:1.6, marginBottom:10 }}>
+                    HR performs initial screening of the report. Once reviewed, forward to Management.
+                    <br /><em style={{ color:'#c0392b' }}>HR cannot edit or remove report submissions.</em>
+                  </div>
+                  <label style={labelStyle}>HR Screening Notes</label>
                   <textarea
-                    value={adminNotes}
-                    onChange={e => setAdminNotes(e.target.value)}
+                    value={hrNotes}
+                    onChange={e => setHrNotes(e.target.value)}
+                    disabled={!isHR && !isMgt}
                     rows={3}
-                    placeholder="Add internal notes about this incident..."
-                    style={{ width:'100%', border:'1px solid #d8cebb', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'#1a1208', outline:'none', resize:'vertical', boxSizing:'border-box' }}
+                    placeholder="Initial screening observations, completeness check, etc."
+                    style={{ ...textareaStyle, opacity: (!isHR && !isMgt) ? 0.6 : 1 }}
                   />
-                  <button
-                    onClick={() => updateStatus(selected.id, selected.status)}
-                    disabled={saving}
-                    style={{ marginTop:8, background:'#EF4576', color:'white', border:'none', borderRadius:8, padding:'8px 16px', fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:"'DM Sans',sans-serif" }}>
-                    {saving ? 'Saving...' : 'Save Notes'}
-                  </button>
-                </Section>
+                  {(isHR || isMgt) && (
+                    <div style={{ display:'flex', gap:8, marginTop:8 }}>
+                      <button onClick={() => saveNotes(selected)} disabled={saving}
+                        style={{ ...outlineBtn }}>
+                        {saving ? 'Saving…' : 'Save Notes'}
+                      </button>
+                      {(selected.stage || 'hr_review') === 'hr_review' && (
+                        <button onClick={() => advanceStage(selected, 'mgt_review')} disabled={saving}
+                          style={{ ...primaryBtn, background:'#7a3a8a' }}>
+                          Forward to Mgt. Review →
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </StageBlock>
+
+                {/* ── STAGE 2: MGT. REVIEW ── */}
+                <StageBlock
+                  num={2}
+                  title="Mgt. Review"
+                  color="#2d5a8a"
+                  bg="#e8f0fb"
+                  active={(selected.stage || 'hr_review') === 'mgt_review'}
+                  done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 2}
+                  locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 2}
+                >
+                  <div style={{ fontSize:11, color:'#7a6a50', lineHeight:1.6, marginBottom:10 }}>
+                    Reviewed by Alex or CJ only. Management decides whether to escalate to formal investigation.
+                  </div>
+                  <label style={labelStyle}>Management Notes</label>
+                  <textarea
+                    value={mgtNotes}
+                    onChange={e => setMgtNotes(e.target.value)}
+                    disabled={!isMgt || STAGE_MAP[(selected.stage || 'hr_review')]?.num < 2}
+                    rows={3}
+                    placeholder="Management assessment, action items, escalation decision..."
+                    style={{ ...textareaStyle, opacity: (!isMgt || STAGE_MAP[(selected.stage || 'hr_review')]?.num < 2) ? 0.5 : 1 }}
+                  />
+                  {isMgt && (selected.stage || 'hr_review') === 'mgt_review' && (
+                    <div style={{ display:'flex', gap:8, marginTop:8 }}>
+                      <button onClick={() => saveNotes(selected)} disabled={saving}
+                        style={{ ...outlineBtn }}>
+                        {saving ? 'Saving…' : 'Save Notes'}
+                      </button>
+                      <button onClick={() => advanceStage(selected, 'investigation')} disabled={saving}
+                        style={{ ...primaryBtn, background:'#2d5a8a' }}>
+                        Escalate to Investigation →
+                      </button>
+                    </div>
+                  )}
+                  {isMgt && (selected.stage || 'hr_review') === 'mgt_review' && (
+                    <button onClick={() => advanceStage(selected, 'closed')} disabled={saving}
+                      style={{ ...outlineBtn, marginTop:6, fontSize:10, color:'#4a7a1e', borderColor:'#4a7a1e' }}>
+                      Close without escalation
+                    </button>
+                  )}
+                </StageBlock>
+
+                {/* ── STAGE 3: INVESTIGATION ── */}
+                <StageBlock
+                  num={3}
+                  title="Investigation"
+                  color="#a06000"
+                  bg="#fef3e2"
+                  active={(selected.stage || 'hr_review') === 'investigation'}
+                  done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 3}
+                  locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 3}
+                >
+                  <div style={{ fontSize:11, color:'#7a6a50', lineHeight:1.6, marginBottom:10 }}>
+                    Formal investigation and final findings.<br />
+                    <strong>Alex</strong> handles cases involving Richelle or any company-wide matter.<br />
+                    <strong>HR (Richelle)</strong> handles all other employee cases.
+                  </div>
+                  <label style={labelStyle}>Investigation Findings</label>
+                  <textarea
+                    value={investigationFindings}
+                    onChange={e => setInvestigationFindings(e.target.value)}
+                    disabled={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 3}
+                    rows={4}
+                    placeholder="Summary of investigation, evidence reviewed, interviews conducted, conclusions reached..."
+                    style={{ ...textareaStyle, opacity: STAGE_MAP[(selected.stage || 'hr_review')]?.num < 3 ? 0.5 : 1 }}
+                  />
+                  {(isMgt || isHR) && (selected.stage || 'hr_review') === 'investigation' && (
+                    <div style={{ display:'flex', gap:8, marginTop:8 }}>
+                      <button onClick={() => saveNotes(selected)} disabled={saving}
+                        style={{ ...outlineBtn }}>
+                        {saving ? 'Saving…' : 'Save Findings'}
+                      </button>
+                      <button onClick={() => advanceStage(selected, 'final_sanction')} disabled={saving}
+                        style={{ ...primaryBtn, background:'#a06000' }}>
+                        Proceed to Final Sanction →
+                      </button>
+                    </div>
+                  )}
+                  {isMgt && (selected.stage || 'hr_review') === 'investigation' && (
+                    <button onClick={() => advanceStage(selected, 'closed')} disabled={saving}
+                      style={{ ...outlineBtn, marginTop:6, fontSize:10, color:'#4a7a1e', borderColor:'#4a7a1e' }}>
+                      Close — No sanction needed
+                    </button>
+                  )}
+                </StageBlock>
+
+                {/* ── STAGE 4: FINAL SANCTION ── */}
+                <StageBlock
+                  num={4}
+                  title="Final Sanction"
+                  color="#c0392b"
+                  bg="#fff0f0"
+                  active={(selected.stage || 'hr_review') === 'final_sanction'}
+                  done={(selected.stage || 'hr_review') === 'closed'}
+                  locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4}
+                >
+                  <div style={{ fontSize:11, color:'#7a6a50', lineHeight:1.6, marginBottom:10 }}>
+                    Final sanction must be supported by the OHT Employee Handbook.
+                    Reference the applicable section below.
+                  </div>
+                  <label style={labelStyle}>Handbook Reference</label>
+                  <input
+                    value={handbookRef}
+                    onChange={e => setHandbookRef(e.target.value)}
+                    disabled={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4}
+                    placeholder="e.g. Section 8.3 — Progressive Discipline"
+                    style={{ ...inputStyle, opacity: STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4 ? 0.5 : 1, marginBottom:8 }}
+                  />
+                  <label style={labelStyle}>Sanction Details</label>
+                  <textarea
+                    value={sanctionDetails}
+                    onChange={e => setSanctionDetails(e.target.value)}
+                    disabled={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4}
+                    rows={3}
+                    placeholder="Specific sanction issued (verbal warning, written warning, suspension, termination, etc.) and terms..."
+                    style={{ ...textareaStyle, opacity: STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4 ? 0.5 : 1 }}
+                  />
+                  {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && (
+                    <div style={{ display:'flex', gap:8, marginTop:8 }}>
+                      <button onClick={() => saveNotes(selected)} disabled={saving}
+                        style={{ ...outlineBtn }}>
+                        {saving ? 'Saving…' : 'Save Sanction'}
+                      </button>
+                      <button onClick={() => advanceStage(selected, 'closed')} disabled={saving || !handbookRef.trim()}
+                        style={{ ...primaryBtn, background: !handbookRef.trim() ? '#ccc' : '#c0392b', cursor: !handbookRef.trim() ? 'not-allowed' : 'pointer' }}
+                        title={!handbookRef.trim() ? 'Handbook reference required' : ''}>
+                        Close Case ✓
+                      </button>
+                    </div>
+                  )}
+                  {!handbookRef.trim() && (selected.stage || 'hr_review') === 'final_sanction' && isMgt && (
+                    <div style={{ fontSize:10, color:'#c0392b', marginTop:4 }}>⚠ Handbook reference required before closing</div>
+                  )}
+                </StageBlock>
+
+                {/* Closed badge */}
+                {(selected.stage || 'hr_review') === 'closed' && (
+                  <div style={{ background:'#eef7e4', border:'1px solid #b8dfaa', borderRadius:10, padding:'14px', textAlign:'center', marginTop:8 }}>
+                    <div style={{ fontSize:22, marginBottom:6 }}>✅</div>
+                    <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:13, fontWeight:700, color:'#4a7a1e' }}>Case Closed</div>
+                    <div style={{ fontSize:11, color:'#6a8a5a', marginTop:4 }}>This incident report has been fully resolved and closed.</div>
+                    {isMgt && (
+                      <button onClick={() => advanceStage(selected, 'final_sanction')} disabled={saving}
+                        style={{ ...outlineBtn, marginTop:10, fontSize:10 }}>
+                        Reopen to Final Sanction
+                      </button>
+                    )}
+                  </div>
+                )}
+
               </div>
             </div>
           )}
         </div>
       </div>
-
-      {confirmDelete && selected && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.45)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <div style={{ background:'white', borderRadius:14, padding:'28px 28px 24px', width:340, boxShadow:'0 8px 40px rgba(0,0,0,.25)', fontFamily:"'DM Sans',sans-serif" }}>
-            <div style={{ fontSize:28, marginBottom:12, textAlign:'center' }}>🗑️</div>
-            <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:15, fontWeight:700, color:'#1a1208', textAlign:'center', marginBottom:8 }}>Delete this report?</div>
-            <div style={{ fontSize:12, color:'#7a6a50', textAlign:'center', lineHeight:1.6, marginBottom:20 }}>
-              <strong>{selected.incident_type}</strong> — {isHR ? 'Anonymous' : selected.reported_by}<br />
-              This action cannot be undone.
-            </div>
-            <div style={{ display:'flex', gap:10 }}>
-              <button
-                onClick={() => setConfirmDelete(false)}
-                style={{ flex:1, background:'#f0ede8', color:'#3a2a1a', border:'none', borderRadius:8, padding:'10px', fontSize:12, fontWeight:700, cursor:'pointer' }}>
-                Cancel
-              </button>
-              <button
-                onClick={() => deleteReport(selected.id)}
-                disabled={deleting}
-                style={{ flex:1, background:'#c0392b', color:'white', border:'none', borderRadius:8, padding:'10px', fontSize:12, fontWeight:700, cursor:'pointer' }}>
-                {deleting ? 'Deleting...' : 'Yes, Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {toast && (
         <div style={{ position:'fixed', bottom:20, left:'50%', transform:'translateX(-50%)', background:'#1a1208', color:'white', borderRadius:10, padding:'10px 18px', fontSize:12, fontWeight:600, zIndex:999, display:'flex', gap:8, alignItems:'center', whiteSpace:'nowrap', boxShadow:'0 4px 20px rgba(0,0,0,.3)' }}>
@@ -413,6 +571,76 @@ export default function ReportsPage() {
         </div>
       )}
     </AuthShell>
+  )
+}
+
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+function StageProgress({ report }) {
+  const currentStage = report.stage || 'hr_review'
+  const currentNum   = STAGE_MAP[currentStage]?.num || 1
+  return (
+    <div style={{ padding:'12px 20px', background:'#faf8f5', borderBottom:'1px solid #e5e0d8' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:0 }}>
+        {STAGES.map((s, i) => {
+          const done    = currentNum > s.num
+          const active  = currentNum === s.num
+          const locked  = currentNum < s.num
+          return (
+            <div key={s.key} style={{ display:'flex', alignItems:'center', flex: i < STAGES.length - 1 ? 1 : 'none' }}>
+              <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3 }}>
+                <div style={{
+                  width:24, height:24, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center',
+                  fontSize:10, fontWeight:700,
+                  background: done ? s.color : active ? s.color : '#e5e0d8',
+                  color: done || active ? 'white' : '#9a8a7a',
+                  border: active ? `2px solid ${s.color}` : 'none',
+                  boxSizing:'border-box',
+                }}>
+                  {done ? '✓' : s.num}
+                </div>
+                <div style={{ fontSize:9, color: active ? s.color : locked ? '#c0b8ae' : '#7a6a50', fontWeight: active ? 700 : 400, whiteSpace:'nowrap' }}>
+                  {s.short}
+                </div>
+              </div>
+              {i < STAGES.length - 1 && (
+                <div style={{ flex:1, height:2, background: done ? '#4a7a1e' : '#e5e0d8', margin:'0 2px', marginBottom:12 }} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function StageBlock({ num, title, color, bg, active, done, locked, children }) {
+  return (
+    <div style={{
+      border: `1.5px solid ${active ? color : done ? '#b8dfaa' : '#e5e0d8'}`,
+      borderRadius:10,
+      padding:'14px',
+      marginBottom:12,
+      background: active ? bg : done ? '#f7fcf4' : '#faf8f5',
+      opacity: locked ? 0.5 : 1,
+    }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+        <div style={{
+          width:22, height:22, borderRadius:'50%', fontSize:10, fontWeight:700,
+          display:'flex', alignItems:'center', justifyContent:'center',
+          background: done ? '#4a7a1e' : active ? color : '#d8cebb',
+          color: 'white',
+        }}>
+          {done ? '✓' : num}
+        </div>
+        <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:12, fontWeight:700, color: active ? color : done ? '#4a7a1e' : '#7a6a50' }}>
+          {title}
+          {done && <span style={{ fontSize:10, fontWeight:400, marginLeft:6, color:'#4a7a1e' }}>Completed</span>}
+          {locked && <span style={{ fontSize:10, fontWeight:400, marginLeft:6, color:'#9a8a7a' }}>Pending</span>}
+        </div>
+      </div>
+      {children}
+    </div>
   )
 }
 
@@ -433,3 +661,9 @@ function Section({ title, children }) {
     </div>
   )
 }
+
+const labelStyle = { fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, display:'block', marginBottom:4 }
+const textareaStyle = { width:'100%', border:'1px solid #d8cebb', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'#1a1208', outline:'none', resize:'vertical', boxSizing:'border-box' }
+const inputStyle = { width:'100%', border:'1px solid #d8cebb', borderRadius:8, padding:'8px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'#1a1208', outline:'none', boxSizing:'border-box' }
+const primaryBtn = { background:'#EF4576', color:'white', border:'none', borderRadius:8, padding:'8px 14px', fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:"'DM Sans',sans-serif" }
+const outlineBtn = { background:'white', color:'#3a2a1a', border:'1px solid #d8cebb', borderRadius:8, padding:'8px 14px', fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:"'DM Sans',sans-serif" }
