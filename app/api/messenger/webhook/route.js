@@ -1,5 +1,4 @@
 import { createClient } from '../../../../lib/supabase';
-import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 
 // ── Verify webhook signature from Meta ──────────────────────────────────────
@@ -21,18 +20,16 @@ export async function GET(request) {
   const challenge = searchParams.get('hub.challenge');
 
   if (mode === 'subscribe' && token === process.env.META_VERIFY_TOKEN) {
-    console.log('Messenger webhook verified ✅');
     return new Response(challenge, { status: 200 });
   }
 
   return new Response('Forbidden', { status: 403 });
 }
 
-// ── POST: Receive messages from staff (captures their PSID) ─────────────────
+// ── POST: Receive messages from staff ───────────────────────────────────────
 export async function POST(request) {
   const rawBody = await request.text();
 
-  // Verify the request is genuinely from Meta
   if (!verifySignature(request, rawBody)) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -50,26 +47,79 @@ export async function POST(request) {
       const psid = event.sender?.id;
       if (!psid) continue;
 
-      // Only process actual messages (not echoes from the page itself)
       if (event.message && !event.message.is_echo) {
-        console.log(`Received message from PSID: ${psid}`);
+        const text = (event.message.text || '').trim();
 
-        // Check if any staff member has this PSID already stored
+        // ── Handle LINK-xxxxxxxx codes ──────────────────────────────────────
+        if (text.toUpperCase().startsWith('LINK-')) {
+          const code = text.toUpperCase().replace('LINK-', '').trim();
+
+          // Look up staff member with this exact code
+          const { data: staff } = await supabase
+            .from('staff')
+            .select('id, name, messenger_psid, messenger_link_code, messenger_link_expires_at')
+            .eq('messenger_link_code', code)
+            .single();
+
+          if (!staff) {
+            await sendMessage(psid,
+              `❌ That code wasn't recognised. Please get a fresh code from your OHT Staff Portal and try again.`
+            );
+            continue;
+          }
+
+          // Check if code is expired
+          const now = new Date();
+          const expires = new Date(staff.messenger_link_expires_at);
+          if (now > expires) {
+            await sendMessage(psid,
+              `⏰ That code has expired. Please log in to your OHT Staff Portal to generate a new one.`
+            );
+            continue;
+          }
+
+          // Check if already linked to a different PSID
+          if (staff.messenger_psid && staff.messenger_psid !== psid) {
+            await sendMessage(psid,
+              `⚠️ This account is already linked to a different Messenger. Please contact your admin if you need to re-link.`
+            );
+            continue;
+          }
+
+          // All good — link them!
+          await supabase
+            .from('staff')
+            .update({
+              messenger_psid: psid,
+              messenger_opted_in: true,
+              messenger_link_code: null,         // invalidate code immediately
+              messenger_link_expires_at: null,
+            })
+            .eq('id', staff.id);
+
+          await sendMessage(psid,
+            `✅ You're all set, ${staff.name}!\n\nYour Messenger is now linked to Oh Hey There. You'll receive notifications here for:\n• Shift assignments\n• Job orders\n• Contracts\n• Payslips\n• Day-off updates\n• And more!\n\nWelcome aboard 🎉`
+          );
+
+          continue;
+        }
+
+        // ── Any other message — check if known staff ─────────────────────
         const { data: existing } = await supabase
           .from('staff')
-          .select('id, name, messenger_psid')
+          .select('id, name, messenger_opted_in')
           .eq('messenger_psid', psid)
           .single();
 
-        if (!existing) {
-          // Unknown sender — send opt-in instructions
+        if (existing && existing.messenger_opted_in) {
+          // Already linked — friendly acknowledgement
           await sendMessage(psid,
-            `👋 Hi! This is Oh Hey There Matcha Cafe.\n\nTo link your account, please ask your admin to connect your Messenger to your staff profile.`
+            `👋 Hi ${existing.name}! Your account is already linked. You'll receive your OHT notifications here automatically.`
           );
         } else {
-          // Known staff — acknowledge
+          // Unknown sender — generic response, no instructions leaked
           await sendMessage(psid,
-            `✅ Hi ${existing.name}! Your Messenger is linked to OHT. You'll receive shift updates, job orders, and other notifications here.`
+            `👋 Hi! This is the Oh Hey There Matcha Cafe notification line.\n\nThis channel is for OHT staff only. If you're a staff member, please log in to your portal to get your unique link code.`
           );
         }
       }
