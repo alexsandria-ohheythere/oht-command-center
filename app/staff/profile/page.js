@@ -50,6 +50,147 @@ function Grid({ children, cols=2 }) {
   )
 }
 
+// ── Messenger Status Section ─────────────────────────────────────────────────
+function MessengerSection({ staff, onUnlink }) {
+  const [code, setCode]       = useState(null)
+  const [expires, setExpires] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [unlinking, setUnlinking] = useState(false)
+  const [copied, setCopied]   = useState(false)
+  const [timeLeft, setTimeLeft] = useState(null)
+  const [confirmed, setConfirmed] = useState(false)
+
+  useEffect(() => {
+    if (!expires) return
+    const interval = setInterval(() => {
+      const secs = Math.round((new Date(expires) - Date.now()) / 1000)
+      if (secs <= 0) { setCode(null); setExpires(null); setTimeLeft(null); clearInterval(interval) }
+      else setTimeLeft(secs)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [expires])
+
+  async function generateCode() {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/messenger/generate-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staffId: staff.id }),
+      })
+      const data = await res.json()
+      if (data.code) { setCode(data.code); setExpires(data.expiresAt) }
+    } catch(e) { console.error(e) }
+    setLoading(false)
+  }
+
+  async function unlinkMessenger() {
+    if (!confirmed) { setConfirmed(true); return }
+    setUnlinking(true)
+    const supabase = createClient()
+    await supabase.from('staff').update({
+      messenger_psid: null,
+      messenger_opted_in: false,
+      messenger_link_code: null,
+      messenger_link_expires_at: null,
+    }).eq('id', staff.id)
+    setUnlinking(false)
+    setConfirmed(false)
+    onUnlink()
+  }
+
+  function copyCode() {
+    navigator.clipboard.writeText(`LINK-${code}`)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const isLinked = staff.messenger_opted_in && staff.messenger_psid
+
+  return (
+    <Section title="💬 Messenger Notifications">
+      {isLinked ? (
+        <div>
+          {/* Linked state */}
+          <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 14px', background:'#eef7e4', borderRadius:10, border:'1px solid #7ab648', marginBottom:14 }}>
+            <span style={{ fontSize:20 }}>✅</span>
+            <div>
+              <p style={{ fontSize:13, fontWeight:700, color:'#4a7a1e', margin:0 }}>Messenger Linked</p>
+              <p style={{ fontSize:11, color:'#4a7a1e', margin:'2px 0 0', opacity:.8 }}>
+                {staff.first_name} will receive notifications directly in Messenger.
+              </p>
+            </div>
+          </div>
+          <p style={{ fontSize:11, color:'var(--text-muted)', margin:'0 0 10px' }}>
+            PSID: <code style={{ fontSize:11, background:'var(--surface)', padding:'1px 6px', borderRadius:4 }}>{staff.messenger_psid}</code>
+          </p>
+          {/* Unlink button */}
+          {confirmed ? (
+            <div style={{ display:'flex', gap:8 }}>
+              <p style={{ fontSize:12, color:'#c0392b', margin:0, alignSelf:'center' }}>Are you sure?</p>
+              <button onClick={unlinkMessenger} disabled={unlinking}
+                style={{ padding:'7px 14px', background:'#c0392b', color:'white', border:'none', borderRadius:7, fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                {unlinking ? 'Unlinking…' : 'Yes, unlink'}
+              </button>
+              <button onClick={() => setConfirmed(false)}
+                style={{ padding:'7px 14px', background:'var(--surface)', color:'var(--text-muted)', border:'1px solid var(--border)', borderRadius:7, fontSize:12, cursor:'pointer' }}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button onClick={unlinkMessenger}
+              style={{ padding:'7px 14px', background:'var(--surface)', color:'#c0392b', border:'1px solid #f5c6c6', borderRadius:7, fontSize:12, fontWeight:600, cursor:'pointer' }}>
+              🔓 Unlink Messenger
+            </button>
+          )}
+        </div>
+      ) : (
+        <div>
+          {/* Not linked state */}
+          <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 14px', background:'var(--surface)', borderRadius:10, border:'1px solid var(--border)', marginBottom:14 }}>
+            <span style={{ fontSize:20 }}>💬</span>
+            <div>
+              <p style={{ fontSize:13, fontWeight:600, color:'var(--text-primary)', margin:0 }}>Not linked yet</p>
+              <p style={{ fontSize:11, color:'var(--text-muted)', margin:'2px 0 0' }}>
+                Generate a code for {staff.first_name} to link their Messenger account.
+              </p>
+            </div>
+          </div>
+
+          {!code ? (
+            <button onClick={generateCode} disabled={loading}
+              style={{ padding:'9px 16px', background:'#0084ff', color:'white', border:'none', borderRadius:8, fontSize:13, fontWeight:700, cursor:'pointer', opacity: loading ? 0.7 : 1 }}>
+              {loading ? 'Generating…' : '🔗 Generate Link Code for ' + staff.first_name}
+            </button>
+          ) : (
+            <div>
+              <p style={{ fontSize:12, color:'var(--text-muted)', margin:'0 0 8px' }}>
+                Share this code with <strong>{staff.first_name}</strong>. They must send it to the <strong>Oh Hey There Matcha</strong> Facebook Page on Messenger:
+              </p>
+              <div style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:8, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
+                <code style={{ fontFamily:'monospace', fontSize:18, fontWeight:700, letterSpacing:2, color:'var(--text-primary)' }}>LINK-{code}</code>
+                <button onClick={copyCode}
+                  style={{ padding:'6px 14px', background: copied ? '#7ab648' : '#1a1208', color:'white', border:'none', borderRadius:6, fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap', transition:'background .2s' }}>
+                  {copied ? '✓ Copied!' : 'Copy'}
+                </button>
+              </div>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                <p style={{ fontSize:11, color: timeLeft < 60 ? '#c0392b' : 'var(--text-muted)', margin:0 }}>
+                  ⏱ Expires in {timeLeft >= 60 ? `${Math.floor(timeLeft/60)}m ${timeLeft%60}s` : `${timeLeft}s`}
+                </p>
+                <button onClick={generateCode}
+                  style={{ background:'none', border:'none', color:'#0084ff', fontSize:11, cursor:'pointer', fontWeight:600 }}>
+                  Regenerate
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
+  )
+}
+
 export default function StaffProfilePage() {
   const [id, setId]               = useState(null)
   const [staff, setStaff]         = useState(null)
@@ -63,7 +204,6 @@ export default function StaffProfilePage() {
   const [userEmail, setUserEmail]   = useState(null)
 
   useEffect(() => {
-    // Get id from query string
     const params = new URLSearchParams(window.location.search)
     const staffId = params.get('id')
     setId(staffId)
@@ -95,11 +235,17 @@ export default function StaffProfilePage() {
       setPayroll(p || [])
       setSchedules(sc || [])
 
-      // Load saved rate overrides from settings
       const { data: rateRow } = await supabase.from('settings').select('value').eq('key', 'payroll_rates').single()
       if (rateRow?.value) { try { setRateOverrides(JSON.parse(rateRow.value)) } catch(e) {} }
     } catch(e) { console.error(e) }
     setLoading(false)
+  }
+
+  async function refreshStaff() {
+    if (!id) return
+    const supabase = createClient()
+    const { data: s } = await supabase.from('staff').select('*').eq('id', id).single()
+    if (s) setStaff(s)
   }
 
   const isHR = userEmail === HR_EMAIL
@@ -154,6 +300,11 @@ export default function StaffProfilePage() {
               <span style={{ fontSize:11, fontWeight:700, padding:'3px 10px', borderRadius:8, background:roleColor+'22', color:roleColor }}>{staff.role}</span>
               <span style={{ fontSize:11, color:'var(--text-muted)', background:'var(--surface)', padding:'3px 10px', borderRadius:8, border:'1px solid var(--border)' }}>{staff.employment_type || 'Full-time'}</span>
               {staff.status && <span style={{ fontSize:11, padding:'3px 10px', borderRadius:8, background: staff.status==='active'?'#eef7e4':'#fff0f0', color: staff.status==='active'?'#4a7a1e':'#c0392b', fontWeight:600 }}>{staff.status}</span>}
+              {/* Messenger badge in header */}
+              {staff.messenger_opted_in
+                ? <span style={{ fontSize:11, padding:'3px 10px', borderRadius:8, background:'#e8f4ff', color:'#0084ff', fontWeight:600 }}>💬 Messenger ✓</span>
+                : <span style={{ fontSize:11, padding:'3px 10px', borderRadius:8, background:'var(--surface)', color:'var(--text-muted)', border:'1px solid var(--border)' }}>💬 Not linked</span>
+              }
             </div>
             <div style={{ display:'flex', gap:16, marginTop:12, flexWrap:'wrap' }}>
               {staff.email && <span style={{ fontSize:12, color:'var(--text-muted)' }}>✉ {staff.email}</span>}
@@ -187,6 +338,10 @@ export default function StaffProfilePage() {
         {/* OVERVIEW */}
         {activeTab === 'overview' && (
           <div>
+            {/* Messenger section — hidden from HR */}
+            {!isHR && (
+              <MessengerSection staff={staff} onUnlink={refreshStaff} />
+            )}
             <Grid>
               <Section title="Employment">
                 <Field label="Role" value={staff.role} />
