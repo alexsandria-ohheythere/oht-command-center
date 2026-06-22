@@ -56,6 +56,7 @@ export default function ReportsPage() {
 
   // Panel state per stage
   const [hrNotes,          setHrNotes]          = useState('')
+  const [hrSanctions,      setHrSanctions]      = useState('')
   const [mgtNotes,         setMgtNotes]          = useState('')
   const [investigationFindings, setInvestigationFindings] = useState('')
   const [sanctionDetails,  setSanctionDetails]  = useState('')
@@ -116,6 +117,7 @@ export default function ReportsPage() {
     setSelected(r)
     setExpandedStages(new Set())
     setHrNotes(r.hr_notes || '')
+    setHrSanctions(r.hr_sanctions || '')
     setMgtNotes(r.mgt_notes || '')
     setInvestigationFindings(r.investigation_findings || '')
     setSanctionDetails(r.sanction_details || '')
@@ -130,6 +132,7 @@ export default function ReportsPage() {
       const updates = {
         stage: newStage,
         hr_notes: hrNotes || null,
+        hr_sanctions: hrSanctions || null,
         mgt_notes: mgtNotes || null,
         investigation_findings: investigationFindings || null,
         sanction_details: sanctionDetails || null,
@@ -154,6 +157,7 @@ export default function ReportsPage() {
       const supabase = createClient()
       const updates = {
         hr_notes: hrNotes || null,
+        hr_sanctions: hrSanctions || null,
         mgt_notes: mgtNotes || null,
         investigation_findings: investigationFindings || null,
         sanction_details: sanctionDetails || null,
@@ -386,10 +390,18 @@ export default function ReportsPage() {
                   expanded={expandedStages.has('hr_review')}
                   onToggle={() => setExpandedStages(s => { const n = new Set(s); n.has('hr_review') ? n.delete('hr_review') : n.add('hr_review'); return n })}
                   viewContent={
-                    <div>
-                      <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>HR Screening Notes</div>
-                      <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#f0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
-                        {selected.hr_notes || <em style={{ color:'#9a8a7a' }}>No notes recorded</em>}
+                    <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                      <div>
+                        <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>HR Screening Notes</div>
+                        <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#f0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                          {selected.hr_notes || <em style={{ color:'#9a8a7a' }}>No notes recorded</em>}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>HR Recommended Sanctions</div>
+                        <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#f0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                          {selected.hr_sanctions || <em style={{ color:'#9a8a7a' }}>No sanctions recorded</em>}
+                        </div>
                       </div>
                     </div>
                   }
@@ -405,6 +417,15 @@ export default function ReportsPage() {
                     disabled={!isHR && !isMgt}
                     rows={3}
                     placeholder="Initial screening observations, completeness check, etc."
+                    style={{ ...textareaStyle, opacity: (!isHR && !isMgt) ? 0.6 : 1 }}
+                  />
+                  <label style={{ ...labelStyle, marginTop:10 }}>HR Recommended Sanctions</label>
+                  <textarea
+                    value={hrSanctions}
+                    onChange={e => setHrSanctions(e.target.value)}
+                    disabled={!isHR && !isMgt}
+                    rows={2}
+                    placeholder="e.g. Verbal warning, written warning, suspension recommendation..."
                     style={{ ...textareaStyle, opacity: (!isHR && !isMgt) ? 0.6 : 1 }}
                   />
                   {(isHR || isMgt) && (
