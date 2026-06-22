@@ -56,7 +56,8 @@ export default function ReportsPage() {
 
   // Panel state per stage
   const [hrNotes,          setHrNotes]          = useState('')
-  const [hrSanctions,      setHrSanctions]      = useState('')
+  const [hrSanction,       setHrSanction]       = useState('')
+  const [hrSanctionNotes,  setHrSanctionNotes]  = useState('')
   const [mgtNotes,         setMgtNotes]          = useState('')
   const [investigationFindings, setInvestigationFindings] = useState('')
   const [sanctionDetails,  setSanctionDetails]  = useState('')
@@ -117,7 +118,8 @@ export default function ReportsPage() {
     setSelected(r)
     setExpandedStages(new Set())
     setHrNotes(r.hr_notes || '')
-    setHrSanctions(r.hr_sanctions || '')
+    setHrSanction(r.hr_sanction || '')
+    setHrSanctionNotes(r.hr_sanction_notes || '')
     setMgtNotes(r.mgt_notes || '')
     setInvestigationFindings(r.investigation_findings || '')
     setSanctionDetails(r.sanction_details || '')
@@ -132,7 +134,8 @@ export default function ReportsPage() {
       const updates = {
         stage: newStage,
         hr_notes: hrNotes || null,
-        hr_sanctions: hrSanctions || null,
+        hr_sanction: hrSanction || null,
+        hr_sanction_notes: hrSanctionNotes || null,
         mgt_notes: mgtNotes || null,
         investigation_findings: investigationFindings || null,
         sanction_details: sanctionDetails || null,
@@ -157,7 +160,8 @@ export default function ReportsPage() {
       const supabase = createClient()
       const updates = {
         hr_notes: hrNotes || null,
-        hr_sanctions: hrSanctions || null,
+        hr_sanction: hrSanction || null,
+        hr_sanction_notes: hrSanctionNotes || null,
         mgt_notes: mgtNotes || null,
         investigation_findings: investigationFindings || null,
         sanction_details: sanctionDetails || null,
@@ -397,12 +401,15 @@ export default function ReportsPage() {
                           {selected.hr_notes || <em style={{ color:'#9a8a7a' }}>No notes recorded</em>}
                         </div>
                       </div>
-                      <div>
-                        <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>HR Recommended Sanctions</div>
-                        <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#f0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
-                          {selected.hr_sanctions || <em style={{ color:'#9a8a7a' }}>No sanctions recorded</em>}
+                      {selected.hr_sanction && (
+                        <div>
+                          <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Recommended Sanction</div>
+                          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                            <span style={{ background:'#7a3a8a', color:'white', borderRadius:20, padding:'3px 10px', fontSize:11, fontWeight:700 }}>{selected.hr_sanction}</span>
+                            {selected.hr_sanction_notes && <span style={{ fontSize:11, color:'#5a4a3a' }}>{selected.hr_sanction_notes}</span>}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   }
                 >
@@ -419,13 +426,28 @@ export default function ReportsPage() {
                     placeholder="Initial screening observations, completeness check, etc."
                     style={{ ...textareaStyle, opacity: (!isHR && !isMgt) ? 0.6 : 1 }}
                   />
-                  <label style={{ ...labelStyle, marginTop:10 }}>HR Recommended Sanctions</label>
+                  <label style={{ ...labelStyle, marginTop:10 }}>Recommended Sanction</label>
+                  <select
+                    value={hrSanction}
+                    onChange={e => setHrSanction(e.target.value)}
+                    disabled={!isHR && !isMgt}
+                    style={{ width:'100%', border:'1px solid #d8cebb', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color: hrSanction ? '#1a1208' : '#9a8a7a', outline:'none', background:'white', opacity: (!isHR && !isMgt) ? 0.6 : 1, boxSizing:'border-box' }}>
+                    <option value="">— Select a sanction —</option>
+                    <option value="No Action">No Action</option>
+                    <option value="Verbal Warning">Verbal Warning</option>
+                    <option value="Written Warning">Written Warning</option>
+                    <option value="Retraining">Retraining</option>
+                    <option value="Final Warning">Final Warning</option>
+                    <option value="Suspension">Suspension</option>
+                    <option value="Termination">Termination</option>
+                  </select>
+                  <label style={{ ...labelStyle, marginTop:8 }}>Sanction Notes <span style={{ fontWeight:400, textTransform:'none', letterSpacing:0 }}>(duration, conditions, etc.)</span></label>
                   <textarea
-                    value={hrSanctions}
-                    onChange={e => setHrSanctions(e.target.value)}
+                    value={hrSanctionNotes}
+                    onChange={e => setHrSanctionNotes(e.target.value)}
                     disabled={!isHR && !isMgt}
                     rows={2}
-                    placeholder="e.g. Verbal warning, written warning, suspension recommendation..."
+                    placeholder="e.g. 3-day suspension without pay, effective June 23..."
                     style={{ ...textareaStyle, opacity: (!isHR && !isMgt) ? 0.6 : 1 }}
                   />
                   {(isHR || isMgt) && (
