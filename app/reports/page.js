@@ -379,6 +379,14 @@ export default function ReportsPage() {
                   bg="#f5eeff"
                   active={(selected.stage || 'hr_review') === 'hr_review'}
                   done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 1}
+                  viewContent={
+                    <div>
+                      <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>HR Screening Notes</div>
+                      <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#f0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                        {selected.hr_notes || <em style={{ color:'#9a8a7a' }}>No notes recorded</em>}
+                      </div>
+                    </div>
+                  }
                 >
                   <div style={{ fontSize:11, color:'#7a6a50', lineHeight:1.6, marginBottom:10 }}>
                     HR performs initial screening of the report. Once reviewed, forward to Management.
@@ -418,6 +426,14 @@ export default function ReportsPage() {
                   active={(selected.stage || 'hr_review') === 'mgt_review'}
                   done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 2}
                   locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 2}
+                  viewContent={
+                    <div>
+                      <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Management Notes</div>
+                      <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#e0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                        {selected.mgt_notes || <em style={{ color:'#9a8a7a' }}>No notes recorded</em>}
+                      </div>
+                    </div>
+                  }
                 >
                   <div style={{ fontSize:11, color:'#7a6a50', lineHeight:1.6, marginBottom:10 }}>
                     Reviewed by Alex or CJ only. Management decides whether to escalate to formal investigation.
@@ -460,6 +476,14 @@ export default function ReportsPage() {
                   active={(selected.stage || 'hr_review') === 'investigation'}
                   done={STAGE_MAP[(selected.stage || 'hr_review')]?.num > 3}
                   locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 3}
+                  viewContent={
+                    <div>
+                      <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Investigation Findings</div>
+                      <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#f5e8cc', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                        {selected.investigation_findings || <em style={{ color:'#9a8a7a' }}>No findings recorded</em>}
+                      </div>
+                    </div>
+                  }
                 >
                   <div style={{ fontSize:11, color:'#7a6a50', lineHeight:1.6, marginBottom:10 }}>
                     Formal investigation and final findings.<br />
@@ -504,6 +528,22 @@ export default function ReportsPage() {
                   active={(selected.stage || 'hr_review') === 'final_sanction'}
                   done={(selected.stage || 'hr_review') === 'closed'}
                   locked={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4}
+                  viewContent={
+                    <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                      {selected.handbook_ref && (
+                        <div>
+                          <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Handbook Reference</div>
+                          <div style={{ fontSize:12, color:'#3a2a1a', background:'#fde0dd', borderRadius:8, padding:'8px 12px' }}>{selected.handbook_ref}</div>
+                        </div>
+                      )}
+                      <div>
+                        <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Sanction Details</div>
+                        <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#fde0dd', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                          {selected.sanction_details || <em style={{ color:'#9a8a7a' }}>No sanction recorded</em>}
+                        </div>
+                      </div>
+                    </div>
+                  }
                 >
                   <div style={{ fontSize:11, color:'#7a6a50', lineHeight:1.6, marginBottom:10 }}>
                     Final sanction must be supported by the OHT Employee Handbook.
@@ -614,7 +654,10 @@ function StageProgress({ report }) {
   )
 }
 
-function StageBlock({ num, title, color, bg, active, done, locked, children }) {
+function StageBlock({ num, title, color, bg, active, done, locked, viewContent, children }) {
+  const [open, setOpen] = useState(false)
+  const hasView = viewContent && (done || locked)
+
   return (
     <div style={{
       border: `1.5px solid ${active ? color : done ? '#b8dfaa' : '#e5e0d8'}`,
@@ -622,24 +665,37 @@ function StageBlock({ num, title, color, bg, active, done, locked, children }) {
       padding:'14px',
       marginBottom:12,
       background: active ? bg : done ? '#f7fcf4' : '#faf8f5',
-      opacity: locked ? 0.5 : 1,
+      opacity: locked && !open ? 0.65 : 1,
+      transition:'opacity .15s',
     }}>
-      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom: active || open ? 10 : 0 }}>
         <div style={{
           width:22, height:22, borderRadius:'50%', fontSize:10, fontWeight:700,
           display:'flex', alignItems:'center', justifyContent:'center',
           background: done ? '#4a7a1e' : active ? color : '#d8cebb',
-          color: 'white',
+          color: 'white', flexShrink:0,
         }}>
           {done ? '✓' : num}
         </div>
-        <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:12, fontWeight:700, color: active ? color : done ? '#4a7a1e' : '#7a6a50' }}>
+        <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:12, fontWeight:700, color: active ? color : done ? '#4a7a1e' : '#7a6a50', flex:1 }}>
           {title}
           {done && <span style={{ fontSize:10, fontWeight:400, marginLeft:6, color:'#4a7a1e' }}>Completed</span>}
           {locked && <span style={{ fontSize:10, fontWeight:400, marginLeft:6, color:'#9a8a7a' }}>Pending</span>}
         </div>
+        {hasView && (
+          <button
+            onClick={() => setOpen(v => !v)}
+            style={{ background:'transparent', border:'none', cursor:'pointer', fontSize:11, color: done ? '#4a7a1e' : '#9a8a7a', fontWeight:600, padding:'2px 6px', borderRadius:6, display:'flex', alignItems:'center', gap:3, fontFamily:"'DM Sans',sans-serif" }}>
+            {open ? '▲ Hide' : '▾ View'}
+          </button>
+        )}
       </div>
-      {children}
+      {active && children}
+      {!active && open && hasView && (
+        <div style={{ marginTop:4 }}>
+          {viewContent}
+        </div>
+      )}
     </div>
   )
 }
