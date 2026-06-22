@@ -362,14 +362,16 @@ export default function ReportsPage() {
                   </Section>
                 )}
 
-                <Section title="Declaration">
-                  <div style={{ background:'#fef3e2', borderRadius:8, padding:'10px 12px' }}>
-                    <div style={{ fontSize:11, color:'#7a5500', lineHeight:1.6 }}>
-                      Signed by: <strong>{selected.declaration_name}</strong><br />
-                      Date: <strong>{fmtDate(selected.declaration_date)}</strong>
+                {!isHR && (
+                  <Section title="Declaration">
+                    <div style={{ background:'#fef3e2', borderRadius:8, padding:'10px 12px' }}>
+                      <div style={{ fontSize:11, color:'#7a5500', lineHeight:1.6 }}>
+                        Signed by: <strong>{selected.declaration_name}</strong><br />
+                        Date: <strong>{fmtDate(selected.declaration_date)}</strong>
+                      </div>
                     </div>
-                  </div>
-                </Section>
+                  </Section>
+                )}
 
                 <div style={{ height:1, background:'#e5e0d8', margin:'20px 0' }} />
 
