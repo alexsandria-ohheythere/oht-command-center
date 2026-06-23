@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 import crypto from 'crypto';
 
 // ── POST: Generate a one-time LINK code for a staff member ──────────────────
@@ -10,8 +10,8 @@ export async function POST(request) {
       return Response.json({ error: 'staffId is required' }, { status: 400 });
     }
 
-    // Use service role key so the write bypasses RLS
-    const supabase = createClient(
+    // Use service role key in place of anon key — bypasses RLS for server writes
+    const supabase = createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY
     );
