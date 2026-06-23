@@ -14,13 +14,9 @@ export default function StaffLogin() {
     e.preventDefault()
     setLoading(true); setError('')
     const supabase = createClient()
-    const { data: signInData, error } = await supabase.auth.signInWithPassword({ email, password })
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) { setError('Invalid email or password.'); setLoading(false) }
-    else {
-      // Mark staff as active (signed in at least once)
-      await supabase.from('staff').update({ onboarded: true }).eq('email', email).catch(()=>{})
-      window.location.href = '/portal'
-    }
+    else window.location.href = '/dashboard'
   }
 
   async function handleForgot(e) {
