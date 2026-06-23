@@ -1,47 +1,332 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// PATCH: app/payroll/page.js
-// Replace the savePayroll function with this one
-// ─────────────────────────────────────────────────────────────────────────────
+'use client'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import AuthShell from '../../components/AuthShell'
+import { createClient } from '../../lib/supabase'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate } from '../../lib/payroll'
+
+const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
+const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
+const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
+const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
+
+function SortTh({ label, colKey, sortKey, sortDir, onSort, style }) {
+  const active = sortKey === colKey
+  return (
+    <th
+      onClick={() => onSort(colKey)}
+      style={{
+        padding:'11px 12px',
+        textAlign:'left',
+        fontSize:9,
+        fontWeight:700,
+        letterSpacing:1.5,
+        textTransform:'uppercase',
+        color: active ? 'white' : 'var(--matcha-light)',
+        cursor:'pointer',
+        userSelect:'none',
+        whiteSpace:'nowrap',
+        ...style
+      }}
+    >
+      {label}
+      <span style={{marginLeft:5, opacity: active ? 1 : 0.4, fontSize:10}}>
+        {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+      </span>
+    </th>
+  )
+}
+
+export default function PayrollPage() {
+  const supabase = createClient()
+  const [staff, setStaff]                   = useState([])
+  const [loading, setLoading]               = useState(true)
+  const [saving, setSaving]                 = useState(false)
+  const [timesheetData, setTimesheetData]   = useState(null)
+  const [savedRuns, setSavedRuns]           = useState([])
+  const [selectedCutoff, setSelectedCutoff] = useState(getCurrentCutoff())
+  const [view, setView]                     = useState('summary')
+  const [selectedStaff, setSelectedStaff]   = useState(null)
+  const [unmatchedTs, setUnmatchedTs]       = useState([])
+  const [toast, setToast]                   = useState(null)
+  const [sortKey, setSortKey]               = useState('name')
+  const [sortDir, setSortDir]               = useState('asc')
+  const [rateOverrides, setRateOverrides]   = useState(null)
+  const fileRef = useRef()
+
+  useEffect(() => { fetchStaff(); fetchRateOverrides() }, [])
+  useEffect(() => { fetchSavedRuns() }, [selectedCutoff])
+
+  async function fetchRateOverrides() {
+    const { data } = await supabase.from('settings').select('value').eq('key', 'payroll_rates').single()
+    if (data?.value) {
+      try { setRateOverrides(JSON.parse(data.value)) } catch(e) {}
+    }
+  }
+
+  async function fetchStaff() {
+    setLoading(true)
+    const { data } = await supabase.from('staff').select('*')
+    setStaff(data || [])
+    setLoading(false)
+  }
+
+  async function fetchSavedRuns() {
+    const { data } = await supabase.from('payroll_runs').select('*, staff(first_name,last_name,nickname,role,employment_type)').eq('cutoff_id', selectedCutoff.id)
+    setSavedRuns(data || [])
+  }
+
+  function showToast(icon, msg) { setToast({icon,msg}); setTimeout(()=>setToast(null),3500) }
+
+  function handleSort(key) {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
+
+  function handleTimesheetUpload(e) {
+    const file = e.target.files[0]; if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const parsed = parseTimesheetCSV(ev.target.result)
+      setTimesheetData(parsed)
+      const unmatched = Object.values(parsed).filter(ts => !matchStaff(staff, ts.lastName, ts.firstName))
+      setUnmatchedTs(unmatched)
+      showToast('✅', `Timesheet loaded · ${Object.keys(parsed).length} employees found`)
+    }
+    reader.readAsText(file); e.target.value = ''
+  }
+
+  function buildPayrollRows() {
+    return staff.map(s => {
+      const saved = savedRuns.find(r => r.staff_id === s.id)
+      if (timesheetData) {
+        const tsKey = Object.keys(timesheetData).find(k => { const ts = timesheetData[k]; return matchStaff([s], ts.lastName, ts.firstName) !== undefined })
+        const ts = tsKey ? timesheetData[tsKey] : null
+        const periodShifts = ts ? filterShiftsByPeriod(ts.shifts, selectedCutoff.start, selectedCutoff.end) : []
+        const pay = computeCutoffPayroll(s, periodShifts, rateOverrides)
+        return { staff:s, ts, periodShifts, pay, hasTimesheet:!!ts, saved, isLive:true }
+      } else if (saved) {
+        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, hourlyRate:getDailyRate(s.employment_type||'Full-time',s.role)/8 }
+        return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
+      } else {
+        return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides), hasTimesheet:false, saved:null, isLive:false }
+      }
+    })
+  }
 
   async function savePayroll() {
     if (!timesheetData) { showToast('⚠️','Upload a timesheet first'); return }
     setSaving(true)
     const rows = buildPayrollRows()
-    const upsertData = rows.map(r => ({
-      cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label,
-      cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end,
-      staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours,
-      total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount,
-      gross:r.pay.gross, late_deduction:r.pay.lateDeduction,
-      sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig,
-      tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay,
-      service_charge_eligible:r.pay.eligible, updated_at:new Date().toISOString()
-    }))
+    const upsertData = rows.map(r => ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, updated_at:new Date().toISOString() }))
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     if (error) { showToast('❌',error.message); setSaving(false); return }
     await fetchSavedRuns(); setTimesheetData(null); setSaving(false)
     showToast('💾',`Payroll saved for ${selectedCutoff.label}`)
-
-    const staffWithPay = rows.filter(r => r.pay.daysWorked > 0)
-
-    // Messenger to each staff member with days worked
-    await Promise.allSettled(staffWithPay.map(r =>
-      fetch('/api/messenger/send', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          staffId: r.staff.id,
-          message: `💰 Payslip Ready\n\n${selectedCutoff.label}\n\nYour payslip is now available. Log in to your OHT Staff Portal to view it.`
-        })
-      }).catch(()=>{})
-    ))
-
-    // Messenger to Alex & CJ
-    const totalNet = staffWithPay.reduce((sum,r) => sum + r.pay.netPay, 0)
-    await fetch('/api/messenger/send-by-emails', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        emails: ['ohheythere.matcha@gmail.com','ohheythere.group@gmail.com'],
-        message: `💰 Payroll Saved\n\n${selectedCutoff.label}\n\n${staffWithPay.length} staff · Total net pay: ₱${Math.round(totalNet).toLocaleString('en-PH')}`
-      })
-    }).catch(()=>{})
   }
+
+  async function deleteRun(runId, name) {
+    if (!confirm(`Delete payroll record for ${name}?`)) return
+    await supabase.from('payroll_runs').delete().eq('id', runId)
+    setSavedRuns(prev => prev.filter(r => r.id !== runId))
+    showToast('🗑️',`Payroll record deleted`)
+  }
+
+  async function deleteCutoff() {
+    if (!confirm(`Delete ALL payroll records for ${selectedCutoff.label}? This cannot be undone.`)) return
+    await supabase.from('payroll_runs').delete().eq('cutoff_id', selectedCutoff.id)
+    setSavedRuns([])
+    setTimesheetData(null)
+    showToast('🗑️',`All payroll records for ${selectedCutoff.label} deleted`)
+  }
+
+  function exportCSV() {
+    const rows = buildPayrollRows()
+    const data = [
+      ['Name','Role','Type','Days','Paid Hours','Late (mins)','Gross','Late Deduction','SSS','PhilHealth','Pag-IBIG','Tax','Total Deductions','Net Pay','Service Charge'],
+      ...rows.map(r => [`${r.staff.last_name}, ${r.staff.first_name}`,r.staff.role,r.staff.employment_type||'Full-time',r.pay.daysWorked,r.pay.paidHours.toFixed(2),r.pay.totalLateMins,r.pay.gross,r.pay.lateDeduction,r.pay.sss,r.pay.philhealth,r.pay.pagibig,r.pay.tax,r.pay.totalDeductions,r.pay.netPay,r.pay.eligible?'Yes':'No'])
+    ]
+    const csv = data.map(r=>r.join(',')).join('\n')
+    const blob = new Blob([csv],{type:'text/csv'})
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href=url; a.download=`OHT-Payroll-${selectedCutoff.label.replace(/\s/g,'-')}.csv`; a.click()
+    URL.revokeObjectURL(url)
+    showToast('📥','Payroll exported')
+  }
+
+  const allPayrollRows = buildPayrollRows()
+
+  // Sort payroll rows
+  const payrollRows = useMemo(() => {
+    return [...allPayrollRows].sort((a, b) => {
+      let av, bv
+      if (sortKey === 'name') {
+        av = `${a.staff.last_name} ${a.staff.first_name}`.toLowerCase()
+        bv = `${b.staff.last_name} ${b.staff.first_name}`.toLowerCase()
+      } else if (sortKey === 'role') {
+        av = (a.staff.role || '').toLowerCase()
+        bv = (b.staff.role || '').toLowerCase()
+      } else if (sortKey === 'employment_type') {
+        av = (a.staff.employment_type || '').toLowerCase()
+        bv = (b.staff.employment_type || '').toLowerCase()
+      } else if (sortKey === 'gross') {
+        av = a.pay.gross; bv = b.pay.gross
+      } else if (sortKey === 'deductions') {
+        av = a.pay.totalDeductions; bv = b.pay.totalDeductions
+      } else if (sortKey === 'net') {
+        av = a.pay.netPay; bv = b.pay.netPay
+      } else {
+        av = ''; bv = ''
+      }
+      const cmp = typeof av === 'number' ? av - bv : av.localeCompare(bv)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [allPayrollRows, sortKey, sortDir])
+
+  const totals = payrollRows.reduce((acc,r)=>({ gross:acc.gross+r.pay.gross, deductions:acc.deductions+r.pay.totalDeductions, net:acc.net+r.pay.netPay, lateDeduction:acc.lateDeduction+r.pay.lateDeduction, sss:acc.sss+r.pay.sss, philhealth:acc.philhealth+r.pay.philhealth, pagibig:acc.pagibig+r.pay.pagibig, tax:acc.tax+r.pay.tax }),{gross:0,deductions:0,net:0,lateDeduction:0,sss:0,philhealth:0,pagibig:0,tax:0})
+
+  const hasSavedData = savedRuns.length > 0
+  const hasLiveData  = !!timesheetData
+  const iStyle = {background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none',cursor:'pointer'}
+  const thBase = {padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)',whiteSpace:'nowrap'}
+
+  return (
+    <AuthShell>
+      <div className="topbar">
+        <div>
+          <div className="topbar-title">Payroll</div>
+          <div className="topbar-sub">
+            {selectedCutoff.label} · {staff.length} staff
+            {hasLiveData && <span style={{color:'var(--matcha-dark)',fontWeight:600}}> · Timesheet loaded ✓</span>}
+            {!hasLiveData && hasSavedData && <span style={{color:'var(--sky)',fontWeight:600}}> · Saved ✓</span>}
+          </div>
+        </div>
+        <div style={{display:'flex',gap:9,alignItems:'center'}}>
+          {view!=='summary'&&<button className="btn btn-secondary" onClick={()=>setView('summary')}>← Back</button>}
+          <label style={{display:'flex',alignItems:'center',gap:6,background:'var(--sky-pale)',border:'1px solid var(--sky)',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:700,color:'var(--sky)',cursor:'pointer'}}>
+            📂 Upload Timesheet <input type="file" accept=".csv" ref={fileRef} style={{display:'none'}} onChange={handleTimesheetUpload}/>
+          </label>
+          {hasLiveData&&<button className="btn btn-primary" onClick={savePayroll} disabled={saving} style={{background:'var(--matcha)'}}>{saving?'💾 Saving…':'💾 Save Payroll'}</button>}
+          {(hasLiveData||hasSavedData)&&<button className="btn btn-secondary" onClick={exportCSV}>↓ Export CSV</button>}
+          {hasSavedData&&!hasLiveData&&<button onClick={deleteCutoff} style={{background:'#fdeaea',color:'#c0392b',border:'1px solid #f5c6c644',borderRadius:8,padding:'7px 13px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑 Delete Cutoff</button>}
+        </div>
+      </div>
+
+      <div className="page-content">
+        {/* Cutoff selector */}
+        <div style={{display:'flex',gap:10,marginBottom:16,alignItems:'center',flexWrap:'wrap'}}>
+          <span style={{fontSize:10,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)'}}>Cutoff Period:</span>
+          <select style={iStyle} value={selectedCutoff.id} onChange={e=>{setSelectedCutoff(CUTOFF_PERIODS.find(p=>p.id===parseInt(e.target.value)));setTimesheetData(null)}}>
+            {CUTOFF_PERIODS.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          {hasLiveData ? (
+            <div style={{background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:8,padding:'6px 12px',fontSize:11,color:'var(--matcha-dark)',fontWeight:600}}>✓ Timesheet loaded — review and Save Payroll</div>
+          ) : hasSavedData ? (
+            <div style={{background:'var(--sky-pale)',border:'1px solid var(--sky)',borderRadius:8,padding:'6px 12px',fontSize:11,color:'var(--sky)',fontWeight:600}}>✓ Saved payroll — upload new timesheet to recompute</div>
+          ) : (
+            <div style={{background:'var(--gold-pale)',border:'1px solid var(--gold)',borderRadius:8,padding:'6px 12px',fontSize:11,color:'#a06000',fontWeight:500}}>💡 Upload a StoreHub timesheet to compute payroll</div>
+          )}
+        </div>
+
+        {/* KPIs */}
+        <div className="kpi-grid" style={{marginBottom:16}}>
+          {[
+            {label:'Total Gross',value:peso(totals.gross),cls:'c-matcha',icon:'💰'},
+            {label:'Total Deductions',value:peso(totals.deductions),cls:'c-blush',icon:'📉'},
+            {label:'Total Net Pay',value:peso(totals.net),cls:'c-gold',icon:'💸'},
+            {label:'Staff on Payroll',value:`${payrollRows.filter(r=>r.pay.daysWorked>0).length} / ${staff.length}`,cls:'c-bark',icon:'👥'},
+          ].map(k=>(
+            <div key={k.label} className={`kpi-card ${k.cls}`}>
+              <div className="kpi-icon">{k.icon}</div>
+              <div className="kpi-label">{k.label}</div>
+              <div className="kpi-value" style={{fontSize:20}}>{k.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Deduction breakdown */}
+        <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 20px',marginBottom:16,display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+          {[['Late Deductions',totals.lateDeduction,'#c0392b'],['SSS',totals.sss,'#2d5a8a'],['PhilHealth',totals.philhealth,'#2d7a6a'],['Pag-IBIG + Tax',totals.pagibig+totals.tax,'#8e44ad']].map(([label,val,color])=>(
+            <div key={label} style={{textAlign:'center',padding:10,background:'var(--surface)',borderRadius:10}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color}}>{peso(val)}</div>
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:3}}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Table */}
+        <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+            <thead>
+              <tr style={{background:'var(--espresso)'}}>
+                <SortTh label="Employee"    colKey="name"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortTh label="Role"        colKey="role"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortTh label="Type"        colKey="employment_type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th style={thBase}>Days</th>
+                <th style={thBase}>Hrs</th>
+                <th style={thBase}>Late</th>
+                <SortTh label="Gross"       colKey="gross"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortTh label="Deductions"  colKey="deductions"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortTh label="Net Pay"     colKey="net"             sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th style={thBase}>SVC</th>
+                <th style={thBase}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {payrollRows.map((r,i)=>(
+                <tr key={r.staff.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}
+                  onMouseEnter={e=>e.currentTarget.style.background='var(--matcha-pale)'}
+                  onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'var(--white)':'var(--surface)'}>
+                  <td style={{padding:'9px 12px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <div style={{width:26,height:26,borderRadius:'50%',background:getRoleColor(r.staff.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'white',flexShrink:0}}>
+                        {initials(r.staff.first_name,r.staff.last_name)}
+                      </div>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:11}}>{r.staff.last_name}, {r.staff.first_name}</div>
+                        {r.staff.nickname&&<div style={{fontSize:9,color:'var(--text-muted)'}}>"{r.staff.nickname}"</div>}
+                      </div>
+                      {r.saved&&!r.isLive&&<span style={{fontSize:8,background:'var(--sky-pale)',color:'var(--sky)',border:'1px solid #4a90c444',padding:'1px 4px',borderRadius:4,fontWeight:600}}>Saved</span>}
+                    </div>
+                  </td>
+                  <td style={{padding:'9px 12px'}}><span style={{fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:5,background:getRoleColor(r.staff.role)+'22',color:getRoleColor(r.staff.role)}}>{r.staff.role}</span></td>
+                  <td style={{padding:'9px 12px',fontSize:10,color:'var(--text-muted)'}}>{r.staff.employment_type||'Full-time'}</td>
+                  <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontWeight:600}}>{r.pay.daysWorked}</td>
+                  <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontSize:11}}>{r.pay.paidHours.toFixed(1)}h</td>
+                  <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontSize:11,color:r.pay.totalLateMins>0?'#c0392b':'var(--text-muted)'}}>{r.pay.totalLateMins>0?`${r.pay.totalLateMins}m`:'—'}</td>
+                  <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontWeight:600,color:'var(--matcha-dark)',fontSize:11}}>{peso(r.pay.gross)}</td>
+                  <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",color:'#c0392b',fontSize:11}}>-{peso(r.pay.totalDeductions)}</td>
+                  <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{peso(r.pay.netPay)}</td>
+                  <td style={{padding:'9px 12px',fontSize:13}}>{r.pay.eligible?'✅':'❌'}</td>
+                  <td style={{padding:'9px 12px'}}>
+                    {r.saved && (
+                      <button onClick={()=>deleteRun(r.saved.id,`${r.staff.last_name}, ${r.staff.first_name}`)}
+                        style={{background:'transparent',border:'none',color:'var(--border)',cursor:'pointer',fontSize:13}}
+                        onMouseEnter={e=>e.target.style.color='#c0392b'} onMouseLeave={e=>e.target.style.color='var(--border)'}>
+                        🗑
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{background:'var(--espresso)',borderTop:'2px solid var(--matcha)'}}>
+                <td colSpan={6} style={{padding:'11px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
+                <td style={{padding:'11px 12px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(totals.gross)}</td>
+                <td style={{padding:'11px 12px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#f5a0a0'}}>-{peso(totals.deductions)}</td>
+                <td style={{padding:'11px 12px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672',fontSize:13}}>{peso(totals.net)}</td>
+                <td colSpan={2}></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      {toast&&(
+        <div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}>
+          <span>{toast.icon}</span><span>{toast.msg}</span>
+        </div>
+      )}
+    </AuthShell>
+  )
+}
