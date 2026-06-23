@@ -1,4 +1,4 @@
-import { createClient } from '../../../../lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 
 // ── POST: Generate a one-time LINK code for a staff member ──────────────────
@@ -10,7 +10,11 @@ export async function POST(request) {
       return Response.json({ error: 'staffId is required' }, { status: 400 });
     }
 
-    const supabase = createClient();
+    // Use service role key so the write bypasses RLS
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
 
     // Verify staff member exists
     const { data: staff, error: fetchError } = await supabase
@@ -20,13 +24,13 @@ export async function POST(request) {
       .single();
 
     if (fetchError || !staff) {
-      return Response.json({ error: 'Staff member not found' }, { status: 404 });
+      return Response.json({ error: 'Staff member not found', detail: fetchError?.message }, { status: 404 });
     }
 
-    // Generate a random 8-character uppercase alphanumeric code
-    const code = crypto.randomBytes(4).toString('hex').toUpperCase(); // e.g. "A3F7B2C1"
+    // Generate a random 8-character uppercase hex code
+    const code = crypto.randomBytes(4).toString('hex').toUpperCase();
 
-    // Code expires in 15 minutes
+    // Expires in 15 minutes
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
     // Save code + expiry to staff record
@@ -39,13 +43,11 @@ export async function POST(request) {
       .eq('id', staffId);
 
     if (updateError) {
-      console.error('[generate-code] Supabase update error:', updateError);
-      return Response.json({ error: 'Failed to save code' }, { status: 500 });
+      return Response.json({ error: 'Failed to save code', detail: updateError.message }, { status: 500 });
     }
 
     return Response.json({ code, expiresAt });
   } catch (err) {
-    console.error('[generate-code] Unexpected error:', err);
-    return Response.json({ error: 'Internal server error' }, { status: 500 });
+    return Response.json({ error: 'Internal server error', detail: err.message }, { status: 500 });
   }
 }
