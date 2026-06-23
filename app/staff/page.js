@@ -10,56 +10,59 @@ const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
 
 const iStyle = {background:'var(--surface)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none',width:'100%'}
-
 const EMPTY = {first_name:'',last_name:'',nickname:'',role:'Senior Barista',employment_type:'Full-time',email:'',phone:'',min_shifts_per_week:0}
 
-// Sortable column header
 function SortTh({ label, colKey, sortKey, sortDir, onSort, style }) {
   const active = sortKey === colKey
   return (
-    <th
-      onClick={() => onSort(colKey)}
-      style={{
-        padding:'11px 12px',
-        textAlign:'left',
-        fontSize:9,
-        fontWeight:700,
-        letterSpacing:1.5,
-        textTransform:'uppercase',
-        color: active ? 'white' : 'var(--matcha-light)',
-        cursor:'pointer',
-        userSelect:'none',
-        whiteSpace:'nowrap',
-        ...style
-      }}
-    >
+    <th onClick={() => onSort(colKey)} style={{padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:active?'white':'var(--matcha-light)',cursor:'pointer',userSelect:'none',whiteSpace:'nowrap',...style}}>
       {label}
-      <span style={{marginLeft:5, opacity: active ? 1 : 0.4, fontSize:10}}>
-        {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-      </span>
+      <span style={{marginLeft:5,opacity:active?1:0.4,fontSize:10}}>{active?(sortDir==='asc'?'↑':'↓'):'↕'}</span>
     </th>
   )
 }
 
 export default function StaffPage() {
   const supabase = createClient()
-  const [staff, setStaff]           = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [saving, setSaving]         = useState(false)
-  const [editingId, setEditingId]   = useState(null)
-  const [editForm, setEditForm]     = useState({})
-  const [showAdd, setShowAdd]       = useState(false)
-  const [addForm, setAddForm]       = useState(EMPTY)
-  const [search, setSearch]         = useState('')
-  const [toast, setToast]           = useState(null)
+  const [staff, setStaff]             = useState([])
+  const [authUsers, setAuthUsers]     = useState(new Set())
+  const [loading, setLoading]         = useState(true)
+  const [saving, setSaving]           = useState(false)
+  const [editingId, setEditingId]     = useState(null)
+  const [editForm, setEditForm]       = useState({})
+  const [showAdd, setShowAdd]         = useState(false)
+  const [addForm, setAddForm]         = useState(EMPTY)
+  const [search, setSearch]           = useState('')
+  const [toast, setToast]             = useState(null)
   const [showOnboard, setShowOnboard] = useState(null)
   const [onboardPass, setOnboardPass] = useState('')
   const [onboarding, setOnboarding]   = useState(false)
   const [sortKey, setSortKey]         = useState('last_name')
   const [sortDir, setSortDir]         = useState('asc')
+  const [statusFilter, setStatusFilter] = useState('all')
   const fileRef = useRef()
 
-  useEffect(() => { fetchStaff() }, [])
+  useEffect(() => { fetchAll() }, [])
+
+  async function fetchAll() {
+    setLoading(true)
+    const { data: staffData } = await supabase.from('staff').select('*')
+    setStaff(staffData || [])
+
+    // Check which emails have auth accounts (portal access)
+    const emails = (staffData || []).map(s => s.email).filter(Boolean)
+    if (emails.length > 0) {
+      const checks = await Promise.allSettled(
+        emails.map(email =>
+          supabase.from('staff').select('id,email').eq('email', email).single()
+            .then(() => null) // we already have staff, we need auth check
+        )
+      )
+      // Use a simpler approach: check last_sign_in or created_at via auth metadata
+      // Since we can't query auth.users directly client-side, we'll track via onboard action
+    }
+    setLoading(false)
+  }
 
   async function fetchStaff() {
     setLoading(true)
@@ -69,13 +72,11 @@ export default function StaffPage() {
   }
 
   function showToast(icon, msg) { setToast({icon,msg}); setTimeout(()=>setToast(null),3500) }
-
   function handleSort(key) {
-    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    if (sortKey === key) setSortDir(d => d==='asc'?'desc':'asc')
     else { setSortKey(key); setSortDir('asc') }
   }
 
-  // ── INLINE EDIT ──
   function startEdit(s) {
     setEditingId(s.id)
     setEditForm({ first_name:s.first_name||'', last_name:s.last_name||'', nickname:s.nickname||'', role:s.role||'Senior Barista', employment_type:s.employment_type||'Full-time', email:s.email||'', phone:s.phone||'', min_shifts_per_week:s.min_shifts_per_week||0 })
@@ -93,7 +94,6 @@ export default function StaffPage() {
 
   function cancelEdit() { setEditingId(null); setEditForm({}) }
 
-  // ── DELETE ──
   async function deleteStaff(id, name) {
     if (!confirm(`Delete ${name}? This cannot be undone.`)) return
     const { error } = await supabase.from('staff').delete().eq('id', id)
@@ -102,39 +102,35 @@ export default function StaffPage() {
     showToast('🗑️', `${name} removed`)
   }
 
-  // ── ADD STAFF ──
   async function addStaff() {
     if (!addForm.first_name || !addForm.last_name) { showToast('⚠️','First and last name required'); return }
     setSaving(true)
     const { data, error } = await supabase.from('staff').insert([addForm]).select().single()
     if (error) { showToast('❌', error.message); setSaving(false); return }
     setStaff(prev => [...prev, data])
-    setShowAdd(false)
-    setAddForm(EMPTY)
+    setShowAdd(false); setAddForm(EMPTY)
     showToast('✅', `${addForm.first_name} ${addForm.last_name} added`)
     setSaving(false)
   }
 
-  // ── ONBOARD ──
   async function onboardStaff() {
     if (!showOnboard?.email) { showToast('⚠️','Staff must have an email address'); return }
     if (!onboardPass || onboardPass.length < 6) { showToast('⚠️','Password must be at least 6 characters'); return }
     setOnboarding(true)
     const { error } = await supabase.auth.signUp({
-      email: showOnboard.email,
-      password: onboardPass,
+      email: showOnboard.email, password: onboardPass,
       options: { emailRedirectTo: null }
     })
     if (error && !error.message.includes('already registered')) {
       showToast('❌', error.message); setOnboarding(false); return
     }
+    // Mark staff as onboarded
+    await supabase.from('staff').update({ onboarded: true }).eq('id', showOnboard.id)
+    setStaff(prev => prev.map(s => s.id===showOnboard.id ? {...s, onboarded:true} : s))
     showToast('✅', `Account created for ${showOnboard.first_name}! Share ${showOnboard.email} + password with them.`)
-    setShowOnboard(null)
-    setOnboardPass('')
-    setOnboarding(false)
+    setShowOnboard(null); setOnboardPass(''); setOnboarding(false)
   }
 
-  // ── CSV IMPORT ──
   function handleCSV(e) {
     const file = e.target.files[0]; if(!file) return
     const reader = new FileReader()
@@ -157,40 +153,38 @@ export default function StaffPage() {
     reader.readAsText(file); e.target.value=''
   }
 
-  // ── FILTER + SORT ──
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    const results = staff.filter(s =>
+    let results = staff.filter(s =>
       `${s.first_name} ${s.last_name} ${s.nickname||''} ${s.role}`.toLowerCase().includes(q)
     )
-    return [...results].sort((a, b) => {
+    if (statusFilter === 'onboarded')       results = results.filter(s => s.onboarded)
+    if (statusFilter === 'not_onboarded')   results = results.filter(s => !s.onboarded)
+    if (statusFilter === 'messenger')       results = results.filter(s => s.messenger_opted_in)
+    if (statusFilter === 'no_messenger')    results = results.filter(s => !s.messenger_opted_in)
+    return [...results].sort((a,b) => {
       let av, bv
-      if (sortKey === 'name') {
-        av = `${a.last_name} ${a.first_name}`.toLowerCase()
-        bv = `${b.last_name} ${b.first_name}`.toLowerCase()
-      } else if (sortKey === 'min_shifts_per_week') {
-        av = a.min_shifts_per_week || 0
-        bv = b.min_shifts_per_week || 0
-      } else {
-        av = (a[sortKey] || '').toLowerCase()
-        bv = (b[sortKey] || '').toLowerCase()
-      }
-      const cmp = typeof av === 'number' ? av - bv : av.localeCompare(bv)
-      return sortDir === 'asc' ? cmp : -cmp
+      if (sortKey==='name') { av=`${a.last_name} ${a.first_name}`.toLowerCase(); bv=`${b.last_name} ${b.first_name}`.toLowerCase() }
+      else if (sortKey==='min_shifts_per_week') { av=a.min_shifts_per_week||0; bv=b.min_shifts_per_week||0 }
+      else { av=(a[sortKey]||'').toLowerCase(); bv=(b[sortKey]||'').toLowerCase() }
+      const cmp = typeof av==='number' ? av-bv : av.localeCompare(bv)
+      return sortDir==='asc' ? cmp : -cmp
     })
-  }, [staff, search, sortKey, sortDir])
+  }, [staff, search, sortKey, sortDir, statusFilter])
 
   const ef = k => e => setEditForm(p=>({...p,[k]:e.target.value}))
   const af = k => e => setAddForm(p=>({...p,[k]:e.target.value}))
-
   const thBase = {padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}
+
+  const totalOnboarded  = staff.filter(s=>s.onboarded).length
+  const totalMessenger  = staff.filter(s=>s.messenger_opted_in).length
 
   return (
     <AuthShell>
       <div className="topbar">
         <div>
           <div className="topbar-title">Staff Directory</div>
-          <div className="topbar-sub">{staff.length} team members</div>
+          <div className="topbar-sub">{staff.length} team members · {totalOnboarded} on portal · {totalMessenger} on Messenger</div>
         </div>
         <div style={{display:'flex',gap:9,alignItems:'center'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search staff…"
@@ -203,6 +197,23 @@ export default function StaffPage() {
       </div>
 
       <div className="page-content">
+
+        {/* Status filter pills */}
+        <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
+          {[
+            ['all',          'All Staff',         null],
+            ['onboarded',    '🟢 Portal Active',   '#4a7a1e'],
+            ['not_onboarded','⚪ Not Onboarded',   '#7a6a50'],
+            ['messenger',    '💬 Messenger Linked','#0084ff'],
+            ['no_messenger', '💬 Not Linked',      '#7a6a50'],
+          ].map(([val, label, color]) => (
+            <button key={val} onClick={()=>setStatusFilter(val)}
+              style={{padding:'5px 12px',borderRadius:20,border:`1.5px solid ${statusFilter===val?(color||'var(--espresso)'):'var(--border)'}`,background:statusFilter===val?(color||'var(--espresso)')+'18':'transparent',color:statusFilter===val?(color||'var(--espresso)'):'var(--text-muted)',fontSize:10,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s'}}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         {/* Add form */}
         {showAdd && (
           <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'18px 20px',marginBottom:16}}>
@@ -244,18 +255,21 @@ export default function StaffPage() {
               <thead>
                 <tr style={{background:'var(--espresso)'}}>
                   <th style={{...thBase,width:36}}></th>
-                  <SortTh label="Name"       colKey="name"               sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <SortTh label="Role"       colKey="role"               sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <SortTh label="Type"       colKey="employment_type"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="Name"       colKey="name"               sortKey={sortKey} sortDir={sortDir} onSort={handleSort}/>
+                  <SortTh label="Role"       colKey="role"               sortKey={sortKey} sortDir={sortDir} onSort={handleSort}/>
+                  <SortTh label="Type"       colKey="employment_type"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort}/>
                   <th style={thBase}>Email</th>
                   <th style={thBase}>Phone</th>
-                  <SortTh label="Min Shifts" colKey="min_shifts_per_week" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="Min Shifts" colKey="min_shifts_per_week" sortKey={sortKey} sortDir={sortDir} onSort={handleSort}/>
+                  <th style={thBase}>Status</th>
                   <th style={thBase}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((s,i) => {
                   const isEditing = editingId === s.id
+                  const isOnboarded = !!s.onboarded
+                  const hasMessenger = !!s.messenger_opted_in
                   return (
                     <tr key={s.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
                       {/* Avatar */}
@@ -284,9 +298,7 @@ export default function StaffPage() {
                       {/* Role */}
                       <td style={{padding:'8px 12px'}}>
                         {isEditing ? (
-                          <select style={iStyle} value={editForm.role} onChange={ef('role')}>
-                            {ROLES.map(r=><option key={r}>{r}</option>)}
-                          </select>
+                          <select style={iStyle} value={editForm.role} onChange={ef('role')}>{ROLES.map(r=><option key={r}>{r}</option>)}</select>
                         ) : (
                           <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:6,background:getRoleColor(s.role)+'22',color:getRoleColor(s.role)}}>{s.role}</span>
                         )}
@@ -295,9 +307,7 @@ export default function StaffPage() {
                       {/* Type */}
                       <td style={{padding:'8px 12px'}}>
                         {isEditing ? (
-                          <select style={iStyle} value={editForm.employment_type} onChange={ef('employment_type')}>
-                            {EMP_TYPES.map(t=><option key={t}>{t}</option>)}
-                          </select>
+                          <select style={iStyle} value={editForm.employment_type} onChange={ef('employment_type')}>{EMP_TYPES.map(t=><option key={t}>{t}</option>)}</select>
                         ) : (
                           <span style={{fontSize:11,color:'var(--text-muted)'}}>{s.employment_type||'Full-time'}</span>
                         )}
@@ -338,6 +348,26 @@ export default function StaffPage() {
                             ? <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:6,background:'var(--matcha-pale)',color:'var(--matcha-dark)'}}>5 / wk</span>
                             : <span style={{fontSize:10,color:'var(--border)'}}>—</span>
                         )}
+                      </td>
+
+                      {/* ── STATUS BADGES ── */}
+                      <td style={{padding:'8px 12px'}}>
+                        <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                          {/* Portal / Onboarded */}
+                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:5,whiteSpace:'nowrap',
+                            background:isOnboarded?'#eef7e4':'var(--surface)',
+                            color:isOnboarded?'#4a7a1e':'var(--text-muted)',
+                            border:`1px solid ${isOnboarded?'#7ab648':'var(--border)'}`}}>
+                            {isOnboarded ? '🟢 Portal Active' : '⚪ Not Onboarded'}
+                          </span>
+                          {/* Messenger */}
+                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:5,whiteSpace:'nowrap',
+                            background:hasMessenger?'#e8f4ff':'var(--surface)',
+                            color:hasMessenger?'#0084ff':'var(--text-muted)',
+                            border:`1px solid ${hasMessenger?'#0084ff44':'var(--border)'}`}}>
+                            {hasMessenger ? '💬 Messenger ✓' : '💬 Not Linked'}
+                          </span>
+                        </div>
                       </td>
 
                       {/* Actions */}
