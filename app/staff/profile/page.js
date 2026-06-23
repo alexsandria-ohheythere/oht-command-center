@@ -74,7 +74,7 @@ function MessengerSection({ staff, onUnlink }) {
     setLoading(true)
     try {
       const supabase = createClient()
-      // Generate a random 8-char uppercase hex code client-side
+      // v2: generate code directly via supabase, no API route
       const array = new Uint8Array(4)
       crypto.getRandomValues(array)
       const code = Array.from(array).map(b => b.toString(16).padStart(2,'0')).join('').toUpperCase()
