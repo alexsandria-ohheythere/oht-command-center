@@ -13,7 +13,7 @@ export async function POST(request) {
     // Verify the staff member exists
     const { data: staff, error } = await supabase
       .from('staff')
-      .select('id, name, messenger_opted_in')
+      .select('id, first_name, last_name, messenger_opted_in')
       .eq('id', staffId)
       .single();
 
