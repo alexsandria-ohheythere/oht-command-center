@@ -1,4 +1,4 @@
-import { createClient } from '../../../../lib/supabase';
+import { createBrowserClient } from '@supabase/ssr';
 import crypto from 'crypto';
 
 // ── Verify webhook signature from Meta ──────────────────────────────────────
@@ -40,7 +40,7 @@ export async function POST(request) {
     return new Response('Not a page event', { status: 400 });
   }
 
-  const supabase = createClient();
+  const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   for (const entry of body.entry || []) {
     for (const event of entry.messaging || []) {
@@ -147,3 +147,4 @@ async function sendMessage(psid, text) {
     console.error('Meta Send API error:', err);
   }
 }
+
