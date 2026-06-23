@@ -191,6 +191,29 @@ export default function SchedulePage() {
     setShowPublishModal(false)
     setPublishing(false)
     showToast('📣','Schedule published!')
+    // ── Messenger: notify each assigned staff member ──
+    const uniqueStaffIds = [...new Set(schedules.map(s=>s.staff_id))]
+    const weekLabel = weekDates && weekDates.length ? weekDates[0].toLocaleDateString('en-PH',{month:'short',day:'numeric'}) + ' – ' + weekDates[6].toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : 'this week'
+    await Promise.allSettled(uniqueStaffIds.map(staffId =>
+      fetch('/api/messenger/send', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ staffId, message: '📅 Schedule Published
+
+Your schedule for ' + weekLabel + ' is now available. Log in to your OHT Staff Portal to view your shifts.' })
+      }).catch(()=>{})
+    ))
+    // ── Messenger: notify Alex & CJ ──
+    await fetch('/api/messenger/send-by-emails', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        emails: ['ohheythere.matcha@gmail.com','ohheythere.group@gmail.com'],
+        message: '📅 Schedule Published
+
+' + weekLabel + '
+
+' + uniqueStaffIds.length + ' staff assigned and notified.'
+      })
+    }).catch(()=>{})
   }
 
   const isPublished = schedules.length>0&&schedules.every(s=>s.published)
