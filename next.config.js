@@ -1,3 +1,5 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {}
+const nextConfig = {
+  // cache bust: force full rebuild
+}
 module.exports = nextConfig
