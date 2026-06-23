@@ -1,7 +1,81 @@
 'use client'
 import { useState, useEffect } from 'react'
+import React from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
+
+// ── Admin Messenger Link Card ────────────────────────────────────────────────
+function AdminMessengerCard({ staffId, onLinked }) {
+  const [code, setCode]       = React.useState(null)
+  const [expires, setExpires] = React.useState(null)
+  const [loading, setLoading] = React.useState(false)
+  const [copied, setCopied]   = React.useState(false)
+  const [timeLeft, setTimeLeft] = React.useState(null)
+
+  React.useEffect(() => {
+    if (!expires) return
+    const interval = setInterval(() => {
+      const secs = Math.round((new Date(expires) - Date.now()) / 1000)
+      if (secs <= 0) { setCode(null); setExpires(null); setTimeLeft(null); clearInterval(interval) }
+      else setTimeLeft(secs)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [expires])
+
+  async function generateCode() {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/messenger/generate-code', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ staffId })
+      })
+      const data = await res.json()
+      if (data.code) { setCode(data.code); setExpires(data.expiresAt) }
+    } catch(e) {}
+    setLoading(false)
+  }
+
+  function copyCode() {
+    navigator.clipboard.writeText('LINK-' + code)
+    setCopied(true); setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div style={{background:'white',border:'1.5px solid #d8cebb',borderRadius:13,padding:'16px 18px',marginBottom:16,borderTop:'3px solid #0084ff'}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+        <span style={{fontSize:22}}>💬</span>
+        <div>
+          <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:13,fontWeight:700,color:'var(--text-primary)'}}>Link Your Messenger</div>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Get shift updates, job orders & alerts sent directly to your Messenger.</div>
+        </div>
+      </div>
+      {!code ? (
+        <button onClick={generateCode} disabled={loading}
+          style={{padding:'9px 16px',background:'#0084ff',color:'white',border:'none',borderRadius:8,fontSize:13,fontWeight:700,cursor:'pointer',opacity:loading?0.7:1,fontFamily:"'DM Sans',sans-serif"}}>
+          {loading ? 'Generating…' : '🔗 Get My Link Code'}
+        </button>
+      ) : (
+        <div>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>
+            Send this to the <strong>Oh Hey There Matcha</strong> Facebook Page on Messenger:
+          </div>
+          <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px',marginBottom:8,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+            <code style={{fontFamily:'monospace',fontSize:18,fontWeight:700,letterSpacing:2,color:'var(--text-primary)'}}>LINK-{code}</code>
+            <button onClick={copyCode}
+              style={{padding:'6px 14px',background:copied?'#7ab648':'#1a1208',color:'white',border:'none',borderRadius:6,fontSize:11,fontWeight:700,cursor:'pointer',transition:'background .2s',fontFamily:"'DM Sans',sans-serif"}}>
+              {copied ? '✓ Copied!' : 'Copy'}
+            </button>
+          </div>
+          <div style={{fontSize:11,color:timeLeft < 60?'#c0392b':'var(--text-muted)'}}>
+            ⏱ Expires in {timeLeft >= 60 ? Math.floor(timeLeft/60)+'m '+timeLeft%60+'s' : timeLeft+'s'}
+            <button onClick={generateCode} style={{marginLeft:12,background:'none',border:'none',color:'#0084ff',fontSize:11,cursor:'pointer',fontWeight:600,fontFamily:"'DM Sans',sans-serif"}}>Regenerate</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 
 const ROLE_COLORS = {
   'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4',
@@ -103,6 +177,8 @@ export default function DashboardPage() {
 
   const [loading, setLoading]                 = useState(true)
   const [userRole, setUserRole]               = useState('admin')
+  const [userEmail, setUserEmail]             = useState('')
+  const [messengerProfile, setMessengerProfile] = useState(null)
 
   // KPI data
   const [incidentCount, setIncidentCount]     = useState(0)
@@ -135,9 +211,15 @@ export default function DashboardPage() {
   const [announcements, setAnnouncements]     = useState([])
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       const email = session?.user?.email?.toLowerCase() || ''
+      setUserEmail(email)
       setUserRole(email === 'hr.ohtgroup@gmail.com' ? 'hr' : 'admin')
+      if (email) {
+        const supabaseInner = createClient()
+        const { data: mp } = await supabaseInner.from('staff').select('id,messenger_psid,messenger_opted_in').eq('email', email).single()
+        setMessengerProfile(mp || null)
+      }
     })
     fetchDashboard()
   }, [])
@@ -259,6 +341,17 @@ export default function DashboardPage() {
       </div>
 
       <div className="page-content">
+
+        {/* MESSENGER LINK CARD */}
+        {userRole !== 'hr' && messengerProfile && !messengerProfile.messenger_opted_in && (
+          <AdminMessengerCard staffId={messengerProfile.id} onLinked={() => setMessengerProfile(p=>({...p,messenger_opted_in:true}))} />
+        )}
+        {userRole !== 'hr' && messengerProfile?.messenger_opted_in && (
+          <div style={{background:'#eef7e4',border:'1.5px solid #7ab648',borderRadius:13,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:12}}>
+            <span style={{fontSize:20}}>💬</span>
+            <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:12,fontWeight:700,color:'#4a7a1e'}}>Messenger Linked ✅ <span style={{fontSize:11,fontWeight:400}}>— You'll receive OHT notifications in Messenger.</span></div>
+          </div>
+        )}
 
         {/* FINANCE STRIP — hidden for HR */}
         {userRole !== 'hr' && (
