@@ -25,13 +25,19 @@ function AdminMessengerCard({ staffId, onLinked }) {
   async function generateCode() {
     setLoading(true)
     try {
-      const res = await fetch('/api/messenger/generate-code', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ staffId })
-      })
-      const data = await res.json()
-      if (data.code) { setCode(data.code); setExpires(data.expiresAt) }
-    } catch(e) {}
+      const supabase = createClient()
+      const array = new Uint8Array(4)
+      crypto.getRandomValues(array)
+      const code = Array.from(array).map(b => b.toString(16).padStart(2,'0')).join('').toUpperCase()
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      const { error } = await supabase
+        .from('staff')
+        .update({ messenger_link_code: code, messenger_link_expires_at: expiresAt })
+        .eq('id', staffId)
+      if (error) { console.error('[generateCode]', error); setLoading(false); return }
+      setCode(code)
+      setExpires(expiresAt)
+    } catch(e) { console.error(e) }
     setLoading(false)
   }
 
