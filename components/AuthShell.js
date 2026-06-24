@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '../lib/supabase'
 import Sidebar from './Sidebar'
+import NotificationBell from './NotificationBell'
 
 const ADMIN_EMAILS = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
 const HR_EMAILS    = ['hr.ohtgroup@gmail.com']
@@ -55,14 +56,20 @@ export default function AuthShell({ children, require: requirePermission }) {
     <div className={`app-shell${sidebarOpen ? ' sidebar-open' : ''}`}
       onClick={e => { if (sidebarOpen && e.target === e.currentTarget) setSidebarOpen(false) }}>
       <Sidebar user={user} userRole={userRole} onClose={() => setSidebarOpen(false)} />
-      <div className="main-area">
+      <div className="main-area" style={{ display:'flex', flexDirection:'column', flex:1, minWidth:0 }}>
+        {/* Top bar — holds the notification bell on every page */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:12, padding:'10px 20px 10px 60px', flexShrink:0 }}>
+          <NotificationBell user={user} />
+        </div>
         {/* Hamburger — mobile only */}
         <button className="hamburger" onClick={() => setSidebarOpen(true)}
           style={{ position:'fixed', top:14, left:14, zIndex:150 }}
           aria-label="Open menu">
           ☰
         </button>
-        {children}
+        <div style={{ flex:1, minHeight:0, overflow:'auto' }}>
+          {children}
+        </div>
       </div>
     </div>
   )
