@@ -116,12 +116,10 @@ export async function POST(request) {
           await sendMessage(psid,
             `👋 Hi ${existing.first_name}! Your account is already linked. You'll receive your OHT notifications here automatically.`
           );
-        } else {
-          // Unknown sender — generic response, no instructions leaked
-          await sendMessage(psid,
-            `👋 Hi! This is the Oh Hey There Matcha Cafe notification line.\n\nThis channel is for OHT staff only. If you're a staff member, please log in to your portal to get your unique link code.`
-          );
         }
+        // Unknown sender (a customer, not staff) — do NOT auto-reply.
+        // Leave the conversation for the team to answer manually in Messenger.
+        // Auto-replying here was sending the "staff only" message to customers.
       }
     }
   }
