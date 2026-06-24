@@ -55,15 +55,17 @@ export async function POST(request) {
           const code = text.toUpperCase().replace('LINK-', '').trim();
 
           // Look up staff member with this exact code
-          const { data: staff } = await supabase
+          const { data: staff, error: staffErr } = await supabase
             .from('staff')
             .select('id, name, messenger_psid, messenger_link_code, messenger_link_expires_at')
             .eq('messenger_link_code', code)
             .single();
 
+          console.log('[webhook] code lookup:', code, 'staff:', staff?.id, 'error:', staffErr?.message);
+
           if (!staff) {
             await sendMessage(psid,
-              `❌ That code wasn't recognised. Please get a fresh code from your OHT Staff Portal and try again.`
+              `❌ Code not found: ${code} | Error: ${staffErr?.message || 'none'}`
             );
             continue;
           }
@@ -147,4 +149,3 @@ async function sendMessage(psid, text) {
     console.error('Meta Send API error:', err);
   }
 }
-
