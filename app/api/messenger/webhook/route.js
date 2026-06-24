@@ -55,17 +55,15 @@ export async function POST(request) {
           const code = text.toUpperCase().replace('LINK-', '').trim();
 
           // Look up staff member with this exact code
-          const { data: staff, error: staffErr } = await supabase
+          const { data: staff } = await supabase
             .from('staff')
-            .select('id, name, messenger_psid, messenger_link_code, messenger_link_expires_at')
+            .select('id, first_name, last_name, messenger_psid, messenger_link_code, messenger_link_expires_at')
             .eq('messenger_link_code', code)
             .single();
 
-          console.log('[webhook] code lookup:', code, 'staff:', staff?.id, 'error:', staffErr?.message);
-
           if (!staff) {
             await sendMessage(psid,
-              `❌ Code not found: ${code} | Error: ${staffErr?.message || 'none'}`
+              `❌ That code wasn't recognised. Please get a fresh code from your OHT Staff Portal and try again.`
             );
             continue;
           }
@@ -100,7 +98,7 @@ export async function POST(request) {
             .eq('id', staff.id);
 
           await sendMessage(psid,
-            `✅ You're all set, ${staff.name}!\n\nYour Messenger is now linked to Oh Hey There. You'll receive notifications here for:\n• Shift assignments\n• Job orders\n• Contracts\n• Payslips\n• Day-off updates\n• And more!\n\nWelcome aboard 🎉`
+            `✅ You're all set, ${staff.first_name}!\n\nYour Messenger is now linked to Oh Hey There. You'll receive notifications here for:\n• Shift assignments\n• Job orders\n• Contracts\n• Payslips\n• Day-off updates\n• And more!\n\nWelcome aboard 🎉`
           );
 
           continue;
@@ -109,14 +107,14 @@ export async function POST(request) {
         // ── Any other message — check if known staff ─────────────────────
         const { data: existing } = await supabase
           .from('staff')
-          .select('id, name, messenger_opted_in')
+          .select('id, first_name, last_name, messenger_opted_in')
           .eq('messenger_psid', psid)
           .single();
 
         if (existing && existing.messenger_opted_in) {
           // Already linked — friendly acknowledgement
           await sendMessage(psid,
-            `👋 Hi ${existing.name}! Your account is already linked. You'll receive your OHT notifications here automatically.`
+            `👋 Hi ${existing.first_name}! Your account is already linked. You'll receive your OHT notifications here automatically.`
           );
         } else {
           // Unknown sender — generic response, no instructions leaked
