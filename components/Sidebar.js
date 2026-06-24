@@ -2,6 +2,7 @@
 import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '../lib/supabase'
 import { can } from '../lib/auth'
+import { getNotifBadges } from '../lib/notifBadges'
 import { useState, useEffect } from 'react'
 
 const ROLE_PROFILES = {
@@ -15,6 +16,7 @@ export default function Sidebar({ user, userRole, onClose }) {
   const pathname = usePathname()
   const role     = userRole?.role || 'staff'
   const [navOverrides, setNavOverrides] = useState({})
+  const [badges, setBadges] = useState({})
 
   useEffect(() => {
     const supabase = createClient()
@@ -27,6 +29,14 @@ export default function Sidebar({ user, userRole, onClose }) {
           setNavOverrides(map)
         }
       })
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    getNotifBadges()
+      .then(map => { if (active) setBadges(map || {}) })
+      .catch(() => {})
+    return () => { active = false }
   }, [])
 
   const profile = ROLE_PROFILES[user?.email] || {
@@ -142,6 +152,12 @@ export default function Sidebar({ user, userRole, onClose }) {
                 onMouseLeave={e=>{ if(!active){e.currentTarget.style.opacity='0.8';e.currentTarget.style.background='transparent'} }}>
                 <span style={{ fontSize:14, width:18, textAlign:'center', flexShrink:0 }}>{item.icon}</span>
                 <span style={{ color:'white' }}>{item.label}</span>
+                {badges[item.id] > 0 && (
+                  <span style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:'white', background:'rgba(0,0,0,.28)', borderRadius:9, padding:'1px 7px', lineHeight:1.5 }}>{badges[item.id]}</span>
+                    <span style={{ width:7, height:7, borderRadius:'50%', background:'#ffd84d', boxShadow:'0 0 0 2px rgba(255,216,77,.25)' }} />
+                  </span>
+                )}
               </a>
             )
           }
