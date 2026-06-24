@@ -12,6 +12,10 @@ const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUppe
 const iStyle = {background:'var(--surface)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none',width:'100%'}
 const EMPTY = {first_name:'',last_name:'',nickname:'',role:'Senior Barista',employment_type:'Full-time',email:'',phone:'',min_shifts_per_week:0}
 
+// Command Center (admin/management) accounts — grouped separately from cafe staff
+const ADMIN_EMAILS = ['ohheythere.matcha@gmail.com','ohheythere.group@gmail.com','hr.ohtgroup@gmail.com']
+const isAdminAccount = s => ADMIN_EMAILS.includes((s.email||'').trim().toLowerCase())
+
 function SortTh({ label, colKey, sortKey, sortDir, onSort, style }) {
   const active = sortKey === colKey
   return (
@@ -172,6 +176,9 @@ export default function StaffPage() {
     })
   }, [staff, search, sortKey, sortDir, statusFilter])
 
+  const adminRows = useMemo(() => filtered.filter(isAdminAccount), [filtered])
+  const staffRows = useMemo(() => filtered.filter(s => !isAdminAccount(s)), [filtered])
+
   const ef = k => e => setEditForm(p=>({...p,[k]:e.target.value}))
   const af = k => e => setAddForm(p=>({...p,[k]:e.target.value}))
   const thBase = {padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}
@@ -266,7 +273,8 @@ export default function StaffPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((s,i) => {
+                {(() => {
+                  const renderRow = (s, i) => {
                   const isEditing = editingId === s.id
                   const isOnboarded = !!s.onboarded
                   const hasMessenger = !!s.messenger_opted_in
@@ -403,7 +411,28 @@ export default function StaffPage() {
                       </td>
                     </tr>
                   )
-                })}
+                  }
+
+                  const sectionHeader = (label, count, color) => (
+                    <tr key={`hdr-${label}`}>
+                      <td colSpan={9} style={{padding:'9px 14px',background:'var(--surface)',borderTop:'1px solid var(--border)',borderBottom:'1px solid var(--border)'}}>
+                        <span style={{fontSize:9,fontWeight:800,letterSpacing:1.5,textTransform:'uppercase',color:color}}>{label}</span>
+                        <span style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',marginLeft:8}}>({count})</span>
+                      </td>
+                    </tr>
+                  )
+
+                  const out = []
+                  if (adminRows.length > 0) {
+                    out.push(sectionHeader('Admin / Management — Command Center', adminRows.length, '#b06af5'))
+                    adminRows.forEach((s,i) => out.push(renderRow(s, i)))
+                  }
+                  if (staffRows.length > 0) {
+                    out.push(sectionHeader('Cafe Staff', staffRows.length, 'var(--matcha-dark)'))
+                    staffRows.forEach((s,i) => out.push(renderRow(s, i)))
+                  }
+                  return out
+                })()}
               </tbody>
             </table>
           </div>
