@@ -228,9 +228,22 @@ body {
     min-height: 44px;
   }
 
-  /* Grid layouts — stack on mobile */
+  /* Grid layouts — stack on mobile.
+     Pages use inline styles, so we match on the style attribute substring.
+     Both spaced ("gridTemplateColumns: ") and unspaced ("gridTemplateColumns:")
+     forms are covered because inline JSX renders without the space. */
+  [style*="gridTemplateColumns:'2fr 1fr'"],
   [style*="gridTemplateColumns: '2fr 1fr'"],
-  [style*="gridTemplateColumns: repeat(3"] {
+  [style*="gridTemplateColumns:'1fr 1fr'"],
+  [style*="gridTemplateColumns: '1fr 1fr'"],
+  [style*="gridTemplateColumns:'1fr 2fr'"],
+  [style*="gridTemplateColumns:'repeat(2"],
+  [style*="gridTemplateColumns: repeat(2"],
+  [style*="gridTemplateColumns:'repeat(3"],
+  [style*="gridTemplateColumns: repeat(3"],
+  [style*="gridTemplateColumns:'repeat(4"],
+  [style*="gridTemplateColumns: repeat(4"],
+  [style*="gridTemplateColumns:repeat("] {
     grid-template-columns: 1fr !important;
   }
 
@@ -266,4 +279,28 @@ body {
   cursor: pointer;
   font-size: 18px;
   flex-shrink: 0;
+}
+
+
+/* ─── GLOBAL MOBILE GUARDS ──────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Stop any single element from forcing horizontal page scroll */
+  html, body { overflow-x: hidden; max-width: 100%; }
+
+  /* Keep page content clear of the fixed hamburger (top-left) */
+  .page-content { padding-top: 56px !important; }
+
+  /* Images and media never overflow their container */
+  img, svg, video, canvas { max-width: 100%; height: auto; }
+
+  /* Larger, easier-to-tap nav links inside the drawer */
+  nav a { min-height: 44px; }
+}
+
+/* ─── SMALL PHONES (≤ 420px) ────────────────────────────────── */
+@media (max-width: 420px) {
+  /* KPIs single column when there's really no room */
+  .kpi-grid { grid-template-columns: 1fr !important; }
+  .page-content { padding-left: 12px !important; padding-right: 12px !important; }
+  .topbar-title { font-size: 15px !important; }
 }
