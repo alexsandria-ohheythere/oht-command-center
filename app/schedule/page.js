@@ -10,6 +10,9 @@ const SHIFTS = [
   { id:'pm',  label:'PM',  time:'3PM–11PM',        paid:7, color:'#2d5a8a', bg:'#e8f0fb', border:'#4a90c4' },
 ]
 
+// Leadership roles excluded from staff scheduling
+const LEADERSHIP_ROLES = ['Managing Director','CEO']
+
 // Role rows per shift — grouped with dividers
 const ROLE_ROWS = [
   // AM
@@ -214,6 +217,7 @@ export default function SchedulePage() {
   const uniqueStaffAssigned = new Set(schedules.map(s=>s.staff_id)).size
 
   const filteredStaff = staff.filter(s=>{
+    if (LEADERSHIP_ROLES.includes(s.role)) return false   // MD / CEO not schedulable
     const q=sidebarSearch.toLowerCase()
     return `${s.first_name} ${s.last_name} ${s.nickname||''}`.toLowerCase().includes(q)
   })
@@ -229,7 +233,7 @@ export default function SchedulePage() {
   }
 
   // Shift requirement alert
-  const requiredStaff = staff.filter(s=>s.min_shifts_per_week===5)
+  const requiredStaff = staff.filter(s=>s.min_shifts_per_week===5 && !LEADERSHIP_ROLES.includes(s.role))
   const shortfall = requiredStaff.map(s=>{
     const count = getStaffWeekShifts(s.id)
     return {...s,count,missing:5-count}
