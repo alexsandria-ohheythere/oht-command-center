@@ -173,12 +173,12 @@ body {
 
   /* Topbar */
   .topbar {
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: stretch;
     gap: 10px !important;
-    padding: 12px 14px !important;
-    position: sticky;
-    top: 0;
-    z-index: 100;
+    padding: 14px 14px !important;
+    height: auto !important;
+    position: static;
     background: var(--white);
   }
 
@@ -288,7 +288,7 @@ body {
   html, body { overflow-x: hidden; max-width: 100%; }
 
   /* Keep page content clear of the fixed hamburger (top-left) */
-  .page-content { padding-top: 56px !important; }
+  .page-content { padding-top: 14px !important; }
 
   /* Images and media never overflow their container */
   img, svg, video, canvas { max-width: 100%; height: auto; }
