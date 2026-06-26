@@ -83,8 +83,122 @@ function ArchivedColumn({ tasks, search, pri, getRoleColor, initials, openDrawer
   )
 }
 
+const MOBILE_TABS = [
+  { id:'todo',       label:'To Do',       color:'#7a6a50', bg:'#f5f0e8' },
+  { id:'inprogress', label:'In Progress', color:'#a06000', bg:'#fef3e2' },
+  { id:'done',       label:'Done',        color:'#4a7a1e', bg:'#eef7e4' },
+  { id:'archived',   label:'Archived',    color:'#9e9e9e', bg:'#f5f5f5' },
+]
+
+function MobileBoard({ filtered, getColTasks, pri, mobileCol, setMobileCol, openDrawer, moveTask, archiveTask, restoreTask, deleteTask, getRoleColor, initials, fmtDate, checkPct, isAdmin }) {
+  const tabs = MOBILE_TABS.filter(t => t.id !== 'archived' || isAdmin)
+  const colTasks = getColTasks(mobileCol)
+  const active = MOBILE_TABS.find(t => t.id === mobileCol) || MOBILE_TABS[0]
+  const NEXT = { todo:'inprogress', inprogress:'done', done:'todo' }
+  const NEXT_LABEL = { todo:'Start →', inprogress:'Mark Done →', done:'Reopen →' }
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:0}}>
+      {/* Status tab pills */}
+      <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:10,marginBottom:4,WebkitOverflowScrolling:'touch'}}>
+        {tabs.map(t => {
+          const count = getColTasks(t.id).length
+          const on = mobileCol === t.id
+          return (
+            <button key={t.id} onClick={()=>setMobileCol(t.id)}
+              style={{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'8px 14px',borderRadius:22,border:`1.5px solid ${on?t.color:'var(--border)'}`,background:on?t.bg:'var(--white)',color:on?t.color:'var(--text-muted)',fontSize:12,fontWeight:700,fontFamily:"'DM Sans',sans-serif",cursor:'pointer',whiteSpace:'nowrap'}}>
+              <span style={{width:8,height:8,borderRadius:'50%',background:t.color}}/>
+              {t.label}
+              <span style={{fontSize:10,fontWeight:800,background:on?'white':'var(--surface)',color:t.color,padding:'1px 7px',borderRadius:20}}>{count}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Row cards */}
+      <div style={{display:'flex',flexDirection:'column',gap:8,paddingBottom:24}}>
+        {colTasks.length===0 && (
+          <div style={{textAlign:'center',padding:'40px 10px',color:'var(--border)',fontSize:13,background:'var(--surface)',borderRadius:12}}>
+            No orders in {active.label}
+          </div>
+        )}
+        {colTasks.map(task => {
+          const p = pri(task.priority)
+          const assignee = task.staff
+          const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'done'
+          const pct = checkPct(task._checkDone, task._checkTotal)
+          const isArch = task.status === 'archived'
+          return (
+            <div key={task.id} onClick={()=>openDrawer(task)}
+              style={{background:'var(--white)',border:'1px solid var(--border)',borderLeft:`5px solid ${isArch?'#9e9e9e':p.color}`,borderRadius:12,overflow:'hidden',cursor:'pointer',opacity:isArch?0.8:1}}>
+              <div style={{padding:'12px 14px'}}>
+                {/* top row: ticket + priority + delete */}
+                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:7}}>
+                  {task.ticket_no && <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,color:'var(--espresso)',background:'var(--cream-dark)',padding:'2px 8px',borderRadius:6}}>{task.ticket_no}</span>}
+                  <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:p.bg,color:p.color}}>{p.label}</span>
+                  <div style={{flex:1}}/>
+                  <button onClick={e=>{e.stopPropagation();deleteTask(task.id)}} style={{background:'transparent',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:14,padding:'4px 6px'}}>🗑</button>
+                </div>
+
+                {/* title */}
+                <div style={{fontSize:15,fontWeight:600,color:'var(--espresso)',lineHeight:1.4,marginBottom:task.description?4:8,textDecoration:isArch?'line-through':'none'}}>{task.title}</div>
+                {task.description && <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.5,marginBottom:8,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',wordBreak:'break-word',overflowWrap:'anywhere'}}>{task.description}</div>}
+
+                {/* checklist progress */}
+                {task._checkTotal > 0 && (
+                  <div style={{marginBottom:8}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                      <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:600}}>☑ {task._checkDone}/{task._checkTotal}</span>
+                      <span style={{fontSize:10,color:'var(--text-muted)'}}>{pct}%</span>
+                    </div>
+                    <div style={{height:5,borderRadius:4,background:'var(--border)',overflow:'hidden'}}>
+                      <div style={{height:'100%',width:`${pct}%`,background:pct===100?'#4a7a1e':'var(--matcha)',borderRadius:4}}/>
+                    </div>
+                  </div>
+                )}
+
+                {/* meta row */}
+                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                  {assignee ? (
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <div style={{width:22,height:22,borderRadius:'50%',background:getRoleColor(assignee.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'white'}}>{initials(assignee.first_name,assignee.last_name)}</div>
+                      <span style={{fontSize:12,color:'var(--text-muted)',fontWeight:500}}>{assignee.nickname||assignee.first_name}</span>
+                    </div>
+                  ) : <span style={{fontSize:12,color:'var(--border)'}}>Unassigned</span>}
+                  <div style={{flex:1}}/>
+                  {task._commentCount>0 && <span style={{fontSize:11,color:'var(--text-muted)',background:'var(--surface)',border:'1px solid var(--border)',padding:'2px 8px',borderRadius:20}}>💬 {task._commentCount}</span>}
+                  {task.due_date && <span style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:isOverdue?'#c0392b':'var(--text-muted)'}}>📅 {fmtDate(task.due_date)}</span>}
+                </div>
+              </div>
+
+              {/* action bar */}
+              <div style={{display:'flex',borderTop:'1px solid var(--border)',background:'var(--surface)'}}>
+                {isArch ? (
+                  <button onClick={e=>{e.stopPropagation();restoreTask(task.id)}}
+                    style={{flex:1,background:'transparent',border:'none',color:'#4a7a1e',padding:'11px 4px',fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>♻ Restore</button>
+                ) : (
+                  <>
+                    <button onClick={e=>{e.stopPropagation();moveTask(task.id, NEXT[task.status]||'inprogress')}}
+                      style={{flex:1,background:'transparent',border:'none',borderRight:'1px solid var(--border)',color:'var(--matcha)',padding:'11px 4px',fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                      {NEXT_LABEL[task.status]||'Move →'}
+                    </button>
+                    {isAdmin && <button onClick={e=>{e.stopPropagation();archiveTask(task.id)}}
+                      style={{flexShrink:0,background:'transparent',border:'none',color:'#9e9e9e',padding:'11px 18px',fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>📦</button>}
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function JobOrderPage() {
   const supabase = createClient()
+  const [isMobile, setIsMobile] = useState(false)
+  const [mobileCol, setMobileCol] = useState('todo')
   const [tasks, setTasks]         = useState([])
   const [staff, setStaff]         = useState([])
   const [currentUser, setCurrentUser] = useState(null)
@@ -113,6 +227,12 @@ export default function JobOrderPage() {
   const commentsEndRef = useRef(null)
 
   useEffect(() => { fetchAll() }, [])
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth <= 820)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
 
   async function fetchAll() {
     setLoading(true)
@@ -303,9 +423,9 @@ export default function JobOrderPage() {
           <div className="topbar-title">Job Orders</div>
           <div className="topbar-sub">{tasks.length} orders · {tasks.filter(t=>t.status==='done').length} completed</div>
         </div>
-        <div style={{display:'flex',gap:9,alignItems:'center'}}>
+        <div style={{display:'flex',gap:9,alignItems:'center',flexWrap:'wrap'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by ticket or title…"
-            style={{...iStyle,width:220,padding:'6px 12px'}}/>
+            style={{...iStyle,width:isMobile?'100%':220,padding:'6px 12px'}}/>
           <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
             <option value="">All Staff</option>
             {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
@@ -376,7 +496,7 @@ export default function JobOrderPage() {
 
         {/* ── Stats Row ── */}
         {!loading && (
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:14}}>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(4,1fr)',gap:10,marginBottom:14}}>
             {[
               { label:'Total',       value: tasks.filter(t=>t.status!=='archived').length, color:'var(--espresso)', bg:'var(--white)',      icon:'📋' },
               { label:'To Do',       value: tasks.filter(t=>t.status==='todo').length,      color:'#7a6a50',        bg:'#f5f0e8',            icon:'○' },
@@ -397,6 +517,15 @@ export default function JobOrderPage() {
         {/* ── Kanban Board ── */}
         {loading ? (
           <div style={{textAlign:'center',padding:'60px',color:'var(--text-muted)'}}>Loading…</div>
+        ) : isMobile ? (
+          <MobileBoard
+            filtered={filtered} getColTasks={getColTasks} pri={pri}
+            mobileCol={mobileCol} setMobileCol={setMobileCol}
+            openDrawer={openDrawer} moveTask={moveTask} archiveTask={archiveTask}
+            restoreTask={restoreTask} deleteTask={deleteTask}
+            getRoleColor={getRoleColor} initials={initials} fmtDate={fmtDate}
+            checkPct={checkPct} isAdmin={isAdmin}
+          />
         ) : (
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,height:'calc(100vh - 210px)'}}>
             {COLUMNS.map(col=>{
@@ -509,7 +638,7 @@ export default function JobOrderPage() {
       {drawerTask && (
         <div onClick={e=>e.target===e.currentTarget&&closeDrawer()}
           style={{position:'fixed',inset:0,background:'rgba(26,18,8,.45)',backdropFilter:'blur(3px)',zIndex:600,display:'flex',justifyContent:'flex-end'}}>
-          <div style={{width:'100%',maxWidth:560,background:'var(--white)',boxShadow:'-8px 0 40px rgba(0,0,0,.15)',display:'flex',flexDirection:'column',height:'100%',overflowY:'auto'}}>
+          <div style={{width:'100%',maxWidth:isMobile?'100%':560,background:'var(--white)',boxShadow:'-8px 0 40px rgba(0,0,0,.15)',display:'flex',flexDirection:'column',height:'100%',overflowY:'auto'}}>
 
             {/* Drawer header */}
             <div style={{padding:'20px 24px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexShrink:0,background:'var(--white)',position:'sticky',top:0,zIndex:10}}>
