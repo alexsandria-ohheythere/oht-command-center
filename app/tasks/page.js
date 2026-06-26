@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { getUserRole } from '../../lib/auth'
@@ -200,6 +201,7 @@ export default function JobOrderPage() {
   const supabase = createClient()
   const [isMobile, setIsMobile] = useState(false)
   const [mobileCol, setMobileCol] = useState('todo')
+  const [mounted, setMounted] = useState(false)
   const [tasks, setTasks]         = useState([])
   const [staff, setStaff]         = useState([])
   const [currentUser, setCurrentUser] = useState(null)
@@ -234,6 +236,7 @@ export default function JobOrderPage() {
       requestAnimationFrame(() => autoGrow(descRef.current))
     }
   }, [drawerTask, drawerLoading])
+  useEffect(() => { setMounted(true) }, [])
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth <= 820)
     check()
@@ -647,7 +650,7 @@ export default function JobOrderPage() {
       </div>
 
       {/* ── Card Detail Drawer ── */}
-      {drawerTask && (
+      {drawerTask && mounted && createPortal((
         <div onClick={e=>e.target===e.currentTarget&&closeDrawer()}
           style={{position:'fixed',inset:0,background:'rgba(26,18,8,.45)',backdropFilter:'blur(3px)',zIndex:3000,display:'flex',justifyContent:'flex-end'}}>
           <div style={{width:'100%',maxWidth:isMobile?'100%':560,background:'var(--white)',boxShadow:'-8px 0 40px rgba(0,0,0,.15)',display:'flex',flexDirection:'column',height:'100%',overflowY:'auto'}}>
@@ -821,7 +824,7 @@ export default function JobOrderPage() {
             )}
           </div>
         </div>
-      )}
+      ), document.body)}
 
       {toast&&<div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}><span>{toast.icon}</span><span>{toast.msg}</span></div>}
     </AuthShell>
