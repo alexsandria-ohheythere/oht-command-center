@@ -10,6 +10,7 @@ const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-PH',{month:'short',day:'numeric'}) : '—'
 const fmtTime = d => d ? new Date(d).toLocaleDateString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'
+const autoGrow = el => { if(!el) return; el.style.height='auto'; el.style.height=(el.scrollHeight+2)+'px' }
 
 const PRIORITIES = [
   { id:'urgent', label:'Urgent', color:'#c0392b', bg:'#fdeaea' },
@@ -225,8 +226,14 @@ export default function JobOrderPage() {
   const [drawerForm, setDrawerForm]       = useState(null)
   const [savingDrawer, setSavingDrawer]   = useState(false)
   const commentsEndRef = useRef(null)
+  const descRef = useRef(null)
 
   useEffect(() => { fetchAll() }, [])
+  useEffect(() => {
+    if (drawerTask && !drawerLoading) {
+      requestAnimationFrame(() => autoGrow(descRef.current))
+    }
+  }, [drawerTask, drawerLoading])
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth <= 820)
     check()
@@ -423,18 +430,23 @@ export default function JobOrderPage() {
           <div className="topbar-title">Job Orders</div>
           <div className="topbar-sub">{tasks.length} orders · {tasks.filter(t=>t.status==='done').length} completed</div>
         </div>
-        <div style={{display:'flex',gap:9,alignItems:'center',flexWrap:'wrap'}}>
+        <div style={isMobile
+          ? {display:'flex',flexDirection:'column',gap:8,width:'100%'}
+          : {display:'flex',gap:9,alignItems:'center',flexWrap:'wrap'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by ticket or title…"
-            style={{...iStyle,width:isMobile?'100%':220,padding:'6px 12px'}}/>
-          <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
-            <option value="">All Staff</option>
-            {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
-          </select>
-          <select style={{...iStyle,width:'auto',padding:'6px 10px'}} value={filterPriority} onChange={e=>setFilterPriority(e.target.value)}>
-            <option value="">All Priorities</option>
-            {PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          <button className="btn btn-primary" onClick={()=>{setShowForm(true);setForm(EMPTY_FORM)}}>+ New Job Order</button>
+            style={{...iStyle,width:isMobile?'100%':220,padding:isMobile?'10px 12px':'6px 12px'}}/>
+          <div style={isMobile?{display:'flex',gap:8}:{display:'contents'}}>
+            <select style={{...iStyle,width:isMobile?'100%':'auto',padding:isMobile?'10px':'6px 10px'}} value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
+              <option value="">All Staff</option>
+              {staff.map(s=><option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
+            </select>
+            <select style={{...iStyle,width:isMobile?'100%':'auto',padding:isMobile?'10px':'6px 10px'}} value={filterPriority} onChange={e=>setFilterPriority(e.target.value)}>
+              <option value="">All Priorities</option>
+              {PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          </div>
+          <button className="btn btn-primary" onClick={()=>{setShowForm(true);setForm(EMPTY_FORM)}}
+            style={isMobile?{width:'100%',padding:'12px',fontSize:14}:undefined}>+ New Job Order</button>
         </div>
       </div>
 
@@ -637,11 +649,11 @@ export default function JobOrderPage() {
       {/* ── Card Detail Drawer ── */}
       {drawerTask && (
         <div onClick={e=>e.target===e.currentTarget&&closeDrawer()}
-          style={{position:'fixed',inset:0,background:'rgba(26,18,8,.45)',backdropFilter:'blur(3px)',zIndex:600,display:'flex',justifyContent:'flex-end'}}>
+          style={{position:'fixed',inset:0,background:'rgba(26,18,8,.45)',backdropFilter:'blur(3px)',zIndex:3000,display:'flex',justifyContent:'flex-end'}}>
           <div style={{width:'100%',maxWidth:isMobile?'100%':560,background:'var(--white)',boxShadow:'-8px 0 40px rgba(0,0,0,.15)',display:'flex',flexDirection:'column',height:'100%',overflowY:'auto'}}>
 
             {/* Drawer header */}
-            <div style={{padding:'20px 24px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexShrink:0,background:'var(--white)',position:'sticky',top:0,zIndex:10}}>
+            <div style={{padding:isMobile?'calc(env(safe-area-inset-top, 0px) + 16px) 18px 14px':'20px 24px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexShrink:0,background:'var(--white)',position:'sticky',top:0,zIndex:10}}>
               <div style={{flex:1,marginRight:12}}>
                 {drawerTask.ticket_no&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,color:'var(--espresso)',background:'var(--cream-dark)',padding:'2px 8px',borderRadius:6,display:'inline-block',marginBottom:8}}>{drawerTask.ticket_no}</div>}
                 <input
@@ -705,10 +717,12 @@ export default function JobOrderPage() {
                 <div style={{marginBottom:24}}>
                   <label style={lStyle}>Description</label>
                   <textarea
+                    ref={el=>{descRef.current=el;autoGrow(el)}}
                     value={drawerForm?.description||''}
-                    onChange={e=>setDrawerForm(p=>({...p,description:e.target.value}))}
+                    onChange={e=>{setDrawerForm(p=>({...p,description:e.target.value}));autoGrow(e.target)}}
+                    onInput={e=>autoGrow(e.target)}
                     placeholder="Add a description…"
-                    style={{...iStyle,resize:'vertical',minHeight:80,lineHeight:1.6}}
+                    style={{...iStyle,resize:'vertical',minHeight:100,lineHeight:1.6,overflow:'hidden'}}
                   />
                 </div>
 
