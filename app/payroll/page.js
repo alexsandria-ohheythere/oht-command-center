@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate } from '../../lib/payroll'
@@ -42,6 +42,8 @@ export default function PayrollPage() {
   const [loading, setLoading]               = useState(true)
   const [saving, setSaving]                 = useState(false)
   const [timesheetData, setTimesheetData]   = useState(null)
+  const [showTimesheet, setShowTimesheet]   = useState(false)
+  const [expandedEmp, setExpandedEmp]       = useState(null)
   const [savedRuns, setSavedRuns]           = useState([])
   const [selectedCutoff, setSelectedCutoff] = useState(getCurrentCutoff())
   const [view, setView]                     = useState('summary')
@@ -205,6 +207,7 @@ export default function PayrollPage() {
           <label style={{display:'flex',alignItems:'center',gap:6,background:'var(--sky-pale)',border:'1px solid var(--sky)',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:700,color:'var(--sky)',cursor:'pointer'}}>
             📂 Upload Timesheet <input type="file" accept=".csv" ref={fileRef} style={{display:'none'}} onChange={handleTimesheetUpload}/>
           </label>
+          {hasLiveData&&<button className="btn btn-secondary" onClick={()=>setShowTimesheet(true)}>👁 View Timesheet</button>}
           {hasLiveData&&<button className="btn btn-primary" onClick={savePayroll} disabled={saving} style={{background:'var(--matcha)'}}>{saving?'💾 Saving…':'💾 Save Payroll'}</button>}
           {(hasLiveData||hasSavedData)&&<button className="btn btn-secondary" onClick={exportCSV}>↓ Export CSV</button>}
           {hasSavedData&&!hasLiveData&&<button onClick={deleteCutoff} style={{background:'#fdeaea',color:'#c0392b',border:'1px solid #f5c6c644',borderRadius:8,padding:'7px 13px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑 Delete Cutoff</button>}
@@ -321,6 +324,99 @@ export default function PayrollPage() {
           </table>
         </div>
       </div>
+
+      {/* Timesheet Viewer Modal */}
+      {showTimesheet && timesheetData && (
+        <div onClick={()=>setShowTimesheet(false)} style={{position:'fixed',inset:0,background:'rgba(45,35,25,.55)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1100,padding:20}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--white)',borderRadius:16,maxWidth:920,width:'100%',maxHeight:'88vh',display:'flex',flexDirection:'column',boxShadow:'0 20px 60px rgba(0,0,0,.3)',overflow:'hidden'}}>
+            {/* Header */}
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 22px',borderBottom:'1px solid var(--border)',background:'var(--espresso)'}}>
+              <div>
+                <div style={{color:'var(--cream)',fontWeight:700,fontSize:15}}>📋 Uploaded Timesheet</div>
+                <div style={{color:'var(--matcha-light)',fontSize:11,marginTop:2}}>{selectedCutoff.label} · {Object.keys(timesheetData).length} employees · raw CSV contents</div>
+              </div>
+              <button onClick={()=>setShowTimesheet(false)} style={{background:'transparent',border:'none',color:'var(--cream)',fontSize:22,cursor:'pointer',lineHeight:1}}>×</button>
+            </div>
+            {/* Unmatched warning */}
+            {unmatchedTs.length>0 && (
+              <div style={{padding:'9px 22px',background:'var(--gold-pale)',borderBottom:'1px solid var(--gold)',fontSize:11,color:'#a06000',fontWeight:600}}>
+                ⚠️ {unmatchedTs.length} employee(s) in this timesheet don't match any staff record: {unmatchedTs.map(t=>`${t.lastName}, ${t.firstName}`).join(' · ')}
+              </div>
+            )}
+            {/* Body */}
+            <div style={{overflowY:'auto',padding:'12px 22px 20px'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{borderBottom:'2px solid var(--border)'}}>
+                    <th style={{padding:'8px 8px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Employee</th>
+                    <th style={{padding:'8px 8px',textAlign:'center',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Shifts</th>
+                    <th style={{padding:'8px 8px',textAlign:'right',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Raw Hrs</th>
+                    <th style={{padding:'8px 8px',textAlign:'right',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Paid Hrs</th>
+                    <th style={{padding:'8px 8px',textAlign:'right',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Late</th>
+                    <th style={{padding:'8px 8px',textAlign:'center',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)'}}>Match</th>
+                    <th style={{width:24}}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(timesheetData).sort((a,b)=>a[1].lastName.localeCompare(b[1].lastName)).map(([key,ts])=>{
+                    const shifts = ts.shifts||[]
+                    const rawTot = shifts.reduce((s,x)=>s+(x.rawHours||0),0)
+                    const paidTot = shifts.reduce((s,x)=>s+(x.paidHours||0),0)
+                    const lateTot = shifts.reduce((s,x)=>s+(x.lateMinutes||0),0)
+                    const matched = !!matchStaff(staff, ts.lastName, ts.firstName)
+                    const isOpen = expandedEmp===key
+                    return (
+                      <React.Fragment key={key}>
+                        <tr onClick={()=>setExpandedEmp(isOpen?null:key)} style={{borderBottom:'1px solid var(--border)',cursor:'pointer',background:isOpen?'var(--matcha-pale)':'transparent'}}>
+                          <td style={{padding:'9px 8px',fontWeight:600,fontSize:11}}>{ts.lastName}, {ts.firstName}<div style={{fontSize:9,color:'var(--text-muted)',fontWeight:400}}>{ts.email}</div></td>
+                          <td style={{padding:'9px 8px',textAlign:'center',fontFamily:"'DM Mono',monospace"}}>{shifts.length}</td>
+                          <td style={{padding:'9px 8px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:'var(--text-muted)'}}>{rawTot.toFixed(1)}h</td>
+                          <td style={{padding:'9px 8px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:600,color:'var(--matcha-dark)'}}>{paidTot.toFixed(1)}h</td>
+                          <td style={{padding:'9px 8px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:lateTot>0?'#c0392b':'var(--text-muted)'}}>{lateTot>0?`${lateTot}m`:'—'}</td>
+                          <td style={{padding:'9px 8px',textAlign:'center',fontSize:13}}>{matched?'✅':'⚠️'}</td>
+                          <td style={{padding:'9px 8px',textAlign:'center',color:'var(--text-muted)',fontSize:11}}>{isOpen?'▼':'▶'}</td>
+                        </tr>
+                        {isOpen && (
+                          <tr style={{background:'var(--surface)'}}>
+                            <td colSpan={7} style={{padding:'4px 8px 12px'}}>
+                              <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                                <thead>
+                                  <tr style={{borderBottom:'1px solid var(--border)'}}>
+                                    <th style={{padding:'6px 8px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)'}}>Date</th>
+                                    <th style={{padding:'6px 8px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)'}}>Time In</th>
+                                    <th style={{padding:'6px 8px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)'}}>Time Out</th>
+                                    <th style={{padding:'6px 8px',textAlign:'right',fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)'}}>Raw</th>
+                                    <th style={{padding:'6px 8px',textAlign:'right',fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)'}}>Paid</th>
+                                    <th style={{padding:'6px 8px',textAlign:'right',fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)'}}>Late</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {shifts.length===0 ? (
+                                    <tr><td colSpan={6} style={{padding:'8px',color:'var(--text-muted)',fontStyle:'italic'}}>No shifts in this timesheet.</td></tr>
+                                  ) : shifts.map((sh,si)=>(
+                                    <tr key={si} style={{borderBottom:'1px solid var(--border)'}}>
+                                      <td style={{padding:'5px 8px',fontFamily:"'DM Mono',monospace"}}>{sh.date}</td>
+                                      <td style={{padding:'5px 8px',fontFamily:"'DM Mono',monospace"}}>{sh.timeIn}</td>
+                                      <td style={{padding:'5px 8px',fontFamily:"'DM Mono',monospace"}}>{sh.timeOut}</td>
+                                      <td style={{padding:'5px 8px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:'var(--text-muted)'}}>{(sh.rawHours||0).toFixed(1)}h</td>
+                                      <td style={{padding:'5px 8px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:600,color:'var(--matcha-dark)'}}>{(sh.paidHours||0).toFixed(1)}h</td>
+                                      <td style={{padding:'5px 8px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:sh.lateMinutes>0?'#c0392b':'var(--text-muted)'}}>{sh.lateMinutes>0?`${sh.lateMinutes}m`:'—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast&&(
         <div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}>
