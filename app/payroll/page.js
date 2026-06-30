@@ -457,7 +457,8 @@ export default function PayrollPage() {
                 </thead>
                 <tbody>
                   {Object.entries(tsSource).sort((a,b)=>(a[1].lastName||'').localeCompare(b[1].lastName||'')).map(([key,ts])=>{
-                    const shifts = ts.shifts||[]
+                    // Only show shifts that fall within the selected cutoff window
+                    const shifts = filterShiftsByPeriod(ts.shifts||[], selectedCutoff.start, selectedCutoff.end)
                     const rawTot = shifts.reduce((s,x)=>s+(x.rawHours||0),0)
                     const paidTot = shifts.reduce((s,x)=>s+(x.paidHours||0),0)
                     const lateTot = shifts.reduce((s,x)=>s+(x.lateMinutes||0),0)
