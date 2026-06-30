@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
@@ -118,20 +118,33 @@ export default function PayrollPage() {
     reader.readAsText(file); e.target.value = ''
   }
 
+  function requiredDaysFor(staffId) {
+    // Distinct published scheduled dates for this staff within the selected cutoff window
+    return [...new Set(
+      schedules.filter(s => s.staff_id === staffId && s.shift_date >= selectedCutoff.start && s.shift_date <= selectedCutoff.end)
+        .map(s => s.shift_date)
+    )].length
+  }
+
   function buildPayrollRows() {
     return staff.map(s => {
       const saved = savedRuns.find(r => r.staff_id === s.id)
+      const reqDays = requiredDaysFor(s.id)
       if (timesheetData) {
         const tsKey = Object.keys(timesheetData).find(k => { const ts = timesheetData[k]; return matchStaff([s], ts.lastName, ts.firstName) !== undefined })
         const ts = tsKey ? timesheetData[tsKey] : null
         const periodShifts = ts ? filterShiftsByPeriod(ts.shifts, selectedCutoff.start, selectedCutoff.end) : []
-        const pay = computeCutoffPayroll(s, periodShifts, rateOverrides, selectedCutoff)
+        const pay = computeCutoffPayroll(s, periodShifts, rateOverrides, selectedCutoff, reqDays)
         return { staff:s, ts, periodShifts, pay, hasTimesheet:!!ts, saved, isLive:true }
       } else if (saved) {
-        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:getDailyRate(s.employment_type||'Full-time',s.role), hourlyRate:getDailyRate(s.employment_type||'Full-time',s.role)/8 }
+        const isFT = (s.employment_type||'Full-time')==='Full-time'
+        const savedReq = saved.required_days || reqDays
+        const monthlyPay = s.monthly_pay || getBaseRate(s.employment_type||'Full-time', s.role, rateOverrides)?.monthly || 0
+        const savedDaily = (isFT && savedReq>0 && monthlyPay>0) ? Math.round((monthlyPay/2)/savedReq) : getDailyRate(s.employment_type||'Full-time',s.role,rateOverrides)
+        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:Math.round(savedDaily/8), requiredDays:savedReq, noSchedule:false }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
-        return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides,selectedCutoff), hasTimesheet:false, saved:null, isLive:false }
+        return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides,selectedCutoff,reqDays), hasTimesheet:false, saved:null, isLive:false }
       }
     })
   }
@@ -167,7 +180,7 @@ export default function PayrollPage() {
     if (!timesheetData) { showToast('⚠️','Upload a timesheet first'); return }
     setSaving(true)
     const rows = buildPayrollRows()
-    const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, incentives:parseFloat(adj.incentives)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
+    const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives:parseFloat(adj.incentives)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     if (error) { showToast('❌',error.message); setSaving(false); return }
     // Persist raw timesheet for this cutoff so it can be viewed later
@@ -535,10 +548,12 @@ export default function PayrollPage() {
                   const incentives = isLocked ? (parseFloat(r.saved.incentives)||0) : (parseFloat(adj.incentives)||0)
                   const refund     = isLocked ? (parseFloat(r.saved.refund)||0)     : (parseFloat(adj.refund)||0)
                   const undertime  = isLocked ? (parseFloat(r.saved.undertime)||0)  : (parseFloat(adj.undertime)||0)
-                  const absencePeso = Math.round(abs.total * r.pay.dailyRate)
+                  const isFT = (r.staff.employment_type||'Full-time')==='Full-time'
                   const grossPay = r.pay.gross + incentives + refund
                   const govDed = r.pay.sss + r.pay.philhealth + r.pay.pagibig + r.pay.tax
-                  const netPay = Math.max(0, grossPay - govDed - r.pay.lateDeduction - undertime - absencePeso)
+                  // For full-time, unpaid missed days are already excluded from gross (rate × daysWorked),
+                  // so absence is NOT subtracted again here. Late/undertime still apply.
+                  const netPay = Math.max(0, grossPay - govDed - r.pay.lateDeduction - undertime)
                   const setAdj = (field,val) => setAdjustments(prev => ({...prev, [r.staff.id]: {...(prev[r.staff.id]||{}), [field]: val}}))
                   return (
                   <div key={r.staff.id} style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
@@ -584,16 +599,21 @@ export default function PayrollPage() {
                         {[['SSS',r.pay.sss],['PhilHealth',r.pay.philhealth],['Pag-IBIG',r.pay.pagibig],['Tax',r.pay.tax],['Late',r.pay.lateDeduction]].map(([l,v])=>(
                           <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}><span>{l}</span><span style={{fontFamily:"'DM Mono',monospace",color:'#c0392b'}}>-{peso(v)}</span></div>
                         ))}
-                        {/* Undertime (editable) + Absence (auto) */}
+                        {/* Undertime (editable until saved) */}
                         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}>
                           <span>Undertime</span>
                           {isLocked
                             ? <span style={{fontFamily:"'DM Mono',monospace",color:'#c0392b'}}>-{peso(undertime)}</span>
                             : <input type="number" value={adj.undertime??''} placeholder="0" onChange={e=>setAdj('undertime',e.target.value)} style={{width:78,textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:10,border:'1px solid var(--border)',borderRadius:5,padding:'2px 5px',outline:'none'}}/>}
                         </div>
-                        <div style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}><span>Absence ({abs.total}d × {peso(r.pay.dailyRate)})</span><span style={{fontFamily:"'DM Mono',monospace",color:'#c0392b'}}>-{peso(absencePeso)}</span></div>
+                        {/* Absence is informational for full-time: unpaid missed days already excluded from Basic. */}
+                        {isFT ? (
+                          <div style={{display:'flex',justifyContent:'space-between',fontSize:9,padding:'2px 0',color:'var(--text-muted)',fontStyle:'italic'}}><span>Scheduled {r.pay.requiredDays}d · worked {r.pay.daysWorked}d{abs.total>0?` · ${abs.total} unpaid`:''}</span><span></span></div>
+                        ) : null}
                       </div>
-                      {/* Bank */}
+                      {r.pay.noSchedule && (
+                        <div style={{background:'#fdeaea',border:'1px solid #f5c6c6',borderRadius:8,padding:'6px 10px',fontSize:10,color:'#c0392b',fontWeight:600,marginTop:6}}>⚠️ No published schedule for this cutoff — publish the roster to compute pay.</div>
+                      )}
                       {(r.staff.bank_name||r.staff.bank_account_no) && (
                         <div style={{display:'flex',justifyContent:'space-between',fontSize:9,padding:'3px 0',color:'var(--text-muted)'}}>
                           <span>Deposit to</span><span style={{fontFamily:"'DM Mono',monospace"}}>{r.staff.bank_name||'—'} {r.staff.bank_account_no||''}</span>
