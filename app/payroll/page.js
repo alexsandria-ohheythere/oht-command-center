@@ -43,6 +43,9 @@ export default function PayrollPage() {
   const [saving, setSaving]                 = useState(false)
   const [timesheetData, setTimesheetData]   = useState(null)
   const [savedTimesheet, setSavedTimesheet] = useState(null)
+  const [schedules, setSchedules]           = useState([])
+  const [approvedLeaves, setApprovedLeaves] = useState([])
+  const [dayOffs, setDayOffs]               = useState([])
   const [expandedEmp, setExpandedEmp]       = useState(null)
   const [tab, setTab]                       = useState('summary')
   const [savedRuns, setSavedRuns]           = useState([])
@@ -55,7 +58,18 @@ export default function PayrollPage() {
   const fileRef = useRef()
 
   useEffect(() => { fetchStaff(); fetchRateOverrides() }, [])
-  useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet() }, [selectedCutoff])
+  useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet(); fetchAttendanceRefs() }, [selectedCutoff])
+
+  async function fetchAttendanceRefs() {
+    const start = selectedCutoff.start, end = selectedCutoff.end
+    // Published schedule rows that fall within the cutoff window
+    const { data: sch } = await supabase.from('schedules').select('staff_id,shift_date,shift_type,published').eq('published', true).gte('shift_date', start).lte('shift_date', end)
+    setSchedules(sch || [])
+    const { data: lv } = await supabase.from('leave_requests').select('staff_id,date_from,date_to,leave_type').eq('status', 'approved')
+    setApprovedLeaves(lv || [])
+    const { data: doff } = await supabase.from('day_offs').select('staff_id,date_from,date_to')
+    setDayOffs(doff || [])
+  }
 
   async function fetchSavedTimesheet() {
     const { data } = await supabase.from('timesheet_uploads').select('employees,uploaded_at').eq('cutoff_id', selectedCutoff.id).maybeSingle()
@@ -117,6 +131,33 @@ export default function PayrollPage() {
         return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides), hasTimesheet:false, saved:null, isLive:false }
       }
     })
+  }
+
+  // ── Absence: scheduled (published) days with no worked shift ──
+  const mmddyyyyToISO = (d) => {
+    if (!d) return null
+    const [mm, dd, yyyy] = d.split('/')
+    if (!mm || !dd || !yyyy) return null
+    return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`
+  }
+  const isExcused = (staffId, iso) => {
+    const onLeave = approvedLeaves.some(l => l.staff_id===staffId && iso>=l.date_from && iso<=l.date_to)
+    const onDayOff = dayOffs.some(o => o.staff_id===staffId && iso>=o.date_from && iso<=o.date_to)
+    return onLeave || onDayOff
+  }
+  function computeAbsences(staffMember, ts) {
+    // Distinct scheduled dates for this staff in the cutoff (published only, already filtered by fetch)
+    const scheduledDates = [...new Set(schedules.filter(s => s.staff_id===staffMember.id).map(s => s.shift_date))]
+    if (scheduledDates.length === 0) return { noShow: [], excused: [], total: 0 }
+    // Dates actually worked (from timesheet), normalized to ISO
+    const workedISO = new Set((ts?.shifts || []).map(sh => mmddyyyyToISO(sh.date)).filter(Boolean))
+    const noShow = [], excused = []
+    scheduledDates.forEach(iso => {
+      if (workedISO.has(iso)) return
+      if (isExcused(staffMember.id, iso)) excused.push(iso)
+      else noShow.push(iso)
+    })
+    return { noShow: noShow.sort(), excused: excused.sort(), total: noShow.length }
   }
 
   async function savePayroll() {
@@ -371,6 +412,7 @@ export default function PayrollPage() {
                     <th style={{...thBase,textAlign:'right'}}>Raw Hrs</th>
                     <th style={{...thBase,textAlign:'right'}}>Paid Hrs</th>
                     <th style={{...thBase,textAlign:'right'}}>Late</th>
+                    <th style={{...thBase,textAlign:'center'}}>Absent</th>
                     <th style={{...thBase,textAlign:'center'}}>Match</th>
                     <th style={{...thBase,width:24}}></th>
                   </tr>
@@ -381,7 +423,9 @@ export default function PayrollPage() {
                     const rawTot = shifts.reduce((s,x)=>s+(x.rawHours||0),0)
                     const paidTot = shifts.reduce((s,x)=>s+(x.paidHours||0),0)
                     const lateTot = shifts.reduce((s,x)=>s+(x.lateMinutes||0),0)
-                    const matched = !!matchStaff(staff, ts.lastName, ts.firstName)
+                    const matchedStaff = matchStaff(staff, ts.lastName, ts.firstName)
+                    const matched = !!matchedStaff
+                    const abs = matchedStaff ? computeAbsences(matchedStaff, ts) : { noShow:[], excused:[], total:0 }
                     const isOpen = expandedEmp===key
                     return (
                       <React.Fragment key={key}>
@@ -391,12 +435,22 @@ export default function PayrollPage() {
                           <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:'var(--text-muted)'}}>{rawTot.toFixed(1)}h</td>
                           <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:600,color:'var(--matcha-dark)'}}>{paidTot.toFixed(1)}h</td>
                           <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:lateTot>0?'#c0392b':'var(--text-muted)'}}>{lateTot>0?`${lateTot}m`:'—'}</td>
+                          <td style={{padding:'9px 12px',textAlign:'center',fontFamily:"'DM Mono',monospace",fontSize:11}}>
+                            {abs.total>0 ? <span style={{color:'#c0392b',fontWeight:700}}>{abs.total}</span> : <span style={{color:'var(--text-muted)'}}>—</span>}
+                            {abs.excused.length>0 && <span style={{color:'var(--text-muted)',fontSize:9}}> (+{abs.excused.length})</span>}
+                          </td>
                           <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}}>{matched?'✅':'⚠️'}</td>
                           <td style={{padding:'9px 12px',textAlign:'center',color:'var(--text-muted)'}}>{isOpen?'▼':'▶'}</td>
                         </tr>
                         {isOpen && (
                           <tr style={{background:'var(--surface)'}}>
-                            <td colSpan={7} style={{padding:'4px 16px 12px'}}>
+                            <td colSpan={8} style={{padding:'4px 16px 12px'}}>
+                              {(abs.total>0||abs.excused.length>0) && (
+                                <div style={{margin:'6px 0 10px',fontSize:10}}>
+                                  {abs.total>0 && <div style={{color:'#c0392b',fontWeight:600,marginBottom:2}}>⚠️ No-show (scheduled, didn't clock in): {abs.noShow.join(', ')}</div>}
+                                  {abs.excused.length>0 && <div style={{color:'var(--text-muted)'}}>✓ Excused (approved leave/day-off): {abs.excused.join(', ')}</div>}
+                                </div>
+                              )}
                               <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
                                 <thead>
                                   <tr style={{borderBottom:'1px solid var(--border)'}}>
@@ -444,14 +498,22 @@ export default function PayrollPage() {
               </div>
             ) : (
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:14}}>
-                {payrollRows.filter(r=>r.pay.daysWorked>0).map(r=>(
+                {payrollRows.filter(r=>{
+                  const scheduledCount = schedules.filter(s=>s.staff_id===r.staff.id).length
+                  return r.pay.daysWorked>0 || scheduledCount>0
+                }).map(r=>{
+                  const tsKey = tsSource ? Object.keys(tsSource).find(k=>matchStaff([r.staff], tsSource[k].lastName, tsSource[k].firstName)!==undefined) : null
+                  const tsForStaff = tsKey ? tsSource[tsKey] : null
+                  const abs = computeAbsences(r.staff, tsForStaff)
+                  return (
                   <div key={r.staff.id} style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
                     <div style={{background:'var(--espresso)',padding:'12px 16px',display:'flex',alignItems:'center',gap:10}}>
                       <div style={{width:30,height:30,borderRadius:'50%',background:getRoleColor(r.staff.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white',flexShrink:0}}>{initials(r.staff.first_name,r.staff.last_name)}</div>
-                      <div>
+                      <div style={{flex:1}}>
                         <div style={{color:'var(--cream)',fontWeight:700,fontSize:12}}>{r.staff.last_name}, {r.staff.first_name}</div>
                         <div style={{color:'var(--matcha-light)',fontSize:9}}>{r.staff.role} · {r.staff.employment_type||'Full-time'}</div>
                       </div>
+                      {abs.total>0 && <span title={`No-show: ${abs.noShow.join(', ')}`} style={{fontSize:9,background:'#fdeaea',color:'#c0392b',border:'1px solid #f5c6c6',padding:'2px 7px',borderRadius:10,fontWeight:700,whiteSpace:'nowrap'}}>⚠️ {abs.total} absent</span>}
                     </div>
                     <div style={{padding:'12px 16px'}}>
                       <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>{selectedCutoff.label}</div>
@@ -462,6 +524,16 @@ export default function PayrollPage() {
                       {[['Days Worked',`${r.pay.daysWorked}`],['Paid Hours',`${r.pay.paidHours.toFixed(1)}h`],['Late',r.pay.totalLateMins>0?`${r.pay.totalLateMins}m`:'—']].map(([l,v])=>(
                         <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'3px 0',color:'var(--text-secondary)'}}><span>{l}</span><span style={{fontFamily:"'DM Mono',monospace"}}>{v}</span></div>
                       ))}
+                      {(abs.total>0||abs.excused.length>0) && (
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'3px 0',color:'var(--text-secondary)'}}>
+                          <span>Absences</span>
+                          <span style={{fontFamily:"'DM Mono',monospace"}}>
+                            {abs.total>0 && <span style={{color:'#c0392b',fontWeight:600}}>{abs.total} no-show</span>}
+                            {abs.total>0 && abs.excused.length>0 && ' · '}
+                            {abs.excused.length>0 && <span style={{color:'var(--text-muted)'}}>{abs.excused.length} excused</span>}
+                          </span>
+                        </div>
+                      )}
                       <div style={{borderTop:'1px solid var(--border)',margin:'8px 0',paddingTop:8}}>
                         <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',fontWeight:600}}><span>Gross</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(r.pay.gross)}</span></div>
                         {[['Late Deduction',r.pay.lateDeduction],['SSS',r.pay.sss],['PhilHealth',r.pay.philhealth],['Pag-IBIG',r.pay.pagibig],['Tax',r.pay.tax]].map(([l,v])=>(
@@ -474,7 +546,8 @@ export default function PayrollPage() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
