@@ -111,7 +111,7 @@ export default function PayrollPage() {
         const pay = computeCutoffPayroll(s, periodShifts, rateOverrides)
         return { staff:s, ts, periodShifts, pay, hasTimesheet:!!ts, saved, isLive:true }
       } else if (saved) {
-        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, hourlyRate:getDailyRate(s.employment_type||'Full-time',s.role)/8 }
+        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:getDailyRate(s.employment_type||'Full-time',s.role), hourlyRate:getDailyRate(s.employment_type||'Full-time',s.role)/8 }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
         return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides), hasTimesheet:false, saved:null, isLive:false }
@@ -455,6 +455,10 @@ export default function PayrollPage() {
                     </div>
                     <div style={{padding:'12px 16px'}}>
                       <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>{selectedCutoff.label}</div>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--surface)',borderRadius:8,padding:'6px 10px',marginBottom:8}}>
+                        <span style={{fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)'}}>Rate</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,color:'var(--matcha-dark)'}}>{peso(r.pay.dailyRate)}/day · {peso(r.pay.hourlyRate)}/hr</span>
+                      </div>
                       {[['Days Worked',`${r.pay.daysWorked}`],['Paid Hours',`${r.pay.paidHours.toFixed(1)}h`],['Late',r.pay.totalLateMins>0?`${r.pay.totalLateMins}m`:'—']].map(([l,v])=>(
                         <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'3px 0',color:'var(--text-secondary)'}}><span>{l}</span><span style={{fontFamily:"'DM Mono',monospace"}}>{v}</span></div>
                       ))}
