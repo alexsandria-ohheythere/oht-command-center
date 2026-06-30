@@ -125,13 +125,13 @@ export default function PayrollPage() {
         const tsKey = Object.keys(timesheetData).find(k => { const ts = timesheetData[k]; return matchStaff([s], ts.lastName, ts.firstName) !== undefined })
         const ts = tsKey ? timesheetData[tsKey] : null
         const periodShifts = ts ? filterShiftsByPeriod(ts.shifts, selectedCutoff.start, selectedCutoff.end) : []
-        const pay = computeCutoffPayroll(s, periodShifts, rateOverrides)
+        const pay = computeCutoffPayroll(s, periodShifts, rateOverrides, selectedCutoff)
         return { staff:s, ts, periodShifts, pay, hasTimesheet:!!ts, saved, isLive:true }
       } else if (saved) {
         const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:getDailyRate(s.employment_type||'Full-time',s.role), hourlyRate:getDailyRate(s.employment_type||'Full-time',s.role)/8 }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
-        return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides), hasTimesheet:false, saved:null, isLive:false }
+        return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides,selectedCutoff), hasTimesheet:false, saved:null, isLive:false }
       }
     })
   }
