@@ -232,6 +232,27 @@ export default function PayrollPage() {
     } catch(e) { showToast('❌', `PDF failed: ${e.message}`) }
   }
 
+  async function togglePaid(run, nextPaid) {
+    const { error } = await supabase.from('payroll_runs')
+      .update({ paid: nextPaid, paid_at: nextPaid ? new Date().toISOString() : null })
+      .eq('id', run.id)
+    if (error) { showToast('❌', error.message); return }
+    await fetchSavedRuns()
+    showToast(nextPaid ? '✅' : '↩️', nextPaid ? 'Marked as paid' : 'Marked as unpaid')
+  }
+
+  async function markAllPaid() {
+    const unpaidIds = savedRuns.filter(r => !r.paid).map(r => r.id)
+    if (unpaidIds.length === 0) { showToast('ℹ️','Everyone is already marked paid'); return }
+    if (!confirm(`Mark all ${unpaidIds.length} unpaid record(s) for ${selectedCutoff.label} as paid?`)) return
+    const { error } = await supabase.from('payroll_runs')
+      .update({ paid: true, paid_at: new Date().toISOString() })
+      .in('id', unpaidIds)
+    if (error) { showToast('❌', error.message); return }
+    await fetchSavedRuns()
+    showToast('✅', `Marked ${unpaidIds.length} as paid`)
+  }
+
   function exportCSV() {
     const rows = buildPayrollRows()
     const data = [
@@ -324,7 +345,7 @@ export default function PayrollPage() {
 
         {/* Tabs */}
         <div style={{display:'flex',gap:4,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
-          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips']].map(([key,label])=>(
+          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['payments','💵 Payment Status']].map(([key,label])=>(
             <button key={key} onClick={()=>setTab(key)} style={{background:'transparent',border:'none',borderBottom:tab===key?'2px solid var(--matcha)':'2px solid transparent',marginBottom:-2,padding:'9px 16px',fontSize:12,fontWeight:tab===key?700:500,color:tab===key?'var(--matcha-dark)':'var(--text-muted)',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{label}</button>
           ))}
         </div>
@@ -631,6 +652,82 @@ export default function PayrollPage() {
                   )
                 })}
               </div>
+            )}
+          </div>
+        )}
+
+        {tab==='payments' && (
+          <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+            <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Payment Status</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
+                  {selectedCutoff.label}
+                  {hasSavedData ? ` · ${savedRuns.filter(r=>r.paid).length}/${savedRuns.length} paid` : ''}
+                </div>
+              </div>
+              {hasSavedData && savedRuns.some(r=>!r.paid) && (
+                <button onClick={markAllPaid} className="btn btn-primary" style={{background:'var(--matcha)'}}>✓ Mark all paid</button>
+              )}
+            </div>
+            {!hasSavedData ? (
+              <div style={{padding:'40px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:13}}>
+                No saved payroll for {selectedCutoff.label}.<br/>
+                <span style={{fontSize:11}}>Upload a timesheet and Save Payroll first — payment status appears here once payroll is saved.</span>
+              </div>
+            ) : (
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{background:'var(--espresso)'}}>
+                    <th style={{...thBase}}>Employee</th>
+                    <th style={{...thBase}}>Role</th>
+                    <th style={{...thBase,textAlign:'right'}}>Net Pay</th>
+                    <th style={{...thBase,textAlign:'center'}}>Status</th>
+                    <th style={{...thBase,textAlign:'center'}}>Paid On</th>
+                    <th style={{...thBase,textAlign:'center'}}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...savedRuns].sort((a,b)=>{
+                    const an=`${a.staff?.last_name||''} ${a.staff?.first_name||''}`.toLowerCase()
+                    const bn=`${b.staff?.last_name||''} ${b.staff?.first_name||''}`.toLowerCase()
+                    return an.localeCompare(bn)
+                  }).map((r,i)=>(
+                    <tr key={r.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
+                      <td style={{padding:'9px 12px'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <div style={{width:26,height:26,borderRadius:'50%',background:getRoleColor(r.staff?.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'white',flexShrink:0}}>
+                            {initials(r.staff?.first_name,r.staff?.last_name)}
+                          </div>
+                          <div style={{fontWeight:600,fontSize:11}}>{r.staff?.last_name}, {r.staff?.first_name}</div>
+                        </div>
+                      </td>
+                      <td style={{padding:'9px 12px'}}><span style={{fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:5,background:getRoleColor(r.staff?.role)+'22',color:getRoleColor(r.staff?.role)}}>{r.staff?.role}</span></td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700}}>{peso(r.net_pay)}</td>
+                      <td style={{padding:'9px 12px',textAlign:'center'}}>
+                        {r.paid
+                          ? <span style={{fontSize:10,background:'var(--matcha-pale)',color:'var(--matcha-dark)',border:'1px solid var(--matcha)',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ Paid</span>
+                          : <span style={{fontSize:10,background:'#fdeaea',color:'#c0392b',border:'1px solid #f5c6c6',padding:'2px 8px',borderRadius:10,fontWeight:700}}>Unpaid</span>}
+                      </td>
+                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:10,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>{r.paid_at ? new Date(r.paid_at).toLocaleDateString() : '—'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'center'}}>
+                        {r.paid
+                          ? <button onClick={()=>togglePaid(r,false)} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--text-muted)',borderRadius:7,padding:'4px 10px',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Undo</button>
+                          : <button onClick={()=>togglePaid(r,true)} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:7,padding:'4px 10px',fontSize:10,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Mark paid</button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{background:'var(--espresso)',borderTop:'2px solid var(--matcha)'}}>
+                    <td colSpan={2} style={{padding:'11px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
+                    <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(savedRuns.reduce((s,r)=>s+parseFloat(r.net_pay||0),0))}</td>
+                    <td colSpan={3} style={{padding:'11px 12px',textAlign:'center',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>
+                      {peso(savedRuns.filter(r=>r.paid).reduce((s,r)=>s+parseFloat(r.net_pay||0),0))} paid · {peso(savedRuns.filter(r=>!r.paid).reduce((s,r)=>s+parseFloat(r.net_pay||0),0))} outstanding
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
             )}
           </div>
         )}
