@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate } from '../../lib/payroll'
+import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
@@ -46,6 +47,8 @@ export default function PayrollPage() {
   const [schedules, setSchedules]           = useState([])
   const [approvedLeaves, setApprovedLeaves] = useState([])
   const [dayOffs, setDayOffs]               = useState([])
+  // Manual per-staff adjustments (incentives/refund/undertime) keyed by staff_id, for the LIVE (unsaved) run
+  const [adjustments, setAdjustments]       = useState({})
   const [expandedEmp, setExpandedEmp]       = useState(null)
   const [tab, setTab]                       = useState('summary')
   const [savedRuns, setSavedRuns]           = useState([])
@@ -164,7 +167,7 @@ export default function PayrollPage() {
     if (!timesheetData) { showToast('⚠️','Upload a timesheet first'); return }
     setSaving(true)
     const rows = buildPayrollRows()
-    const upsertData = rows.map(r => ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, updated_at:new Date().toISOString() }))
+    const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, incentives:parseFloat(adj.incentives)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     if (error) { showToast('❌',error.message); setSaving(false); return }
     // Persist raw timesheet for this cutoff so it can be viewed later
@@ -192,6 +195,28 @@ export default function PayrollPage() {
     setSavedTimesheet(null)
     setTimesheetData(null)
     showToast('🗑️',`All payroll records for ${selectedCutoff.label} deleted`)
+  }
+
+  async function downloadPayslip(r) {
+    try {
+      const adj = adjustments[r.staff.id] || {}
+      const saved = r.saved || {}
+      // Build a saved-like object using live values if not yet saved
+      const runData = {
+        gross: r.pay.gross,
+        sss: r.pay.sss, philhealth: r.pay.philhealth, pagibig: r.pay.pagibig, tax: r.pay.tax,
+        late_deduction: r.pay.lateDeduction,
+        incentives: r.saved ? saved.incentives : (parseFloat(adj.incentives)||0),
+        refund: r.saved ? saved.refund : (parseFloat(adj.refund)||0),
+        undertime: r.saved ? saved.undertime : (parseFloat(adj.undertime)||0),
+      }
+      // Resolve absence days for this staff from current timesheet source
+      const tsKey = tsSource ? Object.keys(tsSource).find(k=>matchStaff([r.staff], tsSource[k].lastName, tsSource[k].firstName)!==undefined) : null
+      const tsForStaff = tsKey ? tsSource[tsKey] : null
+      const abs = computeAbsences(r.staff, tsForStaff)
+      const run = buildPayslipRun({ saved: runData, dailyRate: r.pay.dailyRate, absenceDays: abs.total, periodLabel: selectedCutoff.label })
+      await generatePayslipPDF({ staff: r.staff, run, periodStart: selectedCutoff.start, periodEnd: selectedCutoff.end })
+    } catch(e) { showToast('❌', `PDF failed: ${e.message}`) }
   }
 
   function exportCSV() {
@@ -505,6 +530,16 @@ export default function PayrollPage() {
                   const tsKey = tsSource ? Object.keys(tsSource).find(k=>matchStaff([r.staff], tsSource[k].lastName, tsSource[k].firstName)!==undefined) : null
                   const tsForStaff = tsKey ? tsSource[tsKey] : null
                   const abs = computeAbsences(r.staff, tsForStaff)
+                  const isLocked = !!r.saved   // editable only before first save
+                  const adj = adjustments[r.staff.id] || {}
+                  const incentives = isLocked ? (parseFloat(r.saved.incentives)||0) : (parseFloat(adj.incentives)||0)
+                  const refund     = isLocked ? (parseFloat(r.saved.refund)||0)     : (parseFloat(adj.refund)||0)
+                  const undertime  = isLocked ? (parseFloat(r.saved.undertime)||0)  : (parseFloat(adj.undertime)||0)
+                  const absencePeso = Math.round(abs.total * r.pay.dailyRate)
+                  const grossPay = r.pay.gross + incentives + refund
+                  const govDed = r.pay.sss + r.pay.philhealth + r.pay.pagibig + r.pay.tax
+                  const netPay = Math.max(0, grossPay - govDed - r.pay.lateDeduction - undertime - absencePeso)
+                  const setAdj = (field,val) => setAdjustments(prev => ({...prev, [r.staff.id]: {...(prev[r.staff.id]||{}), [field]: val}}))
                   return (
                   <div key={r.staff.id} style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
                     <div style={{background:'var(--espresso)',padding:'12px 16px',display:'flex',alignItems:'center',gap:10}}>
@@ -535,15 +570,41 @@ export default function PayrollPage() {
                         </div>
                       )}
                       <div style={{borderTop:'1px solid var(--border)',margin:'8px 0',paddingTop:8}}>
-                        <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',fontWeight:600}}><span>Gross</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(r.pay.gross)}</span></div>
-                        {[['Late Deduction',r.pay.lateDeduction],['SSS',r.pay.sss],['PhilHealth',r.pay.philhealth],['Pag-IBIG',r.pay.pagibig],['Tax',r.pay.tax]].map(([l,v])=>(
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',fontWeight:600}}><span>Basic</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(r.pay.gross)}</span></div>
+                        {/* Manual-entry earnings (editable until saved) */}
+                        {[['Incentives/OT','incentives',incentives],['Refund','refund',refund]].map(([label,field,val])=>(
+                          <div key={field} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}>
+                            <span>{label}</span>
+                            {isLocked
+                              ? <span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(val)}</span>
+                              : <input type="number" value={adj[field]??''} placeholder="0" onChange={e=>setAdj(field,e.target.value)} style={{width:78,textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:10,border:'1px solid var(--border)',borderRadius:5,padding:'2px 5px',outline:'none'}}/>}
+                          </div>
+                        ))}
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'3px 0',fontWeight:600,borderTop:'1px solid var(--cream-dark)',marginTop:3}}><span>Gross Pay</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(grossPay)}</span></div>
+                        {[['SSS',r.pay.sss],['PhilHealth',r.pay.philhealth],['Pag-IBIG',r.pay.pagibig],['Tax',r.pay.tax],['Late',r.pay.lateDeduction]].map(([l,v])=>(
                           <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}><span>{l}</span><span style={{fontFamily:"'DM Mono',monospace",color:'#c0392b'}}>-{peso(v)}</span></div>
                         ))}
+                        {/* Undertime (editable) + Absence (auto) */}
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}>
+                          <span>Undertime</span>
+                          {isLocked
+                            ? <span style={{fontFamily:"'DM Mono',monospace",color:'#c0392b'}}>-{peso(undertime)}</span>
+                            : <input type="number" value={adj.undertime??''} placeholder="0" onChange={e=>setAdj('undertime',e.target.value)} style={{width:78,textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:10,border:'1px solid var(--border)',borderRadius:5,padding:'2px 5px',outline:'none'}}/>}
+                        </div>
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}><span>Absence ({abs.total}d × {peso(r.pay.dailyRate)})</span><span style={{fontFamily:"'DM Mono',monospace",color:'#c0392b'}}>-{peso(absencePeso)}</span></div>
                       </div>
+                      {/* Bank */}
+                      {(r.staff.bank_name||r.staff.bank_account_no) && (
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:9,padding:'3px 0',color:'var(--text-muted)'}}>
+                          <span>Deposit to</span><span style={{fontFamily:"'DM Mono',monospace"}}>{r.staff.bank_name||'—'} {r.staff.bank_account_no||''}</span>
+                        </div>
+                      )}
                       <div style={{borderTop:'2px solid var(--matcha)',paddingTop:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                         <span style={{fontSize:11,fontWeight:700}}>NET PAY</span>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:15,color:'var(--matcha-dark)'}}>{peso(r.pay.netPay)}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:15,color:'var(--matcha-dark)'}}>{peso(netPay)}</span>
                       </div>
+                      <button onClick={()=>downloadPayslip(r)} style={{marginTop:10,width:'100%',background:'var(--matcha)',color:'white',border:'none',borderRadius:8,padding:'8px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>↓ Download PDF</button>
+                      {!isLocked && <div style={{fontSize:8,color:'var(--text-muted)',textAlign:'center',marginTop:4}}>Incentives/Refund/Undertime editable until you Save Payroll</div>}
                     </div>
                   </div>
                   )
