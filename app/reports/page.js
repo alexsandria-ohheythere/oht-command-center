@@ -111,6 +111,7 @@ export default function ReportsPage() {
   const [hrSanctionNotes,  setHrSanctionNotes]  = useState('')
   const [hrViolation,      setHrViolation]      = useState('')
   const [mgtNotes,         setMgtNotes]          = useState('')
+  const [mgtCaseSummary,   setMgtCaseSummary]    = useState('')
   const [investigationFindings, setInvestigationFindings] = useState('')
   const [handbookRef,      setHandbookRef]      = useState('')
   const [offenseNum,       setOffenseNum]       = useState('1st')
@@ -236,6 +237,7 @@ export default function ReportsPage() {
     setHrSanctionNotes(r.hr_sanction_notes || '')
     setHrViolation(r.hr_violation || '')
     setMgtNotes(r.mgt_notes || '')
+    setMgtCaseSummary(r.mgt_case_summary || '')
     setInvestigationFindings(r.investigation_findings || '')
     setSanctionDetails(r.sanction_details || '')
     setHandbookRef(r.handbook_ref || '')
@@ -325,6 +327,7 @@ export default function ReportsPage() {
         hr_sanction_notes: hrSanctionNotes || null,
         hr_violation: hrViolation || null,
         mgt_notes: mgtNotes || null,
+        mgt_case_summary: mgtCaseSummary || null,
         investigation_findings: investigationFindings || null,
         handbook_ref: handbookRef || null,
         offense_num: offenseNum || null,
@@ -364,6 +367,7 @@ export default function ReportsPage() {
         hr_sanction_notes: hrSanctionNotes || null,
         hr_violation: hrViolation || null,
         mgt_notes: mgtNotes || null,
+        mgt_case_summary: mgtCaseSummary || null,
         investigation_findings: investigationFindings || null,
         handbook_ref: handbookRef || null,
         offense_num: offenseNum || null,
@@ -780,9 +784,17 @@ export default function ReportsPage() {
                   viewContent={
                     <div>
                       <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Management Notes</div>
-                      <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#e0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                      <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#e0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap', marginBottom: selected.mgt_case_summary ? 10 : 0 }}>
                         {selected.mgt_notes || <em style={{ color:'#9a8a7a' }}>No notes recorded</em>}
                       </div>
+                      {selected.mgt_case_summary && (
+                        <div>
+                          <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Case Summary (Shown to Employee)</div>
+                          <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#e0eaf8', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                            {selected.mgt_case_summary}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   }
                 >
@@ -798,6 +810,23 @@ export default function ReportsPage() {
                     placeholder="Management assessment, action items, escalation decision..."
                     style={{ ...textareaStyle, opacity: (!isMgt || STAGE_MAP[(selected.stage || 'hr_review')]?.num < 2) ? 0.5 : 1 }}
                   />
+
+                  {/* Employee-facing summary — plain-language, written by mgt, so the accused
+                      staff member gets real context in their portal without exposing raw notes,
+                      the reporter's identity, or anything from HR/Mgt Notes above. */}
+                  <label style={{ ...labelStyle, marginTop:10 }}>Case Summary (Shown to Employee)</label>
+                  <div style={{ fontSize:10, color:'#7a6a50', marginBottom:5, lineHeight:1.4 }}>
+                    Plain-language summary the named employee(s) will see once the case reaches Investigation. Keep it factual and free of details that could identify who reported it.
+                  </div>
+                  <textarea
+                    value={mgtCaseSummary}
+                    onChange={e => setMgtCaseSummary(e.target.value)}
+                    disabled={!isMgt || STAGE_MAP[(selected.stage || 'hr_review')]?.num < 2}
+                    rows={3}
+                    placeholder="e.g. 'You've been named in a report regarding a shift coverage issue on June 21. Management is reviewing the circumstances.'"
+                    style={{ ...textareaStyle, opacity: (!isMgt || STAGE_MAP[(selected.stage || 'hr_review')]?.num < 2) ? 0.5 : 1 }}
+                  />
+
                   {isMgt && (selected.stage || 'hr_review') === 'mgt_review' && (
                     <div style={{ display:'flex', gap:8, marginTop:8 }}>
                       <button onClick={() => saveNotes(selected)} disabled={saving}
