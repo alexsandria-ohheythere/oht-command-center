@@ -39,10 +39,12 @@ export default function FilesPage() {
 
   async function fetchAll() {
     setLoading(true)
-    const [{ data:f },{ data:s }] = await Promise.all([
+    const [{ data:f, error:fErr },{ data:s, error:sErr }] = await Promise.all([
       supabase.from('staff_files').select('*, staff(first_name,last_name,nickname,role)').order('created_at',{ascending:false}),
       supabase.from('staff').select('*').order('last_name'),
     ])
+    if (fErr) { console.error('staff_files fetch error:', fErr.message); showToast('❌', `Files failed to load: ${fErr.message}`) }
+    if (sErr) console.error('staff fetch error:', sErr.message)
     setFiles(f||[]); setStaff(s||[]); setLoading(false)
   }
 
