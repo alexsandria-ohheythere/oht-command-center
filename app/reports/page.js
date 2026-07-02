@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
+import { notifyWithAdmins } from '../../lib/notify'
 
 // Access control
 const INCIDENT_AUTHORIZED = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com', 'hr.ohtgroup@gmail.com']
@@ -49,6 +50,15 @@ function splitPersons(str) {
     .map((p, i) => (i < parts.length - 1 ? p + ')' : p))
     .map(p => p.trim())
     .filter(Boolean)
+}
+
+// Pairs display names (from persons_involved) with real staff IDs (from persons_involved_ids),
+// matched by position since both are built from the same ordered selection at submission time.
+// Falls back gracefully to { id: null, name } for older reports filed before IDs were tracked.
+function personsWithIds(namesStr, idsStr) {
+  const names = splitPersons(namesStr)
+  const ids = (idsStr || '').split(',').map(s => s.trim()).filter(Boolean)
+  return names.map((name, i) => ({ id: ids[i] || null, name }))
 }
 
 export default function ReportsPage() {
@@ -174,7 +184,63 @@ export default function ReportsPage() {
     setOffenseNum(r.offense_num || '1st')
     setSanctionType(r.sanction_type || '')
     setSanctionNotes(r.sanction_notes || '')
-    setSanctionedStaff(r.sanctioned_staff ? splitPersons(r.sanctioned_staff) : splitPersons(r.persons_involved))
+    const allPersons = personsWithIds(r.persons_involved, r.persons_involved_ids)
+    if (r.sanctioned_staff_ids) {
+      const keepIds = new Set(r.sanctioned_staff_ids.split(',').map(s => s.trim()).filter(Boolean))
+      setSanctionedStaff(allPersons.filter(p => p.id && keepIds.has(p.id)))
+    } else if (r.sanctioned_staff) {
+      // legacy fallback for reports saved before ID tracking — match by name text
+      const keepNames = new Set(splitPersons(r.sanctioned_staff))
+      setSanctionedStaff(allPersons.filter(p => keepNames.has(p.name)))
+    } else {
+      setSanctionedStaff(allPersons)
+    }
+  }
+
+  // Bridges the incident report's Final Sanction stage into the `sanctions` table —
+  // the table the Staff Portal's "My Sanctions" page actually reads from. Without this,
+  // finishing Final Sanction here never showed up for the employee, since the two
+  // features wrote to completely different tables.
+  async function syncSanctionsForReport(report, supabase) {
+    const targets = sanctionedStaff.filter(p => p.id)
+    if (targets.length === 0) return
+    try {
+      const { data: existing } = await supabase
+        .from('sanctions')
+        .select('staff_id')
+        .eq('incident_report_id', report.id)
+      const existingIds = new Set((existing || []).map(s => s.staff_id))
+      const toCreate = targets.filter(p => !existingIds.has(p.id))
+      if (toCreate.length === 0) return
+
+      const entry = handbookEntries.find(x => `${x.violation_code} — ${x.title}` === handbookRef)
+      const offenseInt = { '1st':1, '2nd':2, '3rd':3, '4th':4, '5th':5 }[offenseNum] || 1
+      const payloads = toCreate.map(p => ({
+        incident_report_id: report.id,
+        staff_id: p.id,
+        handbook_entry_id: entry?.id || null,
+        violation_code: entry?.violation_code || null,
+        violation_title: entry?.title || null,
+        category: entry?.category || null,
+        severity: entry?.severity || null,
+        offense_number: offenseInt,
+        sanction_type: sanctionType || null,
+        status: 'Pending',
+        admin_notes: sanctionNotes || null,
+      }))
+      const { error } = await supabase.from('sanctions').insert(payloads)
+      if (error) { console.error('Sanction sync error:', error.message); return }
+
+      for (const p of toCreate) {
+        try {
+          await notifyWithAdmins(
+            p.id,
+            { type:'general', title:'⚖️ New Sanction Issued', message:'A sanction has been recorded on your disciplinary file. Check My Sanctions for details.' },
+            { type:'general', title:'⚖️ Sanction Issued', message:`${p.name} received a sanction: ${sanctionType || entry?.title || 'see incident report'}.` }
+          )
+        } catch(e) { console.error('Sanction notify error:', e) }
+      }
+    } catch(e) { console.error('Sanction sync failed:', e) }
   }
 
   // Advance to next stage (or set any stage for mgt)
@@ -194,7 +260,8 @@ export default function ReportsPage() {
         offense_num: offenseNum || null,
         sanction_type: sanctionType || null,
         sanction_notes: sanctionNotes || null,
-        sanctioned_staff: sanctionedStaff.join(', ') || null,
+        sanctioned_staff: sanctionedStaff.map(p => p.name).join(', ') || null,
+        sanctioned_staff_ids: sanctionedStaff.map(p => p.id).filter(Boolean).join(', ') || null,
       }
       const { error } = await supabase
         .from('incident_reports')
@@ -203,6 +270,9 @@ export default function ReportsPage() {
       if (error) { showToast('❌', error.message); setSaving(false); return }
       await fetchReports()
       setSelected(s => s ? { ...s, ...updates } : null)
+      if (newStage === 'closed' && (report.stage || 'hr_review') === 'final_sanction' && handbookRef.trim()) {
+        await syncSanctionsForReport(report, supabase)
+      }
       showToast('✅', `Moved to ${STAGE_MAP[newStage]?.label}`)
     } catch(e) { showToast('❌', 'Update failed') }
     setSaving(false)
@@ -224,7 +294,8 @@ export default function ReportsPage() {
         offense_num: offenseNum || null,
         sanction_type: sanctionType || null,
         sanction_notes: sanctionNotes || null,
-        sanctioned_staff: sanctionedStaff.join(', ') || null,
+        sanctioned_staff: sanctionedStaff.map(p => p.name).join(', ') || null,
+        sanctioned_staff_ids: sanctionedStaff.map(p => p.id).filter(Boolean).join(', ') || null,
       }
       const { error } = await supabase
         .from('incident_reports')
@@ -707,9 +778,9 @@ export default function ReportsPage() {
                     {sanctionedStaff.length === 0 && (
                       <div style={{ ...inputStyle, color:'#9a8a7a', fontSize:12 }}>No staff selected</div>
                     )}
-                    {sanctionedStaff.map((name, i) => (
+                    {sanctionedStaff.map((p, i) => (
                       <div key={i} style={{ display:'flex', alignItems:'center', gap:6, background:'#f0ede8', borderRadius:20, padding:'6px 8px 6px 12px', fontSize:12, color:'#5a4a3a' }}>
-                        <span>👤 {name}</span>
+                        <span>👤 {p.name}</span>
                         {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && (
                           <button
                             onClick={() => setSanctionedStaff(list => list.filter((_, idx) => idx !== i))}
@@ -720,9 +791,9 @@ export default function ReportsPage() {
                       </div>
                     ))}
                   </div>
-                  {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && sanctionedStaff.length < splitPersons(selected.persons_involved).length && (
+                  {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && sanctionedStaff.length < personsWithIds(selected.persons_involved, selected.persons_involved_ids).length && (
                     <button
-                      onClick={() => setSanctionedStaff(splitPersons(selected.persons_involved))}
+                      onClick={() => setSanctionedStaff(personsWithIds(selected.persons_involved, selected.persons_involved_ids))}
                       style={{ ...outlineBtn, fontSize:10, padding:'4px 10px', marginBottom:10 }}
                     >↺ Restore all persons involved</button>
                   )}
