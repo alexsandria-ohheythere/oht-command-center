@@ -10,8 +10,8 @@ function getStaffParam() {
   return new URLSearchParams(window.location.search).get('staff') || ''
 }
 
-const CATEGORIES = ['All','Contract','NDA','Government Forms','Performance Reviews','Training Materials','Incident Report','General']
-const CAT_COLORS = {'Contract':'#4a7a1e','NDA':'#c0392b','Government Forms':'#2d5a8a','Performance Reviews':'#8e44ad','Training Materials':'#a06000','General':'#7a6a50','Incident Report':'#c0392b'}
+const CATEGORIES = ['All','Contract','NDA','Government Forms','Performance Reviews','Training Materials','Incident Report','Wastage Report','General']
+const CAT_COLORS = {'Contract':'#4a7a1e','NDA':'#c0392b','Government Forms':'#2d5a8a','Performance Reviews':'#8e44ad','Training Materials':'#a06000','General':'#7a6a50','Incident Report':'#c0392b','Wastage Report':'#a06000'}
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
@@ -241,14 +241,22 @@ export default function FilesPage() {
                           {f.description&&<div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6,lineHeight:1.4}}>{f.description}</div>}
                           <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8,fontFamily:"'DM Mono',monospace"}}>{fmtDate(f.created_at)}</div>
                           <div style={{display:'flex',gap:5}}>
-                            <a href={f.file_url} target="_blank" rel="noreferrer"
-                              style={{flex:1,background:'var(--sky-pale)',color:'var(--sky)',border:'none',borderRadius:6,padding:'5px 8px',fontSize:10,fontWeight:600,textDecoration:'none',textAlign:'center',display:'block'}}>
-                              👁 Preview
-                            </a>
-                            <a href={f.file_url} download={f.file_name}
-                              style={{flex:1,background:'var(--matcha-pale)',color:'var(--matcha-dark)',border:'none',borderRadius:6,padding:'5px 8px',fontSize:10,fontWeight:600,textDecoration:'none',textAlign:'center',display:'block'}}>
-                              ↓ Download
-                            </a>
+                            {f.file_url ? (
+                              <>
+                                <a href={f.file_url} target="_blank" rel="noreferrer"
+                                  style={{flex:1,background:'var(--sky-pale)',color:'var(--sky)',border:'none',borderRadius:6,padding:'5px 8px',fontSize:10,fontWeight:600,textDecoration:'none',textAlign:'center',display:'block'}}>
+                                  👁 Preview
+                                </a>
+                                <a href={f.file_url} download={f.file_name}
+                                  style={{flex:1,background:'var(--matcha-pale)',color:'var(--matcha-dark)',border:'none',borderRadius:6,padding:'5px 8px',fontSize:10,fontWeight:600,textDecoration:'none',textAlign:'center',display:'block'}}>
+                                  ↓ Download
+                                </a>
+                              </>
+                            ) : (
+                              <div style={{flex:1,background:'var(--border)',color:'var(--text-muted)',borderRadius:6,padding:'5px 8px',fontSize:9,fontWeight:600,textAlign:'center'}}>
+                                No file — text-only report
+                              </div>
+                            )}
                             <button onClick={()=>deleteFile(f.id,f.storage_path)}
                               style={{background:'transparent',border:'1px solid var(--border)',color:'var(--text-muted)',borderRadius:6,padding:'5px 7px',fontSize:11,cursor:'pointer'}}
                               onMouseEnter={e=>e.currentTarget.style.color='#c0392b'} onMouseLeave={e=>e.currentTarget.style.color='var(--text-muted)'}>
