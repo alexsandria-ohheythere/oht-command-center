@@ -50,6 +50,27 @@ export default function LeavePage() {
     if (error) { showToast('❌',error.message); return }
     const req = requests.find(r=>r.id===id)
     setRequests(prev=>prev.map(r=>r.id===id?{...r,status,approved_by:approver}:r))
+
+    // Approving leave doesn't automatically clear existing shift assignments that fall
+    // within the leave window — without this, Scheduling and Daily Check-In keep showing
+    // someone who's actually on approved leave/unavailable for those dates.
+    let removedCount = 0
+    if (status === 'approved' && req?.staff_id && req?.date_from && req?.date_to) {
+      try {
+        const shiftTypes = Array.isArray(req.shifts) && req.shifts.length > 0 ? req.shifts : ['am','mid','pm','ops']
+        const { data: removed, error: schedErr } = await supabase
+          .from('schedules')
+          .delete()
+          .eq('staff_id', req.staff_id)
+          .gte('shift_date', req.date_from)
+          .lte('shift_date', req.date_to)
+          .in('shift_type', shiftTypes)
+          .select('id')
+        if (schedErr) console.error('Schedule cleanup error:', schedErr.message)
+        else removedCount = removed?.length || 0
+      } catch(e) { console.error('Schedule cleanup failed:', e) }
+    }
+
     if (req?.staff_id) {
       const lt = LEAVE_TYPES.find(x=>x.id===req.leave_type)
       const approverName = approver==='alex'?'Alex':'CJ'
@@ -81,7 +102,7 @@ export default function LeavePage() {
         body: JSON.stringify({ emails:['hr.ohtgroup@gmail.com'], message: hrMsg })
       }).catch(()=>{})
     }
-    showToast(status==='approved'?'✅':'❌',`Request ${status} — staff notified`)
+    showToast(status==='approved'?'✅':'❌',`Request ${status} — staff notified${removedCount ? ` · ${removedCount} conflicting shift${removedCount!==1?'s':''} removed` : ''}`)
   }
 
   const filtered = requests.filter(r => {
