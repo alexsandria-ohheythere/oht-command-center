@@ -10,6 +10,7 @@ const INCIDENT_AUTHORIZED = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gm
 const MGT_EMAILS           = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
 const HR_EMAIL             = 'hr.ohtgroup@gmail.com'
 const HR_STAFF_EMAIL       = 'nazar.richelleann@gmail.com'
+const LEADERSHIP_ROLES     = ['Managing Director', 'CEO']
 
 // ─── Workflow stages ───────────────────────────────────────────────────────────
 // Each incoming report starts at stage 1: hr_review
@@ -112,6 +113,7 @@ export default function ReportsPage() {
   const [sanctionedStaff,  setSanctionedStaff]  = useState([])
   const [staffIdMap,       setStaffIdMap]       = useState({})
   const [editingLinks,     setEditingLinks]     = useState(new Set())
+  const [addStaffPick,     setAddStaffPick]     = useState('')
 
   useEffect(() => { fetchReports() }, [])
   useEffect(() => { applyFilters() }, [reports, filterStage, filterDept, search])
@@ -222,6 +224,7 @@ export default function ReportsPage() {
     setSanctionedStaff(r.sanctioned_staff ? splitPersons(r.sanctioned_staff) : splitPersons(r.persons_involved))
     setStaffIdMap(buildIdMap(r.persons_involved, r.persons_involved_ids, staffDirectory))
     setEditingLinks(new Set())
+    setAddStaffPick('')
   }
 
   // Safety net: if the staff directory finishes loading after a report is already
@@ -871,6 +874,31 @@ export default function ReportsPage() {
                       onClick={() => setSanctionedStaff(splitPersons(selected.persons_involved))}
                       style={{ ...outlineBtn, fontSize:10, padding:'4px 10px', marginBottom:10 }}
                     >↺ Restore all persons involved</button>
+                  )}
+
+                  {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && (
+                    <select
+                      value={addStaffPick}
+                      onChange={e => {
+                        const id = e.target.value
+                        if (!id) return
+                        const s = staffDirectory.find(x => x.id === id)
+                        if (!s) return
+                        const label = `${s.first_name} ${s.last_name} (${s.role || 'Staff'})`
+                        setSanctionedStaff(list => list.includes(label) ? list : [...list, label])
+                        setStaffIdMap(m => ({ ...m, [label]: id }))
+                        setAddStaffPick('')
+                      }}
+                      style={{ width:'100%', boxSizing:'border-box', fontSize:12, border:'1px dashed #d8cebb', borderRadius:8, padding:'8px 10px', fontFamily:"'DM Sans',sans-serif", background:'white', color:'#7a6a50', marginBottom:10 }}
+                    >
+                      <option value="">+ Add another staff member to sanction…</option>
+                      {staffDirectory
+                        .filter(s => !LEADERSHIP_ROLES.includes(s.role))
+                        .filter(s => !sanctionedStaff.includes(`${s.first_name} ${s.last_name} (${s.role || 'Staff'})`))
+                        .map(s => (
+                          <option key={s.id} value={s.id}>{s.first_name} {s.last_name} — {s.role}</option>
+                        ))}
+                    </select>
                   )}
 
                   {/* Violation from handbook */}
