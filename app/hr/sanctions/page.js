@@ -224,8 +224,27 @@ function SanctionDetail({ sanction, staff, onUpdate, onClose }) {
   const [notes, setNotes]   = useState(sanction.admin_notes || '')
   const [explanation, setExplanation] = useState(sanction.explanation_text || '')
   const [saving, setSaving] = useState(false)
+  const [linkedReport, setLinkedReport] = useState(null)
+  const [loadingReport, setLoadingReport] = useState(false)
 
   const staffMember = staff.find(s => s.id === sanction.staff_id)
+
+  useEffect(() => {
+    if (!sanction.incident_report_id) { setLinkedReport(null); return }
+    setLoadingReport(true)
+    const supabase = createClient()
+    supabase
+      .from('incident_reports')
+      .select('mgt_notes, mgt_case_summary, investigation_findings, staff_explanations, sanction_notes')
+      .eq('id', sanction.incident_report_id)
+      .single()
+      .then(({ data }) => { setLinkedReport(data || null); setLoadingReport(false) })
+  }, [sanction.incident_report_id])
+
+  function parseExplanations(raw) {
+    if (!raw) return []
+    try { const list = JSON.parse(raw); return Array.isArray(list) ? list : [] } catch { return [] }
+  }
 
   async function save() {
     setSaving(true)
@@ -276,6 +295,55 @@ function SanctionDetail({ sanction, staff, onUpdate, onClose }) {
           </div>
         )}
       </div>
+
+      {/* Case history from the linked incident report — Mgt. Review onward.
+          HR Review stays out of scope here on purpose, same as everywhere else. */}
+      {sanction.incident_report_id && (
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:'#5a4a3a', marginBottom:8 }}>CASE NOTES — MGT. REVIEW ONWARD</div>
+          {loadingReport ? (
+            <div style={{ fontSize:12, color:'#888' }}>Loading…</div>
+          ) : !linkedReport ? (
+            <div style={{ fontSize:12, color:'#888', fontStyle:'italic' }}>Linked report not found.</div>
+          ) : (
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              <div style={{ background:'#e8f0fb', borderRadius:8, padding:'10px 12px' }}>
+                <div style={{ fontSize:10, fontWeight:700, color:'#2d5a8a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Mgt. Review Notes</div>
+                <div style={{ fontSize:12, color:'#1a1208', whiteSpace:'pre-wrap' }}>{linkedReport.mgt_notes || <em style={{ color:'#9a8a7a' }}>None recorded</em>}</div>
+              </div>
+              {linkedReport.mgt_case_summary && (
+                <div style={{ background:'#e8f0fb', borderRadius:8, padding:'10px 12px' }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:'#2d5a8a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Case Summary Shown to Employee</div>
+                  <div style={{ fontSize:12, color:'#1a1208', whiteSpace:'pre-wrap' }}>{linkedReport.mgt_case_summary}</div>
+                </div>
+              )}
+              <div style={{ background:'#fef3e2', borderRadius:8, padding:'10px 12px' }}>
+                <div style={{ fontSize:10, fontWeight:700, color:'#a06000', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Investigation Findings</div>
+                <div style={{ fontSize:12, color:'#1a1208', whiteSpace:'pre-wrap' }}>{linkedReport.investigation_findings || <em style={{ color:'#9a8a7a' }}>None recorded</em>}</div>
+              </div>
+              {parseExplanations(linkedReport.staff_explanations).length > 0 && (
+                <div style={{ background:'#fef3e2', borderRadius:8, padding:'10px 12px' }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:'#a06000', textTransform:'uppercase', letterSpacing:0.5, marginBottom:6 }}>Staff Explanations</div>
+                  <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                    {parseExplanations(linkedReport.staff_explanations).map((e, i) => (
+                      <div key={i} style={{ fontSize:12, color:'#1a1208' }}>
+                        <strong>{e.name}</strong> <span style={{ color:'#9a8a7a', fontWeight:400 }}>· {fmtDT(e.submitted_at)}</span>
+                        <div style={{ marginTop:2 }}>{e.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {linkedReport.sanction_notes && (
+                <div style={{ background:'#fde8ee', borderRadius:8, padding:'10px 12px' }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:'#c0392b', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Final Sanction Admin Notes</div>
+                  <div style={{ fontSize:12, color:'#1a1208', whiteSpace:'pre-wrap' }}>{linkedReport.sanction_notes}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Timeline */}
       <div style={{ marginBottom:16 }}>
