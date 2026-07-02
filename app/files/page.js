@@ -106,7 +106,14 @@ export default function FilesPage() {
     showToast('🗑️','File deleted')
   }
 
-  const filtered = files.filter(f => {
+  const isAdmin = ADMIN_EMAILS.includes(userEmail)
+
+  // HR sees everything in Document 201 EXCEPT the Incident Report category —
+  // that stays Alex/CJ-only, matching how it's restricted everywhere else.
+  const visibleFiles = isAdmin ? files : files.filter(f => f.category !== 'Incident Report')
+  const visibleCategories = isAdmin ? CATEGORIES : CATEGORIES.filter(c => c !== 'Incident Report')
+
+  const filtered = visibleFiles.filter(f => {
     if (catFilter!=='All' && f.category!==catFilter) return false
     if (staffFilter && f.staff_id!==staffFilter) return false
     if (search && !`${f.file_name} ${f.description||''}`.toLowerCase().includes(search.toLowerCase())) return false
@@ -121,28 +128,10 @@ export default function FilesPage() {
     byStaff[id].files.push(f)
   })
 
-  const isAdmin = ADMIN_EMAILS.includes(userEmail)
-
-  if (authChecked && !isAdmin) {
-    return (
-      <AuthShell>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', padding:40 }}>
-          <div style={{ textAlign:'center', maxWidth:360 }}>
-            <div style={{ fontSize:40, marginBottom:12 }}>🔒</div>
-            <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:16, fontWeight:700, marginBottom:6 }}>Restricted</div>
-            <div style={{ fontSize:12, color:'var(--text-muted)', lineHeight:1.6 }}>
-              Document 201 files are only accessible to Alex and CJ. Contact them if you need something from an employee's file.
-            </div>
-          </div>
-        </div>
-      </AuthShell>
-    )
-  }
-
   return (
     <AuthShell>
       <div className="topbar">
-        <div><div className="topbar-title">Files · Document 201</div><div className="topbar-sub">{files.length} files · {staff.length} employees</div></div>
+        <div><div className="topbar-title">Files · Document 201</div><div className="topbar-sub">{visibleFiles.length} files · {staff.length} employees</div></div>
         <div style={{display:'flex',gap:9,alignItems:'center'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search files…" style={{...iStyle,width:200,padding:'6px 12px'}}/>
           <select style={{...iStyle,width:'auto'}} value={staffFilter} onChange={e=>setStaffFilter(e.target.value)}>
@@ -169,7 +158,7 @@ export default function FilesPage() {
               <div>
                 <label style={lStyle}>Category</label>
                 <select style={iStyle} value={form.category} onChange={fv('category')}>
-                  {CATEGORIES.filter(c=>c!=='All').map(c=><option key={c}>{c}</option>)}
+                  {visibleCategories.filter(c=>c!=='All').map(c=><option key={c}>{c}</option>)}
                 </select>
               </div>
               <div>
@@ -210,10 +199,10 @@ export default function FilesPage() {
 
         {/* Category filter */}
         <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
-          {CATEGORIES.map(c=>(
+          {visibleCategories.map(c=>(
             <button key={c} onClick={()=>setCatFilter(c)}
               style={{padding:'6px 12px',borderRadius:20,border:`1.5px solid ${catFilter===c?(CAT_COLORS[c]||'var(--espresso)'):'var(--border)'}`,background:catFilter===c?(CAT_COLORS[c]||'var(--espresso)')+'22':'transparent',color:catFilter===c?(CAT_COLORS[c]||'var(--espresso)'):'var(--text-muted)',fontSize:10,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s'}}>
-              {c} {c!=='All'?`(${files.filter(f=>f.category===c).length})`:``}
+              {c} {c!=='All'?`(${visibleFiles.filter(f=>f.category===c).length})`:``}
             </button>
           ))}
         </div>
