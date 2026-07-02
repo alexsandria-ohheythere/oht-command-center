@@ -683,11 +683,11 @@ export default function ReportsPage() {
                     Final sanction must be supported by the OHT Employee Handbook.
                   </div>
 
-                  {/* Staff Member — pre-filled from report */}
+                  {/* Staff Member — the person the report is about, NOT the person who filed it */}
                   <label style={labelStyle}>Staff Member</label>
                   <div style={{ ...inputStyle, marginBottom:10, background:'#f0ede8', color:'#5a4a3a', fontSize:12, display:'flex', alignItems:'center', gap:6 }}>
                     <span>👤</span>
-                    <span>{selected.reported_by || '—'}</span>
+                    <span>{selected.persons_involved || '—'}</span>
                   </div>
 
                   {/* Violation from handbook */}
