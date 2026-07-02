@@ -121,6 +121,7 @@ export default function ReportsPage() {
   const [staffIdMap,       setStaffIdMap]       = useState({})
   const [editingLinks,     setEditingLinks]     = useState(new Set())
   const [addStaffPick,     setAddStaffPick]     = useState('')
+  const [stageOverride,    setStageOverride]    = useState('')
 
   useEffect(() => { fetchReports() }, [])
   useEffect(() => { applyFilters() }, [reports, filterStage, filterDept, search])
@@ -244,6 +245,7 @@ export default function ReportsPage() {
     setStaffIdMap(buildIdMap(r.persons_involved, r.persons_involved_ids, staffDirectory))
     setEditingLinks(new Set())
     setAddStaffPick('')
+    setStageOverride('')
   }
 
   // Safety net: if the staff directory finishes loading after a report is already
@@ -537,6 +539,42 @@ export default function ReportsPage() {
 
               {/* Stage progress bar */}
               <StageProgress report={selected} />
+
+              {/* Management override — Alex/CJ can send a report back to any stage.
+                  Incident reports are sensitive; mistakes or new information can surface
+                  after the fact, and the normal flow only moves forward. */}
+              {isMgt && (
+                <div style={{ background:'#fff3f3', border:'1px solid #f5c6c6', borderRadius:10, padding:'12px 14px', margin:'14px 20px 0' }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:'#c0392b', marginBottom:4 }}>⚠️ Management Override</div>
+                  <div style={{ fontSize:10, color:'#7a6a50', marginBottom:8, lineHeight:1.5 }}>
+                    Move this report to any stage — forward or back — to correct a mistake or reopen it for further review.
+                  </div>
+                  <div style={{ display:'flex', gap:8 }}>
+                    <select
+                      value={stageOverride}
+                      onChange={e => setStageOverride(e.target.value)}
+                      style={{ flex:1, border:'1px solid #d8cebb', borderRadius:8, padding:'8px 10px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'#1a1208', outline:'none', background:'white', boxSizing:'border-box' }}>
+                      <option value="">— Select a stage —</option>
+                      {STAGES.map(s => (
+                        <option key={s.key} value={s.key}>{s.label}{s.key === (selected.stage || 'hr_review') ? ' (current)' : ''}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => {
+                        if (!stageOverride || stageOverride === (selected.stage || 'hr_review')) return
+                        const label = STAGE_MAP[stageOverride]?.label || stageOverride
+                        if (window.confirm(`Move this report to "${label}"? This bypasses the normal step-by-step workflow.`)) {
+                          advanceStage(selected, stageOverride)
+                          setStageOverride('')
+                        }
+                      }}
+                      disabled={saving || !stageOverride || stageOverride === (selected.stage || 'hr_review')}
+                      style={{ ...outlineBtn, opacity: (!stageOverride || stageOverride === (selected.stage || 'hr_review')) ? 0.5 : 1, cursor: (!stageOverride || stageOverride === (selected.stage || 'hr_review')) ? 'not-allowed' : 'pointer' }}>
+                      Move
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div style={{ padding:'16px 20px' }}>
 
