@@ -20,6 +20,11 @@ const fmtSize = b => b ? (b>1024*1024?`${(b/1024/1024).toFixed(1)}MB`:`${(b/1024
 const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'9px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none'}
 const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
 
+// Files/Document 201 is Alex + CJ only — HR does not get access, per role rules.
+// AuthShell's own `require` prop exists but isn't actually wired up to anything,
+// so this page checks the signed-in email directly, the same way Incident Reports does.
+const ADMIN_EMAILS = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
+
 export default function FilesPage() {
   const supabase = createClient()
   const [files, setFiles]       = useState([])
@@ -33,7 +38,16 @@ export default function FilesPage() {
   const [selectedStaff, setSelectedStaff] = useState(null)
   const [toast, setToast]       = useState(null)
   const [form, setForm] = useState({ staff_id:'', file_name:'', file_url:'', category:'General', description:'', can_download:true, can_upload:false })
+  const [userEmail, setUserEmail] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
   const fileRef = useRef()
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUserEmail(session?.user?.email?.toLowerCase() || null)
+      setAuthChecked(true)
+    })
+  }, [])
 
   useEffect(() => { fetchAll() }, [])
 
@@ -106,6 +120,24 @@ export default function FilesPage() {
     if (!byStaff[id]) byStaff[id] = { staff:f.staff, files:[] }
     byStaff[id].files.push(f)
   })
+
+  const isAdmin = ADMIN_EMAILS.includes(userEmail)
+
+  if (authChecked && !isAdmin) {
+    return (
+      <AuthShell>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', padding:40 }}>
+          <div style={{ textAlign:'center', maxWidth:360 }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>🔒</div>
+            <div style={{ fontFamily:"'Montserrat',sans-serif", fontSize:16, fontWeight:700, marginBottom:6 }}>Restricted</div>
+            <div style={{ fontSize:12, color:'var(--text-muted)', lineHeight:1.6 }}>
+              Document 201 files are only accessible to Alex and CJ. Contact them if you need something from an employee's file.
+            </div>
+          </div>
+        </div>
+      </AuthShell>
+    )
+  }
 
   return (
     <AuthShell>
