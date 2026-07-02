@@ -41,6 +41,16 @@ const DEPT_COLORS = {
 const fmtDate = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-PH', { month:'short', day:'numeric', year:'numeric' }) : '—'
 const fmtCreated = s => s ? new Date(s).toLocaleDateString('en-PH', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }) : '—'
 
+// "Name (Role), Name (Role), Name (Role)" → ["Name (Role)", "Name (Role)", "Name (Role)"]
+function splitPersons(str) {
+  if (!str) return []
+  const parts = str.split('), ')
+  return parts
+    .map((p, i) => (i < parts.length - 1 ? p + ')' : p))
+    .map(p => p.trim())
+    .filter(Boolean)
+}
+
 export default function ReportsPage() {
   const [userEmail, setUserEmail]     = useState(null)
   const [reports, setReports]         = useState([])
@@ -68,6 +78,8 @@ export default function ReportsPage() {
   const [offenseNum,       setOffenseNum]       = useState('1st')
   const [sanctionType,     setSanctionType]     = useState('')
   const [sanctionNotes,    setSanctionNotes]    = useState('')
+  const [sanctionDetails,  setSanctionDetails]  = useState('')
+  const [sanctionedStaff,  setSanctionedStaff]  = useState([])
 
   useEffect(() => { fetchReports() }, [])
   useEffect(() => { applyFilters() }, [reports, filterStage, filterDept, search])
@@ -162,6 +174,7 @@ export default function ReportsPage() {
     setOffenseNum(r.offense_num || '1st')
     setSanctionType(r.sanction_type || '')
     setSanctionNotes(r.sanction_notes || '')
+    setSanctionedStaff(r.sanctioned_staff ? splitPersons(r.sanctioned_staff) : splitPersons(r.persons_involved))
   }
 
   // Advance to next stage (or set any stage for mgt)
@@ -181,6 +194,7 @@ export default function ReportsPage() {
         offense_num: offenseNum || null,
         sanction_type: sanctionType || null,
         sanction_notes: sanctionNotes || null,
+        sanctioned_staff: sanctionedStaff.join(', ') || null,
       }
       const { error } = await supabase
         .from('incident_reports')
@@ -210,6 +224,7 @@ export default function ReportsPage() {
         offense_num: offenseNum || null,
         sanction_type: sanctionType || null,
         sanction_notes: sanctionNotes || null,
+        sanctioned_staff: sanctionedStaff.join(', ') || null,
       }
       const { error } = await supabase
         .from('incident_reports')
@@ -683,12 +698,34 @@ export default function ReportsPage() {
                     Final sanction must be supported by the OHT Employee Handbook.
                   </div>
 
-                  {/* Staff Member — the person the report is about, NOT the person who filed it */}
-                  <label style={labelStyle}>Staff Member</label>
-                  <div style={{ ...inputStyle, marginBottom:10, background:'#f0ede8', color:'#5a4a3a', fontSize:12, display:'flex', alignItems:'center', gap:6 }}>
-                    <span>👤</span>
-                    <span>{selected.persons_involved || '—'}</span>
+                  {/* Staff Member(s) — the person(s) the report is about, NOT the person who filed it.
+                      Removable chips let mgt exclude anyone who shouldn't be sanctioned. */}
+                  <label style={labelStyle}>
+                    Staff Member{sanctionedStaff.length !== 1 ? 's' : ''} Receiving Sanction
+                  </label>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:6 }}>
+                    {sanctionedStaff.length === 0 && (
+                      <div style={{ ...inputStyle, color:'#9a8a7a', fontSize:12 }}>No staff selected</div>
+                    )}
+                    {sanctionedStaff.map((name, i) => (
+                      <div key={i} style={{ display:'flex', alignItems:'center', gap:6, background:'#f0ede8', borderRadius:20, padding:'6px 8px 6px 12px', fontSize:12, color:'#5a4a3a' }}>
+                        <span>👤 {name}</span>
+                        {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && (
+                          <button
+                            onClick={() => setSanctionedStaff(list => list.filter((_, idx) => idx !== i))}
+                            title="Remove — no sanction for this person"
+                            style={{ background:'#e5ded4', border:'none', borderRadius:'50%', width:18, height:18, color:'#c0392b', cursor:'pointer', fontSize:11, lineHeight:1, padding:0 }}
+                          >✕</button>
+                        )}
+                      </div>
+                    ))}
                   </div>
+                  {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && sanctionedStaff.length < splitPersons(selected.persons_involved).length && (
+                    <button
+                      onClick={() => setSanctionedStaff(splitPersons(selected.persons_involved))}
+                      style={{ ...outlineBtn, fontSize:10, padding:'4px 10px', marginBottom:10 }}
+                    >↺ Restore all persons involved</button>
+                  )}
 
                   {/* Violation from handbook */}
                   <label style={labelStyle}>Violation *</label>
