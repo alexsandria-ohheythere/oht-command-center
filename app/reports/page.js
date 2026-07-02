@@ -122,6 +122,7 @@ export default function ReportsPage() {
   const [editingLinks,     setEditingLinks]     = useState(new Set())
   const [addStaffPick,     setAddStaffPick]     = useState('')
   const [stageOverride,    setStageOverride]    = useState('')
+  const [pendingStageMove, setPendingStageMove] = useState('')
 
   useEffect(() => { fetchReports() }, [])
   useEffect(() => { applyFilters() }, [reports, filterStage, filterDept, search])
@@ -246,6 +247,7 @@ export default function ReportsPage() {
     setEditingLinks(new Set())
     setAddStaffPick('')
     setStageOverride('')
+    setPendingStageMove('')
   }
 
   // Safety net: if the staff directory finishes loading after a report is already
@@ -552,7 +554,7 @@ export default function ReportsPage() {
                   <div style={{ display:'flex', gap:8 }}>
                     <select
                       value={stageOverride}
-                      onChange={e => setStageOverride(e.target.value)}
+                      onChange={e => { setStageOverride(e.target.value); setPendingStageMove('') }}
                       style={{ flex:1, border:'1px solid #d8cebb', borderRadius:8, padding:'8px 10px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'#1a1208', outline:'none', background:'white', boxSizing:'border-box' }}>
                       <option value="">— Select a stage —</option>
                       {STAGES.map(s => (
@@ -562,17 +564,41 @@ export default function ReportsPage() {
                     <button
                       onClick={() => {
                         if (!stageOverride || stageOverride === (selected.stage || 'hr_review')) return
-                        const label = STAGE_MAP[stageOverride]?.label || stageOverride
-                        if (window.confirm(`Move this report to "${label}"? This bypasses the normal step-by-step workflow.`)) {
-                          advanceStage(selected, stageOverride)
-                          setStageOverride('')
-                        }
+                        setPendingStageMove(stageOverride)
                       }}
                       disabled={saving || !stageOverride || stageOverride === (selected.stage || 'hr_review')}
                       style={{ ...outlineBtn, opacity: (!stageOverride || stageOverride === (selected.stage || 'hr_review')) ? 0.5 : 1, cursor: (!stageOverride || stageOverride === (selected.stage || 'hr_review')) ? 'not-allowed' : 'pointer' }}>
                       Move
                     </button>
                   </div>
+
+                  {/* Inline confirmation — avoids relying on window.confirm(), which some
+                      embedded/webview contexts silently suppress with no visible effect. */}
+                  {pendingStageMove && (
+                    <div style={{ marginTop:10, background:'white', border:'1px solid #f5c6c6', borderRadius:8, padding:'10px 12px' }}>
+                      <div style={{ fontSize:12, color:'#3a2a1a', marginBottom:8 }}>
+                        Move this report to <strong>{STAGE_MAP[pendingStageMove]?.label || pendingStageMove}</strong>? This bypasses the normal step-by-step workflow.
+                      </div>
+                      <div style={{ display:'flex', gap:8 }}>
+                        <button
+                          onClick={() => {
+                            advanceStage(selected, pendingStageMove)
+                            setStageOverride('')
+                            setPendingStageMove('')
+                          }}
+                          disabled={saving}
+                          style={{ ...primaryBtn, background:'#c0392b' }}>
+                          {saving ? 'Moving…' : 'Confirm Move'}
+                        </button>
+                        <button
+                          onClick={() => setPendingStageMove('')}
+                          disabled={saving}
+                          style={{ ...outlineBtn }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
