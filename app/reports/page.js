@@ -52,13 +52,32 @@ function splitPersons(str) {
     .filter(Boolean)
 }
 
-// Pairs display names (from persons_involved) with real staff IDs (from persons_involved_ids),
-// matched by position since both are built from the same ordered selection at submission time.
-// Falls back gracefully to { id: null, name } for older reports filed before IDs were tracked.
-function personsWithIds(namesStr, idsStr) {
+// "Richelle Nazar (Cafe Supervisor)" → "Richelle Nazar"
+const bareName = s => (s || '').replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase()
+
+// Legacy fallback: match a display name to a staff record by exact "First Last" text.
+// Returns an id ONLY if there's exactly one unambiguous match — duplicate/ambiguous
+// names (e.g. two staff records for the same person under different logins) are left
+// unresolved so mgt can pick the right one manually rather than guessing wrong.
+function guessStaffId(name, directory) {
+  const target = bareName(name)
+  if (!target) return null
+  const matches = directory.filter(s => `${s.first_name} ${s.last_name}`.trim().toLowerCase() === target)
+  return matches.length === 1 ? matches[0].id : null
+}
+
+// Builds a { "Name (Role)": staffId } lookup for a report's persons_involved list.
+// Prefers the IDs saved at submission time (persons_involved_ids); for older reports
+// filed before ID-tracking existed, falls back to an unambiguous name match.
+function buildIdMap(namesStr, idsStr, directory) {
   const names = splitPersons(namesStr)
   const ids = (idsStr || '').split(',').map(s => s.trim()).filter(Boolean)
-  return names.map((name, i) => ({ id: ids[i] || null, name }))
+  const map = {}
+  names.forEach((name, i) => {
+    const id = ids[i] || guessStaffId(name, directory)
+    if (id) map[name] = id
+  })
+  return map
 }
 
 export default function ReportsPage() {
@@ -76,6 +95,7 @@ export default function ReportsPage() {
   const [search, setSearch]           = useState('')
   const [expandedStages, setExpandedStages] = useState(new Set())
   const [handbookEntries, setHandbookEntries] = useState([])
+  const [staffDirectory,  setStaffDirectory]  = useState([])
 
   // Panel state per stage
   const [hrNotes,          setHrNotes]          = useState('')
@@ -90,6 +110,8 @@ export default function ReportsPage() {
   const [sanctionNotes,    setSanctionNotes]    = useState('')
   const [sanctionDetails,  setSanctionDetails]  = useState('')
   const [sanctionedStaff,  setSanctionedStaff]  = useState([])
+  const [staffIdMap,       setStaffIdMap]       = useState({})
+  const [editingLinks,     setEditingLinks]     = useState(new Set())
 
   useEffect(() => { fetchReports() }, [])
   useEffect(() => { applyFilters() }, [reports, filterStage, filterDept, search])
@@ -106,6 +128,19 @@ export default function ReportsPage() {
       } catch(e) { console.error('handbook fetch', e) }
     }
     fetchHandbook()
+  }, [])
+  useEffect(() => {
+    async function fetchStaffDirectory() {
+      try {
+        const supabase = createClient()
+        const { data } = await supabase
+          .from('staff')
+          .select('id, first_name, last_name, role')
+          .order('first_name', { ascending: true })
+        setStaffDirectory(data || [])
+      } catch(e) { console.error('staff directory fetch', e) }
+    }
+    fetchStaffDirectory()
   }, [])
 
   async function fetchReports() {
@@ -184,25 +219,30 @@ export default function ReportsPage() {
     setOffenseNum(r.offense_num || '1st')
     setSanctionType(r.sanction_type || '')
     setSanctionNotes(r.sanction_notes || '')
-    const allPersons = personsWithIds(r.persons_involved, r.persons_involved_ids)
-    if (r.sanctioned_staff_ids) {
-      const keepIds = new Set(r.sanctioned_staff_ids.split(',').map(s => s.trim()).filter(Boolean))
-      setSanctionedStaff(allPersons.filter(p => p.id && keepIds.has(p.id)))
-    } else if (r.sanctioned_staff) {
-      // legacy fallback for reports saved before ID tracking — match by name text
-      const keepNames = new Set(splitPersons(r.sanctioned_staff))
-      setSanctionedStaff(allPersons.filter(p => keepNames.has(p.name)))
-    } else {
-      setSanctionedStaff(allPersons)
-    }
+    setSanctionedStaff(r.sanctioned_staff ? splitPersons(r.sanctioned_staff) : splitPersons(r.persons_involved))
+    setStaffIdMap(buildIdMap(r.persons_involved, r.persons_involved_ids, staffDirectory))
+    setEditingLinks(new Set())
   }
+
+  // Safety net: if the staff directory finishes loading after a report is already
+  // open (race on first load), re-run the auto-match — but keep any manual picks
+  // mgt already made in the meantime.
+  useEffect(() => {
+    if (!selected || staffDirectory.length === 0) return
+    setStaffIdMap(prev => ({
+      ...buildIdMap(selected.persons_involved, selected.persons_involved_ids, staffDirectory),
+      ...prev,
+    }))
+  }, [staffDirectory])
 
   // Bridges the incident report's Final Sanction stage into the `sanctions` table —
   // the table the Staff Portal's "My Sanctions" page actually reads from. Without this,
   // finishing Final Sanction here never showed up for the employee, since the two
   // features wrote to completely different tables.
   async function syncSanctionsForReport(report, supabase) {
-    const targets = sanctionedStaff.filter(p => p.id)
+    const targets = sanctionedStaff
+      .map(name => ({ name, id: staffIdMap[name] }))
+      .filter(p => p.id)
     if (targets.length === 0) return
     try {
       const { data: existing } = await supabase
@@ -260,8 +300,8 @@ export default function ReportsPage() {
         offense_num: offenseNum || null,
         sanction_type: sanctionType || null,
         sanction_notes: sanctionNotes || null,
-        sanctioned_staff: sanctionedStaff.map(p => p.name).join(', ') || null,
-        sanctioned_staff_ids: sanctionedStaff.map(p => p.id).filter(Boolean).join(', ') || null,
+        sanctioned_staff: sanctionedStaff.join(', ') || null,
+        sanctioned_staff_ids: sanctionedStaff.map(n => staffIdMap[n]).filter(Boolean).join(', ') || null,
       }
       const { error } = await supabase
         .from('incident_reports')
@@ -294,8 +334,8 @@ export default function ReportsPage() {
         offense_num: offenseNum || null,
         sanction_type: sanctionType || null,
         sanction_notes: sanctionNotes || null,
-        sanctioned_staff: sanctionedStaff.map(p => p.name).join(', ') || null,
-        sanctioned_staff_ids: sanctionedStaff.map(p => p.id).filter(Boolean).join(', ') || null,
+        sanctioned_staff: sanctionedStaff.join(', ') || null,
+        sanctioned_staff_ids: sanctionedStaff.map(n => staffIdMap[n]).filter(Boolean).join(', ') || null,
       }
       const { error } = await supabase
         .from('incident_reports')
@@ -770,30 +810,65 @@ export default function ReportsPage() {
                   </div>
 
                   {/* Staff Member(s) — the person(s) the report is about, NOT the person who filed it.
-                      Removable chips let mgt exclude anyone who shouldn't be sanctioned. */}
+                      Removable chips let mgt exclude anyone who shouldn't be sanctioned. Anyone not
+                      yet linked to a real staff record (older reports filed before ID-tracking, or
+                      an ambiguous name match) gets a dropdown to match them manually — required
+                      before their sanction can sync to their Staff Portal. */}
                   <label style={labelStyle}>
                     Staff Member{sanctionedStaff.length !== 1 ? 's' : ''} Receiving Sanction
                   </label>
-                  <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:6 }}>
+                  <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:6 }}>
                     {sanctionedStaff.length === 0 && (
                       <div style={{ ...inputStyle, color:'#9a8a7a', fontSize:12 }}>No staff selected</div>
                     )}
-                    {sanctionedStaff.map((p, i) => (
-                      <div key={i} style={{ display:'flex', alignItems:'center', gap:6, background:'#f0ede8', borderRadius:20, padding:'6px 8px 6px 12px', fontSize:12, color:'#5a4a3a' }}>
-                        <span>👤 {p.name}</span>
-                        {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && (
-                          <button
-                            onClick={() => setSanctionedStaff(list => list.filter((_, idx) => idx !== i))}
-                            title="Remove — no sanction for this person"
-                            style={{ background:'#e5ded4', border:'none', borderRadius:'50%', width:18, height:18, color:'#c0392b', cursor:'pointer', fontSize:11, lineHeight:1, padding:0 }}
-                          >✕</button>
-                        )}
-                      </div>
-                    ))}
+                    {sanctionedStaff.map((name, i) => {
+                      const resolvedId = staffIdMap[name]
+                      const canEdit = isMgt && (selected.stage || 'hr_review') === 'final_sanction'
+                      const showPicker = !resolvedId || editingLinks.has(i)
+                      const resolvedStaff = resolvedId ? staffDirectory.find(s => s.id === resolvedId) : null
+                      return (
+                        <div key={i} style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap', background:'#f0ede8', borderRadius: showPicker ? 10 : 20, padding: showPicker ? '8px 10px' : '6px 8px 6px 12px', fontSize:12, color:'#5a4a3a' }}>
+                          <span>👤 {name}</span>
+                          {resolvedId && !showPicker && (
+                            <span style={{ color:'#4a7a1e', fontSize:11 }}>→ {resolvedStaff ? `${resolvedStaff.first_name} ${resolvedStaff.last_name}` : 'linked'}</span>
+                          )}
+                          {!resolvedId && <span style={{ color:'#c0392b', fontSize:11, fontWeight:600 }}>⚠ not linked</span>}
+                          {canEdit && !showPicker && (
+                            <button
+                              onClick={() => setEditingLinks(s => new Set(s).add(i))}
+                              title="Change which staff record this links to"
+                              style={{ background:'none', border:'none', color:'#5a4a3a', cursor:'pointer', fontSize:11, padding:0, textDecoration:'underline' }}
+                            >✏ change</button>
+                          )}
+                          {canEdit && showPicker && (
+                            <select
+                              defaultValue={resolvedId || ''}
+                              onChange={e => {
+                                setStaffIdMap(m => ({ ...m, [name]: e.target.value }))
+                                setEditingLinks(s => { const n = new Set(s); n.delete(i); return n })
+                              }}
+                              style={{ fontSize:11, border:'1px solid #d8cebb', borderRadius:6, padding:'4px 6px', fontFamily:"'DM Sans',sans-serif", background:'white', color:'#1a1208' }}
+                            >
+                              <option value="" disabled>Match to staff record…</option>
+                              {staffDirectory.map(s => (
+                                <option key={s.id} value={s.id}>{s.first_name} {s.last_name} — {s.role}</option>
+                              ))}
+                            </select>
+                          )}
+                          {canEdit && (
+                            <button
+                              onClick={() => setSanctionedStaff(list => list.filter((_, idx) => idx !== i))}
+                              title="Remove — no sanction for this person"
+                              style={{ background:'#e5ded4', border:'none', borderRadius:'50%', width:18, height:18, color:'#c0392b', cursor:'pointer', fontSize:11, lineHeight:1, padding:0, marginLeft:'auto' }}
+                            >✕</button>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
-                  {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && sanctionedStaff.length < personsWithIds(selected.persons_involved, selected.persons_involved_ids).length && (
+                  {isMgt && (selected.stage || 'hr_review') === 'final_sanction' && sanctionedStaff.length < splitPersons(selected.persons_involved).length && (
                     <button
-                      onClick={() => setSanctionedStaff(personsWithIds(selected.persons_involved, selected.persons_involved_ids))}
+                      onClick={() => setSanctionedStaff(splitPersons(selected.persons_involved))}
                       style={{ ...outlineBtn, fontSize:10, padding:'4px 10px', marginBottom:10 }}
                     >↺ Restore all persons involved</button>
                   )}
