@@ -81,6 +81,13 @@ function buildIdMap(namesStr, idsStr, directory) {
   return map
 }
 
+// Explanations staff submit themselves from the Staff Portal during the Investigation
+// stage — stored as a JSON list: [{ staff_id, name, text, submitted_at }]
+function parseExplanations(raw) {
+  if (!raw) return []
+  try { const list = JSON.parse(raw); return Array.isArray(list) ? list : [] } catch { return [] }
+}
+
 export default function ReportsPage() {
   const [userEmail, setUserEmail]     = useState(null)
   const [reports, setReports]         = useState([])
@@ -144,6 +151,18 @@ export default function ReportsPage() {
     }
     fetchStaffDirectory()
   }, [])
+  // Keeps Sanction Type in sync with Violation + Offense Number at all times — including
+  // when a report is reopened with these already pre-filled and neither dropdown gets
+  // touched this session. Previously this only ran on an actual onChange event, so a
+  // report could sit with sanction_type empty indefinitely, which then silently broke
+  // the sync into the `sanctions` table (sanction_type is NOT NULL there).
+  useEffect(() => {
+    if (!handbookRef) return
+    const entry = handbookEntries.find(x => `${x.violation_code} — ${x.title}` === handbookRef)
+    if (!entry) return
+    const offenseKey = { '1st':'sanction_1st', '2nd':'sanction_2nd', '3rd':'sanction_3rd', '4th':'sanction_4th', '5th':'sanction_5th' }[offenseNum] || 'sanction_1st'
+    setSanctionType(entry[offenseKey] || '')
+  }, [handbookRef, offenseNum, handbookEntries])
 
   async function fetchReports() {
     setLoading(true)
@@ -246,7 +265,7 @@ export default function ReportsPage() {
     const targets = sanctionedStaff
       .map(name => ({ name, id: staffIdMap[name] }))
       .filter(p => p.id)
-    if (targets.length === 0) return
+    if (targets.length === 0) return { ok: true, created: 0 }
     try {
       const { data: existing } = await supabase
         .from('sanctions')
@@ -254,7 +273,7 @@ export default function ReportsPage() {
         .eq('incident_report_id', report.id)
       const existingIds = new Set((existing || []).map(s => s.staff_id))
       const toCreate = targets.filter(p => !existingIds.has(p.id))
-      if (toCreate.length === 0) return
+      if (toCreate.length === 0) return { ok: true, created: 0 }
 
       const entry = handbookEntries.find(x => `${x.violation_code} — ${x.title}` === handbookRef)
       const offenseInt = { '1st':1, '2nd':2, '3rd':3, '4th':4, '5th':5 }[offenseNum] || 1
@@ -272,7 +291,7 @@ export default function ReportsPage() {
         admin_notes: sanctionNotes || null,
       }))
       const { error } = await supabase.from('sanctions').insert(payloads)
-      if (error) { console.error('Sanction sync error:', error.message); return }
+      if (error) { console.error('Sanction sync error:', error.message); return { ok: false, error: error.message } }
 
       for (const p of toCreate) {
         try {
@@ -283,7 +302,11 @@ export default function ReportsPage() {
           )
         } catch(e) { console.error('Sanction notify error:', e) }
       }
-    } catch(e) { console.error('Sanction sync failed:', e) }
+      return { ok: true, created: toCreate.length }
+    } catch(e) {
+      console.error('Sanction sync failed:', e)
+      return { ok: false, error: e?.message || 'Unknown error' }
+    }
   }
 
   // Advance to next stage (or set any stage for mgt)
@@ -314,7 +337,12 @@ export default function ReportsPage() {
       await fetchReports()
       setSelected(s => s ? { ...s, ...updates } : null)
       if (newStage === 'closed' && (report.stage || 'hr_review') === 'final_sanction' && handbookRef.trim()) {
-        await syncSanctionsForReport(report, supabase)
+        const syncResult = await syncSanctionsForReport(report, supabase)
+        if (!syncResult.ok) {
+          showToast('⚠️', `Report closed, but sanction failed to sync to staff portal: ${syncResult.error}`)
+          setSaving(false)
+          return
+        }
       }
       showToast('✅', `Moved to ${STAGE_MAP[newStage]?.label}`)
     } catch(e) { showToast('❌', 'Update failed') }
@@ -740,9 +768,21 @@ export default function ReportsPage() {
                   viewContent={
                     <div>
                       <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Investigation Findings</div>
-                      <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#f5e8cc', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap' }}>
+                      <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, background:'#f5e8cc', borderRadius:8, padding:'10px 12px', whiteSpace:'pre-wrap', marginBottom: parseExplanations(selected.staff_explanations).length ? 10 : 0 }}>
                         {selected.investigation_findings || <em style={{ color:'#9a8a7a' }}>No findings recorded</em>}
                       </div>
+                      {parseExplanations(selected.staff_explanations).length > 0 && (
+                        <div>
+                          <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>Staff Explanations</div>
+                          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                            {parseExplanations(selected.staff_explanations).map((e, i) => (
+                              <div key={i} style={{ fontSize:11, color:'#3a2a1a', lineHeight:1.5, background:'#f5e8cc', borderRadius:8, padding:'8px 10px' }}>
+                                <strong>{e.name}:</strong> {e.text}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   }
                 >
@@ -751,6 +791,27 @@ export default function ReportsPage() {
                     <strong>Alex</strong> handles cases involving Richelle or any company-wide matter.<br />
                     <strong>HR (Richelle)</strong> handles all other employee cases.
                   </div>
+
+                  {/* Explanations staff submitted themselves from the Staff Portal —
+                      this is their due-process chance to respond before Final Sanction. */}
+                  <div style={{ marginBottom:12 }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:'#9a8a7a', textTransform:'uppercase', letterSpacing:0.5, marginBottom:6 }}>Staff Explanations</div>
+                    {parseExplanations(selected.staff_explanations).length === 0 ? (
+                      <div style={{ fontSize:12, color:'#9a8a7a', fontStyle:'italic' }}>No explanations submitted yet</div>
+                    ) : (
+                      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                        {parseExplanations(selected.staff_explanations).map((e, i) => (
+                          <div key={i} style={{ background:'#f5e8cc', borderRadius:8, padding:'10px 12px' }}>
+                            <div style={{ fontSize:11, fontWeight:700, color:'#5a4a3a', marginBottom:4 }}>
+                              👤 {e.name} <span style={{ fontWeight:400, color:'#9a8a7a' }}>· {fmtCreated(e.submitted_at)}</span>
+                            </div>
+                            <div style={{ fontSize:12, color:'#3a2a1a', lineHeight:1.6, whiteSpace:'pre-wrap' }}>{e.text}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <label style={labelStyle}>Investigation Findings</label>
                   <textarea
                     value={investigationFindings}
@@ -905,16 +966,7 @@ export default function ReportsPage() {
                   <label style={labelStyle}>Violation *</label>
                   <select
                     value={handbookRef}
-                    onChange={e => {
-                      const val = e.target.value
-                      setHandbookRef(val)
-                      // Auto-fill sanction type based on offense number
-                      const entry = handbookEntries.find(x => `${x.violation_code} — ${x.title}` === val)
-                      if (entry) {
-                        const offenseKey = { '1st':'sanction_1st','2nd':'sanction_2nd','3rd':'sanction_3rd','4th':'sanction_4th','5th':'sanction_5th' }[offenseNum] || 'sanction_1st'
-                        setSanctionType(entry[offenseKey] || '')
-                      }
-                    }}
+                    onChange={e => setHandbookRef(e.target.value)}
                     disabled={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4}
                     style={{ width:'100%', border:'1px solid #d8cebb', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color: handbookRef ? '#1a1208' : '#9a8a7a', outline:'none', background:'white', opacity: STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4 ? 0.5 : 1, boxSizing:'border-box', marginBottom:10 }}>
                     <option value="">— Select violation —</option>
@@ -941,16 +993,7 @@ export default function ReportsPage() {
                       <label style={labelStyle}>Offense Number *</label>
                       <select
                         value={offenseNum}
-                        onChange={e => {
-                          const num = e.target.value
-                          setOffenseNum(num)
-                          // Re-auto-fill sanction type when offense changes
-                          const entry = handbookEntries.find(x => `${x.violation_code} — ${x.title}` === handbookRef)
-                          if (entry) {
-                            const offenseKey = { '1st':'sanction_1st','2nd':'sanction_2nd','3rd':'sanction_3rd','4th':'sanction_4th','5th':'sanction_5th' }[num] || 'sanction_1st'
-                            setSanctionType(entry[offenseKey] || '')
-                          }
-                        }}
+                        onChange={e => setOffenseNum(e.target.value)}
                         disabled={STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4}
                         style={{ width:'100%', border:'1px solid #d8cebb', borderRadius:8, padding:'9px 12px', fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'#1a1208', outline:'none', background:'white', opacity: STAGE_MAP[(selected.stage || 'hr_review')]?.num < 4 ? 0.5 : 1, boxSizing:'border-box' }}>
                         <option value="1st">1st Offense</option>
@@ -985,15 +1028,18 @@ export default function ReportsPage() {
                         style={{ ...outlineBtn }}>
                         {saving ? 'Saving…' : 'Save Sanction'}
                       </button>
-                      <button onClick={() => advanceStage(selected, 'closed')} disabled={saving || !handbookRef.trim()}
-                        style={{ ...primaryBtn, background: !handbookRef.trim() ? '#ccc' : '#c0392b', cursor: !handbookRef.trim() ? 'not-allowed' : 'pointer' }}
-                        title={!handbookRef.trim() ? 'Select a violation first' : ''}>
+                      <button onClick={() => advanceStage(selected, 'closed')} disabled={saving || !handbookRef.trim() || !sanctionType.trim()}
+                        style={{ ...primaryBtn, background: (!handbookRef.trim() || !sanctionType.trim()) ? '#ccc' : '#c0392b', cursor: (!handbookRef.trim() || !sanctionType.trim()) ? 'not-allowed' : 'pointer' }}
+                        title={!handbookRef.trim() ? 'Select a violation first' : !sanctionType.trim() ? 'No sanction defined for this offense number in the handbook' : ''}>
                         ⚠️ Issue Sanction
                       </button>
                     </div>
                   )}
                   {!handbookRef.trim() && (selected.stage || 'hr_review') === 'final_sanction' && isMgt && (
                     <div style={{ fontSize:10, color:'#c0392b', marginTop:4 }}>⚠ Violation selection required before issuing sanction</div>
+                  )}
+                  {handbookRef.trim() && !sanctionType.trim() && (selected.stage || 'hr_review') === 'final_sanction' && isMgt && (
+                    <div style={{ fontSize:10, color:'#c0392b', marginTop:4 }}>⚠ This violation has no sanction defined for the {offenseNum} offense in the handbook — update the handbook entry or pick a different offense number</div>
                   )}
                 </StageBlock>
 
