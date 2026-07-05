@@ -66,6 +66,8 @@ export default function PayrollPage() {
   const [settling, setSettling]             = useState(null)
   const [auditResults, setAuditResults]     = useState(null)
   const [auditing, setAuditing]             = useState(false)
+  const [previews, setPreviews]             = useState({})
+  const [previewing, setPreviewing]         = useState(null)
   const [currentStaffId, setCurrentStaffId] = useState(null)
   const fileRef = useRef()
 
@@ -368,7 +370,7 @@ export default function PayrollPage() {
     setAuditing(true)
     const results = {
       cutoffLabel: cutoffToCheck.label,
-      duplicateDates: [], anomalyCapped: [], highLate: [], noSchedule: [],
+      duplicateDates: [], highLate: [], noSchedule: [],
       unmatchedCsvRows: [], rateOverridesLoaded: rateOverrides !== null,
       pendingAdjustments: adjustmentRequests.filter(a => a.status === 'pending').length,
       approvedUnpaidRefunds: adjustmentRequests.filter(a => a.status==='approved' && a.resolution==='refund' && !a.applied).length,
@@ -411,7 +413,6 @@ export default function PayrollPage() {
             results.duplicateDates.push({ name: `${emp.firstName} ${emp.lastName}`, date, count: rows.length, oldPaid, correctPaid, impactPeso, impactDirection })
           }
           for (const s of rows) {
-            if ((s.rawHours||0) > 9) results.anomalyCapped.push({ name: `${emp.firstName} ${emp.lastName}`, date: s.date, rawHours: s.rawHours, timeIn: s.timeIn, timeOut: s.timeOut })
             if ((s.lateMinutes||0) > 120) results.highLate.push({ name: `${emp.firstName} ${emp.lastName}`, date: s.date, lateMinutes: s.lateMinutes, timeIn: s.timeIn })
           }
         }
@@ -429,17 +430,73 @@ export default function PayrollPage() {
     setAuditing(false)
   }
 
+  // Shared calc used by both the "Preview" button (read-only) and actual approval (persists).
+  async function computeAdjustmentPreview(adj) {
+    const cutoff = CUTOFF_PERIODS.find(p => p.id === adj.cutoff_id)
+    const { data: existingRun } = await supabase.from('payroll_runs')
+      .select('id, required_days, gross, days_worked, total_late_mins, late_deduction')
+      .eq('cutoff_id', adj.cutoff_id).eq('staff_id', adj.staff_id).maybeSingle()
+
+    if (!existingRun) {
+      return { type: 'timesheet_correction', cutoffLabel: cutoff?.label }
+    }
+
+    const staffMember = adj.staff
+    const isFT = (staffMember.employment_type || 'Full-time') === 'Full-time'
+    const monthlyPay = staffMember.monthly_pay || getBaseRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)?.monthly || 0
+    const dailyRate = (isFT && existingRun.required_days > 0 && monthlyPay > 0)
+      ? (monthlyPay / 2) / existingRun.required_days
+      : getDailyRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)
+    const hourlyRate = dailyRate / 8
+    const minuteRate = hourlyRate / 60
+
+    const { data: archived } = await supabase.from('timesheet_uploads').select('employees').eq('cutoff_id', adj.cutoff_id).maybeSingle()
+    const tsKey = archived?.employees ? findTimesheetKey(archived.employees, staffMember) : null
+    const dateMMDDYYYY = isoToMMDDYYYY(adj.shift_date)
+    const originalShift = tsKey ? (archived.employees[tsKey].shifts || []).find(s => s.date === dateMMDDYYYY) : null
+    const originalShiftFound = !!originalShift
+    const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out) : null
+    const refundAmount = correctedShift ? computeAdjustmentRefundAmount({ hourlyRate, minuteRate, originalShift, correctedShift }) : 0
+
+    // Sync against the actual saved cutoff totals — "how much was really deducted for the
+    // whole cutoff" vs "what it should be once this one shift is corrected."
+    const recordedLateDeduction = parseFloat(existingRun.late_deduction) || 0
+    const recordedTotalLateMins = existingRun.total_late_mins || 0
+    const origLateMins = originalShift?.lateMinutes || 0
+    const corrLateMins = correctedShift?.lateMinutes || 0
+    const supposedTotalLateMins = Math.max(0, recordedTotalLateMins - origLateMins + corrLateMins)
+    const supposedLateDeduction = Math.round(supposedTotalLateMins * minuteRate)
+    const lateRefund = recordedLateDeduction - supposedLateDeduction
+    const extraHoursCredit = refundAmount - lateRefund
+
+    return {
+      type: 'refund', cutoffLabel: cutoff?.label, refundAmount, originalShiftFound,
+      hourlyRate: Math.round(hourlyRate * 100) / 100,
+      origPaid: originalShift?.paidHours || 0, corrPaid: correctedShift?.paidHours || 0,
+      origLate: origLateMins, corrLate: corrLateMins,
+      recordedLateDeduction, supposedLateDeduction, lateRefund, extraHoursCredit,
+    }
+  }
+
+  async function previewAdjustment(adj) {
+    setPreviewing(adj.id)
+    try {
+      const result = await computeAdjustmentPreview(adj)
+      setPreviews(p => ({ ...p, [adj.id]: result }))
+    } catch (e) {
+      showToast('❌', 'Preview failed: ' + e.message)
+    }
+    setPreviewing(null)
+  }
+
   async function approveAdjustment(adj) {
     setApproving(adj.id)
     const note = reviewNotes[adj.id] || ''
     const cutoff = CUTOFF_PERIODS.find(p => p.id === adj.cutoff_id)
     try {
-      // Already-saved cutoff for this staff member? → refund path. Otherwise → auto timesheet-correction path.
-      const { data: existingRun } = await supabase.from('payroll_runs')
-        .select('id, required_days, gross, days_worked, total_late_mins, late_deduction')
-        .eq('cutoff_id', adj.cutoff_id).eq('staff_id', adj.staff_id).maybeSingle()
+      const preview = previews[adj.id] || await computeAdjustmentPreview(adj)
 
-      if (!existingRun) {
+      if (preview.type === 'timesheet_correction') {
         // Before payroll approval — mark approved; the correction merges in automatically
         // next time this cutoff is computed/saved (see buildPayrollRows / savePayroll below).
         const { error } = await supabase.from('timesheet_adjustments').update({
@@ -449,56 +506,27 @@ export default function PayrollPage() {
         if (error) throw error
         showToast('✅', `Approved — will auto-correct ${cutoff?.label || 'the'} timesheet on next Save Payroll`)
       } else {
-        // Post payroll approval — compute the refund owed now, bank it for the next cutoff.
-        const staffMember = adj.staff
-        const isFT = (staffMember.employment_type || 'Full-time') === 'Full-time'
-        const monthlyPay = staffMember.monthly_pay || getBaseRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)?.monthly || 0
-        const dailyRate = (isFT && existingRun.required_days > 0 && monthlyPay > 0)
-          ? (monthlyPay / 2) / existingRun.required_days
-          : getDailyRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)
-        const hourlyRate = dailyRate / 8
-        const minuteRate = hourlyRate / 60
-
-        const { data: archived } = await supabase.from('timesheet_uploads').select('employees').eq('cutoff_id', adj.cutoff_id).maybeSingle()
-        const tsKey = archived?.employees ? findTimesheetKey(archived.employees, staffMember) : null
-        const dateMMDDYYYY = isoToMMDDYYYY(adj.shift_date)
-        const originalShift = tsKey ? (archived.employees[tsKey].shifts || []).find(s => s.date === dateMMDDYYYY) : null
-        const originalShiftFound = !!originalShift
-        const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out) : null
-        const refundAmount = correctedShift ? computeAdjustmentRefundAmount({ hourlyRate, minuteRate, originalShift, correctedShift }) : 0
-
-        // Sync against the actual saved cutoff totals — "how much was really deducted for the
-        // whole cutoff" vs "what it should be once this one shift is corrected."
-        const recordedLateDeduction = parseFloat(existingRun.late_deduction) || 0
-        const recordedTotalLateMins = existingRun.total_late_mins || 0
-        const origLateMins = originalShift?.lateMinutes || 0
-        const corrLateMins = correctedShift?.lateMinutes || 0
-        const supposedTotalLateMins = Math.max(0, recordedTotalLateMins - origLateMins + corrLateMins)
-        const supposedLateDeduction = Math.round(supposedTotalLateMins * minuteRate)
-        const lateRefund = recordedLateDeduction - supposedLateDeduction
-        const extraHoursCredit = refundAmount - lateRefund
-
-        if (!originalShiftFound) {
-          const proceed = confirm(`⚠️ Could not find ${staffMember.first_name}'s original shift on ${dateMMDDYYYY} in the archived timesheet for ${cutoff?.label}.\n\nThe refund will be calculated as if they worked 0 hours originally — meaning it will credit the FULL corrected shift (${peso(refundAmount)}), not just the difference. This may overpay.\n\nApprove anyway?`)
+        if (!preview.originalShiftFound) {
+          const proceed = confirm(`⚠️ Could not find ${adj.staff?.first_name}'s original shift for this date in the archived timesheet for ${cutoff?.label}.\n\nThe refund will be calculated as if they worked 0 hours originally — meaning it will credit the FULL corrected shift (${peso(preview.refundAmount)}), not just the difference. This may overpay.\n\nApprove anyway?`)
           if (!proceed) { setApproving(null); return }
         }
 
         const { error } = await supabase.from('timesheet_adjustments').update({
-          status: 'approved', resolution: 'refund', refund_amount: refundAmount, review_note: note, reviewed_by: currentStaffId,
+          status: 'approved', resolution: 'refund', refund_amount: preview.refundAmount, review_note: note, reviewed_by: currentStaffId,
           reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-          calc_hourly_rate: Math.round(hourlyRate * 100) / 100,
-          calc_original_paid_hours: originalShift?.paidHours || 0,
-          calc_corrected_paid_hours: correctedShift?.paidHours || 0,
-          calc_original_late_mins: origLateMins,
-          calc_corrected_late_mins: corrLateMins,
-          calc_original_shift_found: originalShiftFound,
-          calc_recorded_late_deduction: recordedLateDeduction,
-          calc_supposed_late_deduction: supposedLateDeduction,
-          calc_late_refund: lateRefund,
-          calc_extra_hours_credit: extraHoursCredit,
+          calc_hourly_rate: preview.hourlyRate,
+          calc_original_paid_hours: preview.origPaid,
+          calc_corrected_paid_hours: preview.corrPaid,
+          calc_original_late_mins: preview.origLate,
+          calc_corrected_late_mins: preview.corrLate,
+          calc_original_shift_found: preview.originalShiftFound,
+          calc_recorded_late_deduction: preview.recordedLateDeduction,
+          calc_supposed_late_deduction: preview.supposedLateDeduction,
+          calc_late_refund: preview.lateRefund,
+          calc_extra_hours_credit: preview.extraHoursCredit,
         }).eq('id', adj.id)
         if (error) throw error
-        showToast('✅', `Approved — ${peso(refundAmount)} refund will apply to their next payroll`)
+        showToast('✅', `Approved — ${peso(preview.refundAmount)} refund will apply to their next payroll`)
       }
       await fetchAdjustmentRequests()
     } catch(e) {
@@ -1074,8 +1102,31 @@ export default function PayrollPage() {
                           <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Claimed Time-out</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{adj.claimed_time_out||'—'}</div></div>
                         </div>
                         {adj.reason && <div style={{marginTop:8,fontSize:11,color:'var(--text-primary)',background:'var(--white)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px'}}>"{adj.reason}"</div>}
+
+                        {previews[adj.id] && (
+                          previews[adj.id].type === 'timesheet_correction' ? (
+                            <div style={{marginTop:10,background:'#eef6f2',border:'1px solid var(--matcha)',borderRadius:8,padding:'8px 10px',fontSize:11,color:'var(--matcha-dark)'}}>
+                              This cutoff hasn't been saved yet — no refund needed. Approving just corrects the timesheet automatically the next time payroll for {previews[adj.id].cutoffLabel} is computed/saved.
+                            </div>
+                          ) : (
+                            <div style={{marginTop:10,background:'#eef6f2',border:'1px solid var(--matcha)',borderRadius:8,padding:'10px 12px'}}>
+                              <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Estimated refund: {peso(previews[adj.id].refundAmount)}</div>
+                              <div style={{marginTop:4,fontSize:10,color:'var(--text-muted)'}}>
+                                Already paid for this day: {previews[adj.id].origPaid}h ({previews[adj.id].origLate}m late) → corrected to {previews[adj.id].corrPaid}h ({previews[adj.id].corrLate}m late), at ₱{previews[adj.id].hourlyRate}/hr.
+                              </div>
+                              <div style={{marginTop:4,fontSize:10,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
+                                Late ded. {peso(previews[adj.id].recordedLateDeduction)}→{peso(previews[adj.id].supposedLateDeduction)} (refund {peso(previews[adj.id].lateRefund)}) + hrs credit {peso(previews[adj.id].extraHoursCredit)} = {peso(previews[adj.id].refundAmount)}
+                              </div>
+                              {previews[adj.id].originalShiftFound===false && (
+                                <div style={{marginTop:6,fontSize:10,fontWeight:700,color:'#c0392b'}}>⚠️ Original shift not found in the archived timesheet — this credits the FULL corrected shift, not just the difference. Double-check before approving.</div>
+                              )}
+                            </div>
+                          )
+                        )}
+
                         <div style={{marginTop:10,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                           <input value={reviewNotes[adj.id]||''} onChange={e=>setReviewNotes(prev=>({...prev,[adj.id]:e.target.value}))} placeholder="Optional note…" style={{flex:1,minWidth:140,background:'var(--white)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px',fontSize:11,outline:'none',fontFamily:"'DM Sans',sans-serif"}}/>
+                          <button onClick={()=>previewAdjustment(adj)} disabled={previewing===adj.id} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--text-muted)',borderRadius:7,padding:'6px 12px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{previewing===adj.id?'Checking…':(previews[adj.id]?'🔄 Refresh':'👁 Preview Amount')}</button>
                           <button onClick={()=>rejectAdjustment(adj)} disabled={approving===adj.id} style={{background:'transparent',border:'1px solid #f5c6c6',color:'#c0392b',borderRadius:7,padding:'6px 12px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Reject</button>
                           <button onClick={()=>approveAdjustment(adj)} disabled={approving===adj.id} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:7,padding:'6px 14px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{approving===adj.id?'Approving…':'✓ Approve'}</button>
                         </div>
@@ -1190,8 +1241,6 @@ export default function PayrollPage() {
                 {[
                   { key:'duplicateDates', title:'Duplicate-date punches (surplus/underpay risk)', hint:'Same employee clocked in/out twice on one calendar date — the 1hr break or 8h cap can apply twice instead of once, or a phantom extra day gets counted for Full-time staff.',
                     render: r => `${r.name} — ${r.date} · ${r.count} punches · ${r.impactPeso!=null ? `${peso(r.impactPeso)} ${r.impactDirection}` : `${r.oldPaid.toFixed(2)}h paid (couldn't match staff to price it)`}` },
-                  { key:'anomalyCapped', title:'Anomaly-capped shifts (raw >9h, flattened to 8h)', hint:"Raw clock span over 9 hours is treated as a data error (forgotten clock-out) and capped at a flat 8 paid hours. Worth a manual glance to confirm that's the right call.",
-                    render: r => `${r.name} — ${r.date} · ${r.timeIn} → ${r.timeOut} (${r.rawHours}h raw)` },
                   { key:'highLate', title:'Unusually high late minutes (>120m)', hint:'Often means a broken/miscategorized clock-in (like the wrong-time cases handled this session), not genuine lateness — worth a quick sanity check with the employee.',
                     render: r => `${r.name} — ${r.date} · ${r.lateMinutes} min late · in at ${r.timeIn}` },
                   { key:'noSchedule', title:'Full-time staff paid ₱0 despite working days', hint:'No published schedule (required_days = 0) for this cutoff, so their daily rate has no denominator — they show days worked but ₱0 pay.',
