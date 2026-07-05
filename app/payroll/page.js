@@ -321,6 +321,25 @@ export default function PayrollPage() {
   }
 
   // ── Timesheet Adjustments: approve / reject ──────────────────────────────
+  async function undoApproval(adj) {
+    if (adj.applied) {
+      alert(`This adjustment has already been ${adj.paid ? 'paid out directly' : "applied to a staff member's payroll"}. Undoing the approval here won't pull that money back — you'd need to correct it manually (e.g. a deduction on their next payslip). Not blocking you, just flagging it before you decide.`)
+    }
+    const note = reviewNotes[adj.id] || ''
+    if (!confirm(`Undo the approval on ${adj.staff?.first_name} ${adj.staff?.last_name}'s adjustment and mark it rejected instead?${adj.applied ? '\n\n(Reminder: this was already ' + (adj.paid ? 'paid out' : 'applied to payroll') + ' — see the note above.)' : ''}`)) return
+    const { error } = await supabase.from('timesheet_adjustments').update({
+      status: 'rejected', resolution: null, refund_amount: 0,
+      calc_hourly_rate: null, calc_original_paid_hours: null, calc_corrected_paid_hours: null,
+      calc_original_late_mins: null, calc_corrected_late_mins: null, calc_original_shift_found: null,
+      calc_recorded_late_deduction: null, calc_supposed_late_deduction: null, calc_late_refund: null, calc_extra_hours_credit: null,
+      review_note: note ? `${note} (approval undone)` : 'Approval undone', reviewed_by: currentStaffId,
+      reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq('id', adj.id)
+    if (error) { showToast('❌', error.message); return }
+    await fetchAdjustmentRequests()
+    showToast('↩️', 'Approval undone — marked rejected')
+  }
+
   async function rejectAdjustment(adj) {
     const note = reviewNotes[adj.id] || ''
     if (!confirm(`Reject ${adj.staff?.first_name}'s adjustment request?`)) return
@@ -1083,6 +1102,7 @@ export default function PayrollPage() {
                       <th style={thBase}>Issue</th>
                       <th style={thBase}>Outcome</th>
                       <th style={thBase}>Note</th>
+                      <th style={thBase}></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1134,6 +1154,15 @@ export default function PayrollPage() {
                             ) : '—'}
                           </td>
                           <td style={{padding:'9px 12px',color:'var(--text-muted)',fontSize:10}}>{adj.review_note||'—'}</td>
+                          <td style={{padding:'9px 12px'}}>
+                            {adj.status==='approved' && (
+                              <button
+                                onClick={()=>undoApproval(adj)}
+                                title={adj.applied ? "Already applied/paid — you can still undo, but it won't pull the money back automatically" : "Safe to undo — nothing's been applied or paid yet"}
+                                style={{background:adj.applied?'#fdeceb':'var(--surface)',border:`1px solid ${adj.applied?'#e0b0b0':'var(--border)'}`,color:adj.applied?'#c0392b':'var(--text-muted)',borderRadius:6,padding:'4px 9px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap'}}
+                              >↩️ Undo{adj.applied?' (applied)':''}</button>
+                            )}
+                          </td>
                         </tr>
                       )
                     })}
