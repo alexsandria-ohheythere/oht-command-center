@@ -63,6 +63,7 @@ export default function PayrollPage() {
   const [adjustmentRequests, setAdjustmentRequests] = useState([])
   const [reviewNotes, setReviewNotes]       = useState({})
   const [approving, setApproving]           = useState(null)
+  const [settling, setSettling]             = useState(null)
   const [currentStaffId, setCurrentStaffId] = useState(null)
   const fileRef = useRef()
 
@@ -328,6 +329,18 @@ export default function PayrollPage() {
     if (error) { showToast('❌', error.message); return }
     await fetchAdjustmentRequests()
     showToast('✋', 'Adjustment rejected')
+  }
+
+  async function markRefundPaid(adj) {
+    if (!confirm(`Mark ${peso(adj.refund_amount)} refund for ${adj.staff?.first_name} ${adj.staff?.last_name} as paid now? This settles it outside payroll — it will NOT be added to their next payslip.`)) return
+    setSettling(adj.id)
+    const { error } = await supabase.from('timesheet_adjustments').update({
+      applied: true, paid: true, paid_at: new Date().toISOString(), paid_by: currentStaffId, updated_at: new Date().toISOString(),
+    }).eq('id', adj.id)
+    setSettling(null)
+    if (error) { showToast('❌', error.message); return }
+    await fetchAdjustmentRequests()
+    showToast('💸', `${peso(adj.refund_amount)} marked as paid`)
   }
 
   async function approveAdjustment(adj) {
@@ -1000,9 +1013,16 @@ export default function PayrollPage() {
                                 ? <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ Timesheet corrected</span>
                                 : <span style={{color:'#a06000',fontWeight:700}}>⏳ Will auto-correct on next Save Payroll</span>
                             ) : adj.resolution==='refund' ? (
-                              adj.applied
-                                ? <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ {peso(adj.refund_amount)} applied · {appliedCutoff?.label||''}</span>
-                                : <span style={{color:'#a06000',fontWeight:700}}>⏳ {peso(adj.refund_amount)} refund due — next payroll</span>
+                              adj.applied ? (
+                                adj.paid
+                                  ? <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ {peso(adj.refund_amount)} paid directly{adj.paid_at?` · ${new Date(adj.paid_at).toLocaleDateString('en-PH',{month:'short',day:'numeric'})}`:''}</span>
+                                  : <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ {peso(adj.refund_amount)} applied · {appliedCutoff?.label||''}</span>
+                              ) : (
+                                <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                                  <span style={{color:'#a06000',fontWeight:700}}>⏳ {peso(adj.refund_amount)} due — next payroll</span>
+                                  <button onClick={()=>markRefundPaid(adj)} disabled={settling===adj.id} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:6,padding:'3px 9px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap'}}>{settling===adj.id?'…':'💸 Mark Paid Now'}</button>
+                                </div>
+                              )
                             ) : '—'}
                           </td>
                           <td style={{padding:'9px 12px',color:'var(--text-muted)',fontSize:10}}>{adj.review_note||'—'}</td>
