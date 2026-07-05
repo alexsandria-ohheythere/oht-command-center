@@ -1031,7 +1031,14 @@ export default function PayrollPage() {
                             </div>
                           </td>
                           <td style={{padding:'9px 12px'}}>{adj.cutoff_label}<br/><span style={{color:'var(--text-muted)',fontSize:10}}>{new Date(adj.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</span></td>
-                          <td style={{padding:'9px 12px'}}>{ISSUE_LABELS[adj.issue_type]||adj.issue_type}</td>
+                          <td style={{padding:'9px 12px'}}>
+                            {ISSUE_LABELS[adj.issue_type]||adj.issue_type}
+                            {(adj.claimed_time_in || adj.claimed_time_out) && (
+                              <div style={{marginTop:3,fontSize:9,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
+                                Requested: {adj.claimed_time_in||'—'}–{adj.claimed_time_out||'—'}
+                              </div>
+                            )}
+                          </td>
                           <td style={{padding:'9px 12px'}}>
                             {adj.status==='rejected' ? (
                               <span style={{color:'#c0392b',fontWeight:700}}>✗ Rejected</span>
