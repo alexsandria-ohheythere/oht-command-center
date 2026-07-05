@@ -2,10 +2,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2 } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
-const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
+const peso = n => '₱' + (n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 const ISSUE_LABELS = { no_time_in:'No time-in recorded', no_time_out:'No time-out recorded', wrong_time:'Wrong time recorded', missed_entirely:'Entire shift missing', payroll_correction:'Payroll correction (admin-initiated)' }
 const SHIFT_LABELS = { am:'AM', ops:'OPS', mid:'MID', pm:'PM' }
@@ -192,8 +192,8 @@ export default function PayrollPage() {
         const isFT = (s.employment_type||'Full-time')==='Full-time'
         const savedReq = saved.required_days || reqDays
         const monthlyPay = s.monthly_pay || getBaseRate(s.employment_type||'Full-time', s.role, rateOverrides)?.monthly || 0
-        const savedDaily = (isFT && savedReq>0 && monthlyPay>0) ? Math.round((monthlyPay/2)/savedReq) : getDailyRate(s.employment_type||'Full-time',s.role,rateOverrides)
-        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:Math.round(parseFloat(saved.sss||0) * (9.5/4.5)), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:Math.round(savedDaily/8), requiredDays:savedReq, noSchedule:false }
+        const savedDaily = (isFT && savedReq>0 && monthlyPay>0) ? round2((monthlyPay/2)/savedReq) : getDailyRate(s.employment_type||'Full-time',s.role,rateOverrides)
+        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:round2(parseFloat(saved.sss||0) * (9.5/4.5)), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:round2(savedDaily/8), requiredDays:savedReq, noSchedule:false }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
         return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides,selectedCutoff,reqDays), hasTimesheet:false, saved:null, isLive:false }
@@ -403,11 +403,11 @@ export default function PayrollPage() {
               if (isFT) {
                 // Each extra punch beyond the first on the same date inflates days_worked by
                 // one phantom day, paid at the full flat daily rate.
-                impactPeso = Math.round(payrollRow.pay.dailyRate * (rows.length - 1))
+                impactPeso = round2(payrollRow.pay.dailyRate * (rows.length - 1))
                 impactDirection = 'overpaid'
               } else {
                 const diff = correctPaid - oldPaid
-                impactPeso = Math.round(Math.abs(diff) * payrollRow.pay.hourlyRate)
+                impactPeso = round2(Math.abs(diff) * payrollRow.pay.hourlyRate)
                 impactDirection = diff >= 0 ? 'underpaid' : 'overpaid'
               }
             }
@@ -467,21 +467,21 @@ export default function PayrollPage() {
     const origLateMins = originalShift?.lateMinutes || 0
     const corrLateMins = correctedShift?.lateMinutes || 0
     const alreadyPaidForDay = originalShiftFound ? (originalShift.paidHours || 0) * hourlyRate : 0
-    const dayTopUp = Math.round(dailyRate - alreadyPaidForDay)
+    const dayTopUp = round2(dailyRate - alreadyPaidForDay)
 
     // Sync against the actual saved cutoff totals — "how much was really deducted for the
     // whole cutoff" vs "what it should be once this one shift is corrected."
     const recordedLateDeduction = parseFloat(existingRun.late_deduction) || 0
     const recordedTotalLateMins = existingRun.total_late_mins || 0
     const supposedTotalLateMins = Math.max(0, recordedTotalLateMins - origLateMins + corrLateMins)
-    const supposedLateDeduction = Math.round(supposedTotalLateMins * minuteRate)
+    const supposedLateDeduction = round2(supposedTotalLateMins * minuteRate)
     const lateRefund = recordedLateDeduction - supposedLateDeduction
     const extraHoursCredit = dayTopUp
     const refundAmount = dayTopUp + lateRefund
 
     return {
       type: 'refund', cutoffLabel: cutoff?.label, refundAmount, originalShiftFound,
-      hourlyRate: Math.round(hourlyRate * 100) / 100,
+      hourlyRate: round2(hourlyRate),
       origPaid: originalShift?.paidHours || 0, corrPaid: correctedShift?.paidHours || 0,
       origLate: origLateMins, corrLate: corrLateMins,
       recordedLateDeduction, supposedLateDeduction, lateRefund, extraHoursCredit,
@@ -1123,7 +1123,7 @@ export default function PayrollPage() {
                             <div style={{marginTop:10,background:'#eef6f2',border:'1px solid var(--matcha)',borderRadius:8,padding:'10px 12px'}}>
                               <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Estimated refund: {peso(previews[adj.id].refundAmount)}</div>
                               <div style={{marginTop:4,fontSize:10,color:'var(--text-muted)'}}>
-                                Already paid for this day: {previews[adj.id].origPaid}h ({previews[adj.id].origLate}m late) → corrected to {previews[adj.id].corrPaid}h ({previews[adj.id].corrLate}m late), at ₱{previews[adj.id].hourlyRate}/hr.
+                                Already paid for this day: {previews[adj.id].origPaid}h ({previews[adj.id].origLate}m late) → corrected to {previews[adj.id].corrPaid}h ({previews[adj.id].corrLate}m late), at {peso(previews[adj.id].hourlyRate)}/hr.
                               </div>
                               <div style={{marginTop:4,fontSize:10,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
                                 Late ded. {peso(previews[adj.id].recordedLateDeduction)}→{peso(previews[adj.id].supposedLateDeduction)} (refund {peso(previews[adj.id].lateRefund)}) + hrs credit {peso(previews[adj.id].extraHoursCredit)} = {peso(previews[adj.id].refundAmount)}
@@ -1204,11 +1204,11 @@ export default function PayrollPage() {
                                   )}
                                   {adj.calc_recorded_late_deduction!=null ? (
                                     <div style={{marginTop:4,fontSize:9,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
-                                      Late ded. {peso(adj.calc_recorded_late_deduction)}→{peso(adj.calc_supposed_late_deduction)} (refund ₱{adj.calc_late_refund}) + hrs credit {peso(adj.calc_extra_hours_credit)}
+                                      Late ded. {peso(adj.calc_recorded_late_deduction)}→{peso(adj.calc_supposed_late_deduction)} (refund {peso(adj.calc_late_refund)}) + hrs credit {peso(adj.calc_extra_hours_credit)}
                                     </div>
                                   ) : adj.calc_hourly_rate!=null && (
                                     <div style={{marginTop:4,fontSize:9,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
-                                      {adj.calc_original_paid_hours}h→{adj.calc_corrected_paid_hours}h · late {adj.calc_original_late_mins}→{adj.calc_corrected_late_mins}m · @₱{adj.calc_hourly_rate}/hr
+                                      {adj.calc_original_paid_hours}h→{adj.calc_corrected_paid_hours}h · late {adj.calc_original_late_mins}→{adj.calc_corrected_late_mins}m · @{peso(adj.calc_hourly_rate)}/hr
                                     </div>
                                   )}
                                 </div>
