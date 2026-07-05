@@ -14,29 +14,29 @@ const SHIFTS = [
 const LEADERSHIP_ROLES = ['Managing Director','CEO']
 
 // Role rows per shift — grouped with dividers
+// NOTE: 'KitchenFlex' is a virtual row role (not an actual staff role) that groups
+// Sous Chef, Kitchen Staff, and all Junior Barista variants into one flexible slot —
+// any employee holding one of those three role types can be assigned here interchangeably.
 const ROLE_ROWS = [
   // AM
   { shiftId:'am', role:'Cafe Supervisor',          label:'Cafe Supervisor',    group:'front' },
   { shiftId:'am', role:'Cafe Operations Support',  label:'Cafe Support',       group:'front' },
   { shiftId:'am', role:'Executive Chef',            label:'Executive Chef',     group:'kitchen', divider:true },
-  { shiftId:'am', role:'Sous Chef',                 label:'Sous Chef / Kitchen Staff', group:'kitchen' },
   { shiftId:'am', role:'Senior Barista',            label:'Senior Barista',     group:'kitchen' },
-  { shiftId:'am', role:'Junior Barista',            label:'Junior Barista',     group:'kitchen' },
+  { shiftId:'am', role:'KitchenFlex',               label:'Sous Chef / Kitchen / Jr. Barista', group:'kitchen' },
   // OPS
   { shiftId:'ops', role:'Cafe Supervisor',         label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'ops', role:'Cafe Operations Support', label:'Cafe Support',      group:'front' },
   // MID
   { shiftId:'mid', role:'Cafe Supervisor',          label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'mid', role:'Cafe Operations Support',  label:'Cafe Support',      group:'front' },
-  { shiftId:'mid', role:'Sous Chef',                label:'Sous Chef / Kitchen Staff', group:'kitchen', divider:true },
-  { shiftId:'mid', role:'Junior Barista',           label:'Junior Barista',    group:'kitchen' },
+  { shiftId:'mid', role:'KitchenFlex',              label:'Sous Chef / Kitchen / Jr. Barista', group:'kitchen', divider:true },
   // PM
   { shiftId:'pm', role:'Cafe Supervisor',           label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'pm', role:'Cafe Operations Support',   label:'Cafe Support',      group:'front' },
   { shiftId:'pm', role:'Executive Chef',            label:'Executive Chef',    group:'kitchen', divider:true },
-  { shiftId:'pm', role:'Sous Chef',                 label:'Sous Chef / Kitchen Staff', group:'kitchen' },
   { shiftId:'pm', role:'Senior Barista',            label:'Senior Barista',    group:'kitchen' },
-  { shiftId:'pm', role:'Junior Barista',            label:'Junior Barista',    group:'kitchen' },
+  { shiftId:'pm', role:'KitchenFlex',               label:'Sous Chef / Kitchen / Jr. Barista', group:'kitchen' },
 ]
 
 const DAYS = ['MON','TUE','WED','THU','FRI','SAT','SUN']
@@ -67,11 +67,13 @@ const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}
 const fmtDate = d => d.toLocaleDateString('en-PH',{month:'short',day:'numeric'})
 
 // Does a staff member's role match a row's role pattern?
+// KitchenFlex rows accept Sous Chef, Kitchen Staff, and any Junior Barista variant interchangeably.
 function roleMatches(staffRole, rowRole) {
   if (!staffRole) return false
+  if (rowRole === 'KitchenFlex') {
+    return staffRole === 'Sous Chef' || staffRole === 'Kitchen Staff' || staffRole.startsWith('Junior Barista')
+  }
   if (staffRole === rowRole) return true
-  if (rowRole === 'Junior Barista' && staffRole.startsWith('Junior Barista')) return true
-  if (rowRole === 'Sous Chef' && staffRole === 'Kitchen Staff') return true
   return false
 }
 
