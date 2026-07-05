@@ -149,6 +149,13 @@ export default function SchedulePage() {
   async function addAssignment(dayIdx, shiftType, staffId) {
     const date = toISO(weekDates[dayIdx])
     if (schedules.some(s=>s.shift_date===date&&s.shift_type===shiftType&&s.staff_id===staffId)) return
+    const conflict = schedules.find(s=>s.shift_date===date&&s.staff_id===staffId)
+    if (conflict) {
+      const m=staff.find(x=>x.id===staffId)
+      const sh=SHIFTS.find(x=>x.id===conflict.shift_type)
+      showToast('❌',`${m?.first_name} ${m?.last_name} is already assigned to ${sh?.label} on ${DAYS[dayIdx]} — remove that shift first`)
+      return
+    }
     const newRow = { staff_id:staffId, shift_date:date, shift_type:shiftType, week_start:weekStart, published:false }
     const temp = { ...newRow, id:'temp_'+Date.now() }
     setSchedules(prev=>[...prev,temp])
@@ -169,6 +176,13 @@ export default function SchedulePage() {
     const targetDate=toISO(weekDates[targetDayIdx])
     if(sourceDate===targetDate&&sourceShift===targetShift)return
     const old=schedules.find(s=>s.shift_date===sourceDate&&s.shift_type===sourceShift&&s.staff_id===staffId)
+    const conflict = schedules.find(s=>s.shift_date===targetDate&&s.staff_id===staffId&&s.id!==old?.id)
+    if (conflict) {
+      const m=staff.find(x=>x.id===staffId)
+      const sh=SHIFTS.find(x=>x.id===conflict.shift_type)
+      showToast('❌',`${m?.first_name} ${m?.last_name} is already assigned to ${sh?.label} on ${DAYS[targetDayIdx]} — remove that shift first`)
+      return
+    }
     if(old)await supabase.from('schedules').delete().eq('id',old.id)
     const newRow={staff_id:staffId,shift_date:targetDate,shift_type:targetShift,week_start:weekStart,published:false}
     const {data}=await supabase.from('schedules').insert([newRow]).select().single()
