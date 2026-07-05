@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, computeAdjustmentRefundAmount } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, computeAdjustmentRefundAmount, capShiftHours } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
@@ -363,12 +363,33 @@ export default function PayrollPage() {
         const matched = matchStaff(staff, emp.lastName, emp.firstName)
         if (!matched) results.unmatchedCsvRows.push({ key, name: `${emp.firstName} ${emp.lastName}` })
 
+        // Scope to THIS cutoff's date range only — the uploaded file can span many months.
+        const inRangeShifts = filterShiftsByPeriod(emp.shifts || [], cutoffToCheck.start, cutoffToCheck.end)
+        const payrollRow = matched ? payrollRows.find(r => r.staff.id === matched.id) : null
+        const isFT = matched && (matched.employment_type||'Full-time') === 'Full-time'
+
         const byDate = {}
-        for (const s of (emp.shifts || [])) { byDate[s.date] = byDate[s.date] || []; byDate[s.date].push(s) }
+        for (const s of inRangeShifts) { byDate[s.date] = byDate[s.date] || []; byDate[s.date].push(s) }
         for (const date of Object.keys(byDate)) {
           const rows = byDate[date]
           if (rows.length > 1) {
-            results.duplicateDates.push({ name: `${emp.firstName} ${emp.lastName}`, date, count: rows.length, totalPaid: rows.reduce((s,r)=>s+(r.paidHours||0),0) })
+            const oldPaid = rows.reduce((s,r)=>s+(r.paidHours||0),0)
+            const mergedRaw = rows.reduce((s,r)=>s+(r.rawHours||0),0)
+            const correctPaid = capShiftHours(mergedRaw)
+            let impactPeso = null, impactDirection = null
+            if (payrollRow) {
+              if (isFT) {
+                // Each extra punch beyond the first on the same date inflates days_worked by
+                // one phantom day, paid at the full flat daily rate.
+                impactPeso = Math.round(payrollRow.pay.dailyRate * (rows.length - 1))
+                impactDirection = 'overpaid'
+              } else {
+                const diff = correctPaid - oldPaid
+                impactPeso = Math.round(Math.abs(diff) * payrollRow.pay.hourlyRate)
+                impactDirection = diff >= 0 ? 'underpaid' : 'overpaid'
+              }
+            }
+            results.duplicateDates.push({ name: `${emp.firstName} ${emp.lastName}`, date, count: rows.length, oldPaid, correctPaid, impactPeso, impactDirection })
           }
           for (const s of rows) {
             if ((s.rawHours||0) > 9) results.anomalyCapped.push({ name: `${emp.firstName} ${emp.lastName}`, date: s.date, rawHours: s.rawHours, timeIn: s.timeIn, timeOut: s.timeOut })
@@ -1138,8 +1159,8 @@ export default function PayrollPage() {
             ) : (
               <div style={{display:'flex',flexDirection:'column',gap:10}}>
                 {[
-                  { key:'duplicateDates', title:'Duplicate-date punches (surplus/underpay risk)', hint:'Same employee clocked in/out twice on one calendar date — the 1hr break or 8h cap can apply twice instead of once.',
-                    render: r => `${r.name} — ${r.date} · ${r.count} punches · ${r.totalPaid.toFixed(2)}h combined paid` },
+                  { key:'duplicateDates', title:'Duplicate-date punches (surplus/underpay risk)', hint:'Same employee clocked in/out twice on one calendar date — the 1hr break or 8h cap can apply twice instead of once, or a phantom extra day gets counted for Full-time staff.',
+                    render: r => `${r.name} — ${r.date} · ${r.count} punches · ${r.impactPeso!=null ? `${peso(r.impactPeso)} ${r.impactDirection}` : `${r.oldPaid.toFixed(2)}h paid (couldn't match staff to price it)`}` },
                   { key:'anomalyCapped', title:'Anomaly-capped shifts (raw >9h, flattened to 8h)', hint:"Raw clock span over 9 hours is treated as a data error (forgotten clock-out) and capped at a flat 8 paid hours. Worth a manual glance to confirm that's the right call.",
                     render: r => `${r.name} — ${r.date} · ${r.timeIn} → ${r.timeOut} (${r.rawHours}h raw)` },
                   { key:'highLate', title:'Unusually high late minutes (>120m)', hint:'Often means a broken/miscategorized clock-in (like the wrong-time cases handled this session), not genuine lateness — worth a quick sanity check with the employee.',
