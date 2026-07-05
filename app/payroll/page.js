@@ -64,6 +64,8 @@ export default function PayrollPage() {
   const [reviewNotes, setReviewNotes]       = useState({})
   const [approving, setApproving]           = useState(null)
   const [settling, setSettling]             = useState(null)
+  const [auditResults, setAuditResults]     = useState(null)
+  const [auditing, setAuditing]             = useState(false)
   const [currentStaffId, setCurrentStaffId] = useState(null)
   const fileRef = useRef()
 
@@ -343,6 +345,50 @@ export default function PayrollPage() {
     showToast('💸', `${peso(adj.refund_amount)} marked as paid`)
   }
 
+  async function runAccuracyCheck(cutoffToCheck) {
+    setAuditing(true)
+    const results = {
+      cutoffLabel: cutoffToCheck.label,
+      duplicateDates: [], anomalyCapped: [], highLate: [], noSchedule: [],
+      unmatchedCsvRows: [], rateOverridesLoaded: rateOverrides !== null,
+      pendingAdjustments: adjustmentRequests.filter(a => a.status === 'pending').length,
+      approvedUnpaidRefunds: adjustmentRequests.filter(a => a.status==='approved' && a.resolution==='refund' && !a.applied).length,
+    }
+    try {
+      const { data: archived } = await supabase.from('timesheet_uploads').select('employees').eq('cutoff_id', cutoffToCheck.id).maybeSingle()
+      const employeesBlob = archived?.employees || {}
+
+      for (const key of Object.keys(employeesBlob)) {
+        const emp = employeesBlob[key]
+        const matched = matchStaff(staff, emp.lastName, emp.firstName)
+        if (!matched) results.unmatchedCsvRows.push({ key, name: `${emp.firstName} ${emp.lastName}` })
+
+        const byDate = {}
+        for (const s of (emp.shifts || [])) { byDate[s.date] = byDate[s.date] || []; byDate[s.date].push(s) }
+        for (const date of Object.keys(byDate)) {
+          const rows = byDate[date]
+          if (rows.length > 1) {
+            results.duplicateDates.push({ name: `${emp.firstName} ${emp.lastName}`, date, count: rows.length, totalPaid: rows.reduce((s,r)=>s+(r.paidHours||0),0) })
+          }
+          for (const s of rows) {
+            if ((s.rawHours||0) > 9) results.anomalyCapped.push({ name: `${emp.firstName} ${emp.lastName}`, date: s.date, rawHours: s.rawHours, timeIn: s.timeIn, timeOut: s.timeOut })
+            if ((s.lateMinutes||0) > 120) results.highLate.push({ name: `${emp.firstName} ${emp.lastName}`, date: s.date, lateMinutes: s.lateMinutes, timeIn: s.timeIn })
+          }
+        }
+      }
+
+      for (const row of payrollRows) {
+        if ((row.staff.employment_type||'Full-time')==='Full-time' && row.pay.noSchedule && row.pay.daysWorked > 0) {
+          results.noSchedule.push({ name: `${row.staff.first_name} ${row.staff.last_name}`, daysWorked: row.pay.daysWorked })
+        }
+      }
+    } catch (e) {
+      showToast('❌', 'Accuracy check failed: ' + e.message)
+    }
+    setAuditResults(results)
+    setAuditing(false)
+  }
+
   async function approveAdjustment(adj) {
     setApproving(adj.id)
     const note = reviewNotes[adj.id] || ''
@@ -532,7 +578,7 @@ export default function PayrollPage() {
 
         {/* Tabs */}
         <div style={{display:'flex',gap:4,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
-          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`]].map(([key,label])=>(
+          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`],['audit','🔍 Accuracy Check']].map(([key,label])=>(
             <button key={key} onClick={()=>setTab(key)} style={{background:'transparent',border:'none',borderBottom:tab===key?'2px solid var(--matcha)':'2px solid transparent',marginBottom:-2,padding:'9px 16px',fontSize:12,fontWeight:tab===key?700:500,color:tab===key?'var(--matcha-dark)':'var(--text-muted)',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{label}</button>
           ))}
         </div>
@@ -1031,14 +1077,7 @@ export default function PayrollPage() {
                             </div>
                           </td>
                           <td style={{padding:'9px 12px'}}>{adj.cutoff_label}<br/><span style={{color:'var(--text-muted)',fontSize:10}}>{new Date(adj.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</span></td>
-                          <td style={{padding:'9px 12px'}}>
-                            {ISSUE_LABELS[adj.issue_type]||adj.issue_type}
-                            {(adj.claimed_time_in || adj.claimed_time_out) && (
-                              <div style={{marginTop:3,fontSize:9,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
-                                Requested: {adj.claimed_time_in||'—'}–{adj.claimed_time_out||'—'}
-                              </div>
-                            )}
-                          </td>
+                          <td style={{padding:'9px 12px'}}>{ISSUE_LABELS[adj.issue_type]||adj.issue_type}</td>
                           <td style={{padding:'9px 12px'}}>
                             {adj.status==='rejected' ? (
                               <span style={{color:'#c0392b',fontWeight:700}}>✗ Rejected</span>
@@ -1081,6 +1120,64 @@ export default function PayrollPage() {
                 </table>
               )}
             </div>
+          </div>
+        )}
+
+        {tab==='audit' && (
+          <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'20px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Accuracy Check — {selectedCutoff.label}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Scans this cutoff's archived timesheet + payroll for the failure patterns most likely to under/overpay someone.</div>
+              </div>
+              <button onClick={()=>runAccuracyCheck(selectedCutoff)} disabled={auditing} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:8,padding:'9px 16px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap'}}>{auditing?'Checking…':'▶ Run Check'}</button>
+            </div>
+
+            {!auditResults ? (
+              <div style={{textAlign:'center',padding:'40px 0',color:'var(--text-muted)',fontSize:12}}>Click "Run Check" to audit {selectedCutoff.label}.</div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                {[
+                  { key:'duplicateDates', title:'Duplicate-date punches (surplus/underpay risk)', hint:'Same employee clocked in/out twice on one calendar date — the 1hr break or 8h cap can apply twice instead of once.',
+                    render: r => `${r.name} — ${r.date} · ${r.count} punches · ${r.totalPaid.toFixed(2)}h combined paid` },
+                  { key:'anomalyCapped', title:'Anomaly-capped shifts (raw >9h, flattened to 8h)', hint:"Raw clock span over 9 hours is treated as a data error (forgotten clock-out) and capped at a flat 8 paid hours. Worth a manual glance to confirm that's the right call.",
+                    render: r => `${r.name} — ${r.date} · ${r.timeIn} → ${r.timeOut} (${r.rawHours}h raw)` },
+                  { key:'highLate', title:'Unusually high late minutes (>120m)', hint:'Often means a broken/miscategorized clock-in (like the wrong-time cases handled this session), not genuine lateness — worth a quick sanity check with the employee.',
+                    render: r => `${r.name} — ${r.date} · ${r.lateMinutes} min late · in at ${r.timeIn}` },
+                  { key:'noSchedule', title:'Full-time staff paid ₱0 despite working days', hint:'No published schedule (required_days = 0) for this cutoff, so their daily rate has no denominator — they show days worked but ₱0 pay.',
+                    render: r => `${r.name} — ${r.daysWorked} day(s) worked, ₱0 paid` },
+                  { key:'unmatchedCsvRows', title:"Timesheet rows that didn't match any staff record", hint:"These people's hours exist in the uploaded timesheet but aren't being counted in payroll at all — usually a name mismatch.",
+                    render: r => r.name },
+                ].map(({key,title,hint,render}) => {
+                  const items = auditResults[key] || []
+                  return (
+                    <div key={key} style={{border:`1px solid ${items.length?'#e0b0b0':'var(--border)'}`,borderRadius:10,padding:'12px 14px',background:items.length?'#fff8f6':'var(--surface)'}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <div style={{fontWeight:700,fontSize:12,color:items.length?'#c0392b':'var(--matcha-dark)'}}>{items.length ? '⚠️' : '✓'} {title}</div>
+                        <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)'}}>{items.length} found</div>
+                      </div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,fontStyle:'italic'}}>{hint}</div>
+                      {items.length > 0 && (
+                        <div style={{marginTop:8,display:'flex',flexDirection:'column',gap:3}}>
+                          {items.map((r,i) => (
+                            <div key={i} style={{fontSize:10,fontFamily:"'DM Mono',monospace",color:'var(--text-primary)',background:'white',borderRadius:6,padding:'5px 8px'}}>{render(r)}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+
+                <div style={{border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',background:'var(--surface)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div style={{fontSize:11,color:'var(--text-muted)'}}>Rate card loaded from Settings (not the code fallback)</div>
+                  <div style={{fontWeight:700,fontSize:12,color:auditResults.rateOverridesLoaded?'var(--matcha-dark)':'#c0392b'}}>{auditResults.rateOverridesLoaded ? '✓ yes' : '⚠️ no — using code defaults'}</div>
+                </div>
+                <div style={{border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',background:'var(--surface)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div style={{fontSize:11,color:'var(--text-muted)'}}>Pending adjustment requests · Approved refunds not yet paid</div>
+                  <div style={{fontWeight:700,fontSize:12,color:'var(--text-primary)'}}>{auditResults.pendingAdjustments} pending · {auditResults.approvedUnpaidRefunds} unpaid</div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
