@@ -544,19 +544,23 @@ export default function SchedulePage() {
                 )
               })}
 
-              {/* Hours summary */}
-              {schedules.length>0&&(
+              {/* Shifts summary */}
+              {filteredStaff.length>0&&(
                 <div style={{padding:'12px 16px',background:'var(--white)',borderTop:'2px solid var(--border)',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-                  <span style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',flexShrink:0}}>Hours this week:</span>
-                  {staff.filter(s=>getStaffWeekHours(s.id)>0).sort((a,b)=>getStaffWeekHours(b.id)-getStaffWeekHours(a.id)).map(s=>(
-                    <div key={s.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,padding:'3px 8px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:6}}>
-                      <div style={{width:14,height:14,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:6,fontWeight:700,color:'white'}}>
-                        {initials(s.first_name,s.last_name)}
+                  <span style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',flexShrink:0}}>Shifts this week:</span>
+                  {[...filteredStaff].sort((a,b)=>getStaffWeekShifts(b.id)-getStaffWeekShifts(a.id)).map(s=>{
+                    const shiftCount=getStaffWeekShifts(s.id)
+                    const hasShifts=shiftCount>0
+                    return (
+                      <div key={s.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,padding:'3px 8px',background:hasShifts?'var(--surface)':'transparent',border:`1px solid ${hasShifts?'var(--border)':'var(--border)'}`,borderRadius:6,opacity:hasShifts?1:.5}}>
+                        <div style={{width:14,height:14,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:6,fontWeight:700,color:'white'}}>
+                          {initials(s.first_name,s.last_name)}
+                        </div>
+                        <span style={{fontWeight:600}}>{s.nickname||s.first_name}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",color:hasShifts?'var(--matcha-dark)':'var(--text-muted)',fontWeight:700}}>{shiftCount} shift{shiftCount!==1?'s':''}</span>
                       </div>
-                      <span style={{fontWeight:600}}>{s.nickname||s.first_name}</span>
-                      <span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)',fontWeight:700}}>{getStaffWeekHours(s.id)}h</span>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
