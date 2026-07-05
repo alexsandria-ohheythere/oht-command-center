@@ -460,16 +460,17 @@ export default function PayrollPage() {
     const originalShiftFound = !!originalShift
     const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out) : null
 
-    // Basic pay is a flat daily rate — it doesn't prorate by hours. If a (bad) shift record
-    // already existed for this date, that day was already counted in days_worked, so the
-    // only thing to fix is topping it up from whatever amount was actually paid for it
-    // (historically computed hourly, before this fix) up to the full flat daily rate. If no
-    // shift record existed at all, the date wasn't counted as a day worked at all, so the
-    // full daily rate is owed outright.
+    // Basic pay is a flat daily rate — it doesn't prorate by hours, and correcting a day's clock
+    // times never changes what Basic owes for that day. Two distinct cases:
+    //  - A (bad) shift record already existed for this date -> the day was already counted in
+    //    days_worked, so Basic for it is already resolved (either the cutoff was computed fresh
+    //    with the flat-rate fix, or a payroll_correction refund already topped it up separately).
+    //    No day top-up here — crediting one would double up with that correction.
+    //  - No shift record existed at all -> this date was never counted as a day worked, so it
+    //    was never paid by anything, and the full daily rate is genuinely owed outright.
     const origLateMins = originalShift?.lateMinutes || 0
     const corrLateMins = correctedShift?.lateMinutes || 0
-    const alreadyPaidForDay = originalShiftFound ? (originalShift.paidHours || 0) * hourlyRate : 0
-    const dayTopUp = round2(dailyRate - alreadyPaidForDay)
+    const dayTopUp = originalShiftFound ? 0 : round2(dailyRate)
 
     // Sync against the actual saved cutoff totals — "how much was really deducted for the
     // whole cutoff" vs "what it should be once this one shift is corrected."
@@ -1125,7 +1126,7 @@ export default function PayrollPage() {
                             <div style={{marginTop:10,background:'#eef6f2',border:'1px solid var(--matcha)',borderRadius:8,padding:'10px 12px'}}>
                               <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Estimated refund: {peso(previews[adj.id].refundAmount)}</div>
                               <div style={{marginTop:4,fontSize:10,color:'var(--text-muted)'}}>
-                                Already paid for this day: {previews[adj.id].origPaid}h ({previews[adj.id].origLate}m late) → corrected to {previews[adj.id].corrPaid}h ({previews[adj.id].corrLate}m late), at {peso(previews[adj.id].hourlyRate)}/hr.
+                                Clock times: {previews[adj.id].origPaid}h recorded ({previews[adj.id].origLate}m late) → {previews[adj.id].corrPaid}h claimed ({previews[adj.id].corrLate}m late) — for reference only; Basic pay is a flat {peso(previews[adj.id].hourlyRate*8)}/day rate and doesn't change with hours.
                               </div>
                               <div style={{marginTop:4,fontSize:10,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
                                 Late ded. {peso(previews[adj.id].recordedLateDeduction)}→{peso(previews[adj.id].supposedLateDeduction)} (refund {peso(previews[adj.id].lateRefund)}) + hrs credit {peso(previews[adj.id].extraHoursCredit)} = {peso(previews[adj.id].refundAmount)}
