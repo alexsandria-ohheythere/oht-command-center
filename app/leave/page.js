@@ -105,6 +105,22 @@ export default function LeavePage() {
     showToast(status==='approved'?'✅':'❌',`Request ${status} — staff notified${removedCount ? ` · ${removedCount} conflicting shift${removedCount!==1?'s':''} removed` : ''}`)
   }
 
+  async function revertStatus(id) {
+    if (!confirm('Revert this request back to Pending? This will undo the approval/rejection.')) return
+    const { error } = await supabase.from('leave_requests').update({ status:'pending', approved_by:null, approved_at:null }).eq('id',id)
+    if (error) { showToast('❌',error.message); return }
+    setRequests(prev=>prev.map(r=>r.id===id?{...r,status:'pending',approved_by:null,approved_at:null}:r))
+    showToast('↩️','Request reverted to pending')
+  }
+
+  async function deleteRequest(id) {
+    if (!confirm('Delete this leave request permanently? This cannot be undone.')) return
+    const { error } = await supabase.from('leave_requests').delete().eq('id',id)
+    if (error) { showToast('❌',error.message); return }
+    setRequests(prev=>prev.filter(r=>r.id!==id))
+    showToast('🗑️','Request deleted')
+  }
+
   const filtered = requests.filter(r => {
     if (filter!=='all' && r.status!==filter) return false
     if (typeFilter!=='all' && r.leave_type!==typeFilter) return false
@@ -180,7 +196,7 @@ export default function LeavePage() {
                         {r.status==='approved'?'✅':'❌'} {r.status} by {r.approved_by==='alex'?'Alex':'CJ'} · {fmtDT(r.approved_at)}
                       </div>}
                     </div>
-                    {r.status==='pending' && (
+                    {r.status==='pending' ? (
                       <div style={{display:'flex',flexDirection:'column',gap:7,minWidth:180}}>
                         <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:2}}>Approve as:</div>
                         <div style={{display:'flex',gap:6}}>
@@ -196,6 +212,15 @@ export default function LeavePage() {
                             </div>
                           ))}
                         </div>
+                        <button onClick={()=>deleteRequest(r.id)}
+                          style={{marginTop:2,background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:7,padding:'5px',fontSize:10,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑️ Delete</button>
+                      </div>
+                    ) : (
+                      <div style={{display:'flex',flexDirection:'column',gap:6,minWidth:130}}>
+                        <button onClick={()=>revertStatus(r.id)}
+                          style={{background:'#fef3e2',color:'#a06000',border:'1px solid #f0d9a8',borderRadius:7,padding:'6px',fontSize:10,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>↩️ Disapprove / Revert</button>
+                        <button onClick={()=>deleteRequest(r.id)}
+                          style={{background:'transparent',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:7,padding:'6px',fontSize:10,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>🗑️ Delete</button>
                       </div>
                     )}
                   </div>
