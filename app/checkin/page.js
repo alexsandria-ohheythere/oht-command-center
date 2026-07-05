@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
+import { syncRecurringTasksForDate } from '../../lib/recurringTaskSync'
 
 const SHIFTS = [
   { id:'am',  label:'AM',  time:'6:30AM–3:30PM',  color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648', emoji:'🌅' },
@@ -43,6 +44,7 @@ export default function CheckinPage() {
   const [assignments, setAssignments]     = useState([])
   const [tasks, setTasks]                 = useState([])
   const [checkIns, setCheckIns]           = useState([])
+  const [recurringAssignments, setRecurringAssignments] = useState([])
   const [loading, setLoading]             = useState(true)
   const [selectedStaff, setSelectedStaff] = useState(null)
   const [view, setView]                   = useState('overview')
@@ -63,6 +65,7 @@ export default function CheckinPage() {
       .channel(`checkin-realtime-${dateISO}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'role_tasks' }, () => { fetchAll() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_task_assignments', filter: `shift_date=eq.${dateISO}` }, () => { fetchAll() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'recurring_task_assignments', filter: `shift_date=eq.${dateISO}` }, () => { fetchAll() })
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
@@ -71,20 +74,29 @@ export default function CheckinPage() {
   async function fetchAll() {
     setLoading(true)
     try {
-      const [{ data: s, error: e1 }, { data: sch, error: e2 }, { data: t, error: e3 }, { data: ci, error: e4 }] = await Promise.all([
+      // Auto-populate weekly recurring tasks for anyone scheduled today that matches
+      // a recurring template for their role + day-of-week (no-op if already synced)
+      if (dateISO <= todayISO) {
+        await syncRecurringTasksForDate(supabase, dateISO)
+      }
+
+      const [{ data: s, error: e1 }, { data: sch, error: e2 }, { data: t, error: e3 }, { data: ci, error: e4 }, { data: rt, error: e5 }] = await Promise.all([
         supabase.from('staff').select('*').order('last_name'),
         supabase.from('schedules').select('*').eq('shift_date', dateISO),
         supabase.from('role_tasks').select('*').eq('is_active', true).order('task_order'),
         supabase.from('shift_task_assignments').select('*, role_tasks!shift_task_assignments_task_id_fkey(task_name, category)').eq('shift_date', dateISO),
+        supabase.from('recurring_task_assignments').select('*, recurring_tasks(task_name, category, description)').eq('shift_date', dateISO),
       ])
       if (e1) console.error('staff fetch error:', e1)
       if (e2) console.error('schedules fetch error:', e2)
       if (e3) console.error('role_tasks fetch error:', e3)
       if (e4) console.error('shift_task_assignments fetch error:', e4)
+      if (e5) console.error('recurring_task_assignments fetch error:', e5)
       setStaff(s||[])
       setAssignments(sch||[])
       setTasks(t||[])
       setCheckIns(ci||[])
+      setRecurringAssignments(rt||[])
     } catch (err) {
       console.error('fetchAll failed:', err)
     } finally {
@@ -115,6 +127,10 @@ export default function CheckinPage() {
 
   function getStaffTasks(staffId, shiftId) {
     return checkIns.filter(ci => ci.staff_id===staffId && ci.shift_type===shiftId)
+  }
+
+  function getRecurringTasksFor(staffId, shiftId) {
+    return recurringAssignments.filter(ra => ra.staff_id===staffId && ra.shift_type===shiftId)
   }
 
   function getScore(staffId, shiftId) {
@@ -152,6 +168,15 @@ export default function CheckinPage() {
     setSaving(null)
   }
 
+  async function toggleRecurringTask(raId, completed) {
+    if (isPast) return
+    setSaving(raId)
+    const completed_at = completed ? new Date().toISOString() : null
+    const { data } = await supabase.from('recurring_task_assignments').update({ completed, completed_at }).eq('id', raId).select('*, recurring_tasks(task_name, category, description)').single()
+    if (data) setRecurringAssignments(prev=>prev.map(ra=>ra.id===raId?data:ra))
+    setSaving(null)
+  }
+
   const shiftOverview = SHIFTS.map(sh => {
     const shiftStaff = getScheduledStaff(sh.id)
     const scores = shiftStaff.map(s => getScore(s.id, sh.id))
@@ -162,6 +187,7 @@ export default function CheckinPage() {
   })
 
   const detailTasks = selectedStaff ? getStaffTasks(selectedStaff.id, selectedShift) : []
+  const detailRecurringTasks = selectedStaff ? getRecurringTasksFor(selectedStaff.id, selectedShift) : []
   const detailScore = selectedStaff ? getScore(selectedStaff.id, selectedShift) : { total:0, done:0, pct:0 }
   const detailShift = SHIFTS.find(s=>s.id===selectedShift)
 
@@ -342,6 +368,35 @@ export default function CheckinPage() {
                 ))
               })()}
             </div>
+
+            {detailRecurringTasks.length > 0 && (
+              <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden',marginBottom:12}}>
+                <div style={{background:'#fef3e2',padding:'11px 16px',borderBottom:'1px solid #d4a84333',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <span style={{fontSize:11,fontWeight:700,color:'#a06000'}}>
+                    🧹 Weekly Tasks · {detailRecurringTasks.filter(r=>r.completed).length}/{detailRecurringTasks.length}
+                  </span>
+                </div>
+                {detailRecurringTasks.map(ra => (
+                  <div key={ra.id} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 16px',borderBottom:'1px solid var(--cream-dark)',background:ra.completed?'#f8fdf5':'var(--white)',transition:'background .2s'}}>
+                    <button onClick={()=>toggleRecurringTask(ra.id,!ra.completed)} disabled={saving===ra.id||isPast}
+                      style={{width:24,height:24,borderRadius:'50%',border:`2px solid ${ra.completed?'var(--matcha)':'#d4a843'}`,background:ra.completed?'var(--matcha)':'transparent',cursor:isPast?'default':'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .2s',flexShrink:0,opacity:isPast?.7:1}}>
+                      {ra.completed&&<span style={{color:'white',fontSize:12,fontWeight:700}}>✓</span>}
+                    </button>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,fontWeight:500,color:ra.completed?'var(--text-muted)':'var(--espresso)',textDecoration:ra.completed?'line-through':'none'}}>
+                        {ra.recurring_tasks?.task_name || 'Task'}
+                      </div>
+                      {ra.recurring_tasks?.description && (
+                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{ra.recurring_tasks.description}</div>
+                      )}
+                      {ra.completed&&ra.completed_at&&(
+                        <div style={{fontSize:10,color:'var(--matcha-dark)',marginTop:2,fontFamily:"'DM Mono',monospace"}}>✓ {fmtTime(ra.completed_at)}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {detailScore.pct===100&&detailTasks.length>0&&(
               <div style={{background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:12,padding:'16px',textAlign:'center'}}>
