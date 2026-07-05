@@ -136,10 +136,15 @@ export default function PayrollPage() {
     const reader = new FileReader()
     reader.onload = ev => {
       const parsed = parseTimesheetCSV(ev.target.result)
+      const totalShifts = Object.values(parsed).reduce((sum, e) => sum + (e.shifts?.length || 0), 0)
+      if (totalShifts === 0 && Object.keys(parsed).length > 0) {
+        showToast('⚠️', `Loaded ${Object.keys(parsed).length} employees but ZERO shift rows — this looks like a totals-only summary export, not the detailed per-shift report. Check before saving.`)
+      } else {
+        showToast('✅', `Timesheet loaded · ${Object.keys(parsed).length} employees found`)
+      }
       setTimesheetData(parsed)
       const unmatched = Object.values(parsed).filter(ts => !matchStaff(staff, ts.lastName, ts.firstName))
       setUnmatchedTs(unmatched)
-      showToast('✅', `Timesheet loaded · ${Object.keys(parsed).length} employees found`)
     }
     reader.readAsText(file); e.target.value = ''
   }
@@ -232,6 +237,16 @@ export default function PayrollPage() {
 
   async function savePayroll() {
     if (!timesheetData) { showToast('⚠️','Upload a timesheet first'); return }
+    // Guard against the exact failure mode that caused this incident: an uploaded file that
+    // parses "successfully" (real employee names/emails) but contains zero actual shift rows
+    // for everyone — e.g. a StoreHub "Totals Summary" export instead of the detailed per-shift
+    // report. Saving that silently zeroes out everyone's pay AND marks any banked refunds as
+    // "applied" against garbage numbers, so the money never actually lands anywhere.
+    const totalShiftsInUpload = Object.values(timesheetData).reduce((sum, e) => sum + (e.shifts?.length || 0), 0)
+    if (totalShiftsInUpload === 0) {
+      const proceed = confirm(`⚠️ This uploaded file has zero actual shift entries for anyone (only employee summary rows). This usually means the wrong report type was exported from StoreHub — a totals-only summary instead of the detailed per-shift timesheet.\n\nSaving this now would zero out gross pay for all ${Object.keys(timesheetData).length} employees AND mark any banked refunds as paid without the money actually landing anywhere.\n\nAre you SURE you want to save this anyway?`)
+      if (!proceed) return
+    }
     setSaving(true)
     const rows = buildPayrollRows()
     const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives:parseFloat(adj.incentives)||0, overtime:parseFloat(adj.overtime)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
