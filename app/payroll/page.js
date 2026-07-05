@@ -377,12 +377,24 @@ export default function PayrollPage() {
         const tsKey = archived?.employees ? findTimesheetKey(archived.employees, staffMember) : null
         const dateMMDDYYYY = isoToMMDDYYYY(adj.shift_date)
         const originalShift = tsKey ? (archived.employees[tsKey].shifts || []).find(s => s.date === dateMMDDYYYY) : null
+        const originalShiftFound = !!originalShift
         const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out) : null
         const refundAmount = correctedShift ? computeAdjustmentRefundAmount({ hourlyRate, minuteRate, originalShift, correctedShift }) : 0
+
+        if (!originalShiftFound) {
+          const proceed = confirm(`⚠️ Could not find ${staffMember.first_name}'s original shift on ${dateMMDDYYYY} in the archived timesheet for ${cutoff?.label}.\n\nThe refund will be calculated as if they worked 0 hours originally — meaning it will credit the FULL corrected shift (${peso(refundAmount)}), not just the difference. This may overpay.\n\nApprove anyway?`)
+          if (!proceed) { setApproving(null); return }
+        }
 
         const { error } = await supabase.from('timesheet_adjustments').update({
           status: 'approved', resolution: 'refund', refund_amount: refundAmount, review_note: note, reviewed_by: currentStaffId,
           reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          calc_hourly_rate: Math.round(hourlyRate * 100) / 100,
+          calc_original_paid_hours: originalShift?.paidHours || 0,
+          calc_corrected_paid_hours: correctedShift?.paidHours || 0,
+          calc_original_late_mins: originalShift?.lateMinutes || 0,
+          calc_corrected_late_mins: correctedShift?.lateMinutes || 0,
+          calc_original_shift_found: originalShiftFound,
         }).eq('id', adj.id)
         if (error) throw error
         showToast('✅', `Approved — ${peso(refundAmount)} refund will apply to their next payroll`)
@@ -1018,9 +1030,19 @@ export default function PayrollPage() {
                                   ? <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ {peso(adj.refund_amount)} paid directly{adj.paid_at?` · ${new Date(adj.paid_at).toLocaleDateString('en-PH',{month:'short',day:'numeric'})}`:''}</span>
                                   : <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ {peso(adj.refund_amount)} applied · {appliedCutoff?.label||''}</span>
                               ) : (
-                                <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                                  <span style={{color:'#a06000',fontWeight:700}}>⏳ {peso(adj.refund_amount)} due — next payroll</span>
-                                  <button onClick={()=>markRefundPaid(adj)} disabled={settling===adj.id} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:6,padding:'3px 9px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap'}}>{settling===adj.id?'…':'💸 Mark Paid Now'}</button>
+                                <div>
+                                  <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                                    <span style={{color:'#a06000',fontWeight:700}}>⏳ {peso(adj.refund_amount)} due — next payroll</span>
+                                    <button onClick={()=>markRefundPaid(adj)} disabled={settling===adj.id} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:6,padding:'3px 9px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap'}}>{settling===adj.id?'…':'💸 Mark Paid Now'}</button>
+                                  </div>
+                                  {adj.calc_original_shift_found===false && (
+                                    <div style={{marginTop:4,fontSize:9,fontWeight:700,color:'#c0392b'}}>⚠️ Original shift not found — full corrected shift was credited, not just the difference. Verify manually before paying.</div>
+                                  )}
+                                  {adj.calc_hourly_rate!=null && (
+                                    <div style={{marginTop:4,fontSize:9,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
+                                      {adj.calc_original_paid_hours}h→{adj.calc_corrected_paid_hours}h · late {adj.calc_original_late_mins}→{adj.calc_corrected_late_mins}m · @₱{adj.calc_hourly_rate}/hr
+                                    </div>
+                                  )}
                                 </div>
                               )
                             ) : '—'}
