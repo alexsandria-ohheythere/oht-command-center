@@ -371,7 +371,9 @@ export default function SchedulePage() {
                     </div>
                     <div style={{flexShrink:0,textAlign:'right'}}>
                       {hrs>0&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'rgba(255,255,255,.6)'}}>{hrs}h</div>}
-                      {needsShifts&&<div style={{fontSize:8,fontWeight:700,color:shifts>=5?'#7ab648':'#e8845a'}}>{shifts}/5</div>}
+                      {needsShifts
+                        ? <div style={{fontSize:8,fontWeight:700,color:shifts>=5?'#7ab648':'#e8845a'}}>{shifts}/5</div>
+                        : <div style={{fontSize:8,fontWeight:700,color:shifts>0?'rgba(255,255,255,.5)':'rgba(255,255,255,.3)'}}>{shifts} shift{shifts!==1?'s':''}</div>}
                       {hasDayOffThisWeek&&<div style={{fontSize:8,fontWeight:700,color:'#f5a623'}}>📆 off</div>}
                     </div>
                   </div>
