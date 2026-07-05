@@ -544,10 +544,10 @@ export default function SchedulePage() {
                 )
               })}
 
-              {/* Shifts summary */}
+              {/* Shifts summary — frozen to bottom of the scroll area so it stays visible */}
               {filteredStaff.length>0&&(
-                <div style={{padding:'12px 16px',background:'var(--white)',borderTop:'2px solid var(--border)',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-                  <span style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',flexShrink:0}}>Shifts this week:</span>
+                <div style={{position:'sticky',bottom:0,left:0,padding:'12px 16px',background:'var(--white)',borderTop:'2px solid var(--border)',boxShadow:'0 -6px 14px rgba(0,0,0,.06)',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',maxHeight:110,overflowY:'auto',zIndex:5}}>
+                  <span style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',flexShrink:0,position:'sticky',left:16}}>Shifts this week:</span>
                   {[...filteredStaff].sort((a,b)=>getStaffWeekShifts(b.id)-getStaffWeekShifts(a.id)).map(s=>{
                     const shiftCount=getStaffWeekShifts(s.id)
                     const hasShifts=shiftCount>0
@@ -562,6 +562,7 @@ export default function SchedulePage() {
                     )
                   })}
                 </div>
+
               )}
             </div>
           )}
