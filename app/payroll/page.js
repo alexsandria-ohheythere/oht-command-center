@@ -232,7 +232,7 @@ export default function PayrollPage() {
     if (!timesheetData) { showToast('⚠️','Upload a timesheet first'); return }
     setSaving(true)
     const rows = buildPayrollRows()
-    const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives:parseFloat(adj.incentives)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
+    const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives:parseFloat(adj.incentives)||0, overtime:parseFloat(adj.overtime)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     if (error) { showToast('❌',error.message); setSaving(false); return }
     // Bake any approved timesheet corrections into the archived copy so the record reflects true attendance.
@@ -289,6 +289,7 @@ export default function PayrollPage() {
         sss: r.pay.sss, philhealth: r.pay.philhealth, pagibig: r.pay.pagibig, tax: r.pay.tax,
         late_deduction: r.pay.lateDeduction,
         incentives: r.saved ? saved.incentives : (parseFloat(adj.incentives)||0),
+        overtime: r.saved ? saved.overtime : (parseFloat(adj.overtime)||0),
         refund: r.saved ? saved.refund : (parseFloat(adj.refund)||0),
         undertime: r.saved ? saved.undertime : (parseFloat(adj.undertime)||0),
       }
@@ -915,10 +916,11 @@ export default function PayrollPage() {
                   const isLocked = !!r.saved   // editable only before first save
                   const adj = adjustments[r.staff.id] || {}
                   const incentives = isLocked ? (parseFloat(r.saved.incentives)||0) : (parseFloat(adj.incentives)||0)
+                  const overtime   = isLocked ? (parseFloat(r.saved.overtime)||0)   : (parseFloat(adj.overtime)||0)
                   const refund     = isLocked ? (parseFloat(r.saved.refund)||0)     : (parseFloat(adj.refund)||0)
                   const undertime  = isLocked ? (parseFloat(r.saved.undertime)||0)  : (parseFloat(adj.undertime)||0)
                   const isFT = (r.staff.employment_type||'Full-time')==='Full-time'
-                  const grossPay = r.pay.gross + incentives + refund
+                  const grossPay = r.pay.gross + incentives + overtime + refund
                   const govDed = r.pay.sss + r.pay.philhealth + r.pay.pagibig + r.pay.tax
                   // For full-time, unpaid missed days are already excluded from gross (rate × daysWorked),
                   // so absence is NOT subtracted again here. Late/undertime still apply.
@@ -956,7 +958,7 @@ export default function PayrollPage() {
                       <div style={{borderTop:'1px solid var(--border)',margin:'8px 0',paddingTop:8}}>
                         <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',fontWeight:600}}><span>Basic</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(r.pay.gross)}</span></div>
                         {/* Manual-entry earnings (editable until saved) */}
-                        {[['Incentives/OT','incentives',incentives],['Refund','refund',refund]].map(([label,field,val])=>(
+                        {[['Incentives','incentives',incentives],['Overtime','overtime',overtime],['Refund','refund',refund]].map(([label,field,val])=>(
                           <div key={field} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}>
                             <span>{label}</span>
                             {isLocked
