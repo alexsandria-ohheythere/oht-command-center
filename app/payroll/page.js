@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, calcSSSEmployer } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
@@ -141,7 +141,7 @@ export default function PayrollPage() {
         const savedReq = saved.required_days || reqDays
         const monthlyPay = s.monthly_pay || getBaseRate(s.employment_type||'Full-time', s.role, rateOverrides)?.monthly || 0
         const savedDaily = (isFT && savedReq>0 && monthlyPay>0) ? Math.round((monthlyPay/2)/savedReq) : getDailyRate(s.employment_type||'Full-time',s.role,rateOverrides)
-        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:calcSSSEmployer(monthlyPay), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:Math.round(savedDaily/8), requiredDays:savedReq, noSchedule:false }
+        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:Math.round(parseFloat(saved.sss||0) * (9.5/4.5)), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:Math.round(savedDaily/8), requiredDays:savedReq, noSchedule:false }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
         return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides,selectedCutoff,reqDays), hasTimesheet:false, saved:null, isLive:false }
