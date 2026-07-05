@@ -7,7 +7,7 @@ import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
-const ISSUE_LABELS = { no_time_in:'No time-in recorded', no_time_out:'No time-out recorded', wrong_time:'Wrong time recorded', missed_entirely:'Entire shift missing' }
+const ISSUE_LABELS = { no_time_in:'No time-in recorded', no_time_out:'No time-out recorded', wrong_time:'Wrong time recorded', missed_entirely:'Entire shift missing', payroll_correction:'Payroll correction (admin-initiated)' }
 const SHIFT_LABELS = { am:'AM', ops:'OPS', mid:'MID', pm:'PM' }
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
