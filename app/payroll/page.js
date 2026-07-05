@@ -160,10 +160,12 @@ export default function PayrollPage() {
       .reduce((sum, a) => sum + (parseFloat(a.refund_amount) || 0), 0)
   }
 
-  // Pre-fill any banked refunds into the editable Refund field once a timesheet is loaded for review —
-  // admin can still see/adjust the number before Save Payroll locks it in.
+  // Pre-fill any banked refunds into the editable Refund field as soon as we know about them —
+  // this must NOT wait for a timesheet upload, since a payslip card (and the refund owed) can
+  // already exist before this cutoff's timesheet is uploaded. Admin can still see/adjust the
+  // number before Save Payroll locks it in.
   useEffect(() => {
-    if (!timesheetData) return
+    if (!staff.length) return
     setAdjustments(prev => {
       const next = { ...prev }
       staff.forEach(s => {
