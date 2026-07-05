@@ -14,29 +14,39 @@ const SHIFTS = [
 const LEADERSHIP_ROLES = ['Managing Director','CEO']
 
 // Role rows per shift — grouped with dividers
-// NOTE: 'KitchenFlex' is a virtual row role (not an actual staff role) that groups
-// Sous Chef, Kitchen Staff, and all Junior Barista variants into one flexible slot —
-// any employee holding one of those three role types can be assigned here interchangeably.
+// Sous Chef, Kitchen Staff, and Junior Barista are kept as SEPARATE rows (so it's clear
+// which slot someone is filling) but are flexible: any employee holding one of these three
+// role types can be dropped into any of the three rows — placement is tracked per-assignment
+// via the schedules.assigned_role column, not inferred from the staff member's own title.
+const KITCHEN_FLEX_ROWS = ['Sous Chef','Kitchen Staff','Junior Barista']
+const isKitchenFlexRole = r => r==='Sous Chef' || r==='Kitchen Staff' || (r||'').startsWith('Junior Barista')
+
 const ROLE_ROWS = [
   // AM
   { shiftId:'am', role:'Cafe Supervisor',          label:'Cafe Supervisor',    group:'front' },
   { shiftId:'am', role:'Cafe Operations Support',  label:'Cafe Support',       group:'front' },
   { shiftId:'am', role:'Executive Chef',            label:'Executive Chef',     group:'kitchen', divider:true },
   { shiftId:'am', role:'Senior Barista',            label:'Senior Barista',     group:'kitchen' },
-  { shiftId:'am', role:'KitchenFlex',               label:'Sous Chef / Kitchen / Jr. Barista', group:'kitchen' },
+  { shiftId:'am', role:'Sous Chef',                 label:'Sous Chef',          group:'kitchen' },
+  { shiftId:'am', role:'Kitchen Staff',             label:'Kitchen Staff',      group:'kitchen' },
+  { shiftId:'am', role:'Junior Barista',            label:'Junior Barista',     group:'kitchen' },
   // OPS
   { shiftId:'ops', role:'Cafe Supervisor',         label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'ops', role:'Cafe Operations Support', label:'Cafe Support',      group:'front' },
   // MID
   { shiftId:'mid', role:'Cafe Supervisor',          label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'mid', role:'Cafe Operations Support',  label:'Cafe Support',      group:'front' },
-  { shiftId:'mid', role:'KitchenFlex',              label:'Sous Chef / Kitchen / Jr. Barista', group:'kitchen', divider:true },
+  { shiftId:'mid', role:'Sous Chef',                label:'Sous Chef',         group:'kitchen', divider:true },
+  { shiftId:'mid', role:'Kitchen Staff',            label:'Kitchen Staff',     group:'kitchen' },
+  { shiftId:'mid', role:'Junior Barista',           label:'Junior Barista',    group:'kitchen' },
   // PM
   { shiftId:'pm', role:'Cafe Supervisor',           label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'pm', role:'Cafe Operations Support',   label:'Cafe Support',      group:'front' },
   { shiftId:'pm', role:'Executive Chef',            label:'Executive Chef',    group:'kitchen', divider:true },
   { shiftId:'pm', role:'Senior Barista',            label:'Senior Barista',    group:'kitchen' },
-  { shiftId:'pm', role:'KitchenFlex',               label:'Sous Chef / Kitchen / Jr. Barista', group:'kitchen' },
+  { shiftId:'pm', role:'Sous Chef',                 label:'Sous Chef',         group:'kitchen' },
+  { shiftId:'pm', role:'Kitchen Staff',             label:'Kitchen Staff',     group:'kitchen' },
+  { shiftId:'pm', role:'Junior Barista',            label:'Junior Barista',    group:'kitchen' },
 ]
 
 const DAYS = ['MON','TUE','WED','THU','FRI','SAT','SUN']
@@ -67,13 +77,14 @@ const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}
 const fmtDate = d => d.toLocaleDateString('en-PH',{month:'short',day:'numeric'})
 
 // Does a staff member's role match a row's role pattern?
-// KitchenFlex rows accept Sous Chef, Kitchen Staff, and any Junior Barista variant interchangeably.
+// For the flexible kitchen-team rows (Sous Chef / Kitchen Staff / Junior Barista), placement
+// is determined by the assignment's stored `assigned_role`, not the staff member's own title —
+// that lookup happens in getCellAssignments. This roleMatches() is only used as a legacy
+// fallback for older schedule rows saved before assigned_role existed.
 function roleMatches(staffRole, rowRole) {
   if (!staffRole) return false
-  if (rowRole === 'KitchenFlex') {
-    return staffRole === 'Sous Chef' || staffRole === 'Kitchen Staff' || staffRole.startsWith('Junior Barista')
-  }
   if (staffRole === rowRole) return true
+  if (rowRole === 'Junior Barista' && staffRole.startsWith('Junior Barista')) return true
   return false
 }
 
@@ -144,12 +155,25 @@ export default function SchedulePage() {
     return schedules.filter(s => {
       if (s.shift_date !== date || s.shift_type !== shiftId) return false
       const member = staff.find(x => x.id === s.staff_id)
-      return member && roleMatches(member.role, rowRole)
+      if (!member) return false
+      if (KITCHEN_FLEX_ROWS.includes(rowRole)) {
+        // Placement is explicit for rows saved after assigned_role existed.
+        if (s.assigned_role) return s.assigned_role === rowRole
+        // Legacy fallback for schedule rows saved before this column existed.
+        if (rowRole === 'Junior Barista') return member.role.startsWith('Junior Barista')
+        return member.role === rowRole
+      }
+      return roleMatches(member.role, rowRole)
     })
   }
 
-  async function addAssignment(dayIdx, shiftType, staffId) {
+  async function addAssignment(dayIdx, shiftType, staffId, rowRole) {
     const date = toISO(weekDates[dayIdx])
+    const member = staff.find(x=>x.id===staffId)
+    if (rowRole && KITCHEN_FLEX_ROWS.includes(rowRole) && !isKitchenFlexRole(member?.role)) {
+      showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to a kitchen-team slot`)
+      return
+    }
     if (schedules.some(s=>s.shift_date===date&&s.shift_type===shiftType&&s.staff_id===staffId)) return
     const conflict = schedules.find(s=>s.shift_date===date&&s.staff_id===staffId)
     if (conflict) {
@@ -158,7 +182,7 @@ export default function SchedulePage() {
       showToast('❌',`${m?.first_name} ${m?.last_name} is already assigned to ${sh?.label} on ${DAYS[dayIdx]} — remove that shift first`)
       return
     }
-    const newRow = { staff_id:staffId, shift_date:date, shift_type:shiftType, week_start:weekStart, published:false }
+    const newRow = { staff_id:staffId, shift_date:date, shift_type:shiftType, week_start:weekStart, published:false, assigned_role: KITCHEN_FLEX_ROWS.includes(rowRole) ? rowRole : null }
     const temp = { ...newRow, id:'temp_'+Date.now() }
     setSchedules(prev=>[...prev,temp])
     const {data,error} = await supabase.from('schedules').insert([newRow]).select().single()
@@ -166,7 +190,7 @@ export default function SchedulePage() {
     setSchedules(prev=>prev.map(s=>s.id===temp.id?data:s))
     const m=staff.find(x=>x.id===staffId)
     const sh=SHIFTS.find(x=>x.id===shiftType)
-    showToast('✅',`${m?.first_name} → ${sh?.label}`)
+    showToast('✅',`${m?.first_name} → ${rowRole||sh?.label}`)
   }
 
   async function removeAssignment(id) {
@@ -174,10 +198,15 @@ export default function SchedulePage() {
     await supabase.from('schedules').delete().eq('id',id)
   }
 
-  async function moveAssignment(sourceDate, sourceShift, staffId, targetDayIdx, targetShift) {
+  async function moveAssignment(sourceDate, sourceShift, staffId, targetDayIdx, targetShift, targetRole) {
     const targetDate=toISO(weekDates[targetDayIdx])
-    if(sourceDate===targetDate&&sourceShift===targetShift)return
+    const member = staff.find(x=>x.id===staffId)
+    if (targetRole && KITCHEN_FLEX_ROWS.includes(targetRole) && !isKitchenFlexRole(member?.role)) {
+      showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to a kitchen-team slot`)
+      return
+    }
     const old=schedules.find(s=>s.shift_date===sourceDate&&s.shift_type===sourceShift&&s.staff_id===staffId)
+    if(sourceDate===targetDate&&sourceShift===targetShift&&(old?.assigned_role||null)===(KITCHEN_FLEX_ROWS.includes(targetRole)?targetRole:null))return
     const conflict = schedules.find(s=>s.shift_date===targetDate&&s.staff_id===staffId&&s.id!==old?.id)
     if (conflict) {
       const m=staff.find(x=>x.id===staffId)
@@ -186,13 +215,13 @@ export default function SchedulePage() {
       return
     }
     if(old)await supabase.from('schedules').delete().eq('id',old.id)
-    const newRow={staff_id:staffId,shift_date:targetDate,shift_type:targetShift,week_start:weekStart,published:false}
+    const newRow={staff_id:staffId,shift_date:targetDate,shift_type:targetShift,week_start:weekStart,published:false,assigned_role:KITCHEN_FLEX_ROWS.includes(targetRole)?targetRole:null}
     const {data}=await supabase.from('schedules').insert([newRow]).select().single()
     if(data){
       setSchedules(prev=>[...prev.filter(s=>s.id!==old?.id),data])
       const m=staff.find(x=>x.id===staffId)
       const sh=SHIFTS.find(x=>x.id===targetShift)
-      showToast('🔄',`${m?.first_name} moved to ${sh?.label} · ${DAYS[targetDayIdx]}`)
+      showToast('🔄',`${m?.first_name} moved to ${targetRole||sh?.label} · ${DAYS[targetDayIdx]}`)
     }
   }
 
@@ -489,9 +518,9 @@ export default function SchedulePage() {
                               } else if(isOnDayOff(sid,dayIdx)){
                                 showToast('📆','Staff has a day-off on this date')
                               } else if(src){
-                                moveAssignment(src.date,src.shiftType,sid,dayIdx,row.shiftId)
+                                moveAssignment(src.date,src.shiftType,sid,dayIdx,row.shiftId,row.role)
                               } else {
-                                addAssignment(dayIdx,row.shiftId,sid)
+                                addAssignment(dayIdx,row.shiftId,sid,row.role)
                               }
                               setDragStaffId(null);setDragSource(null)
                             }}
