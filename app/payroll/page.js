@@ -77,9 +77,10 @@ export default function PayrollPage() {
   }
 
   async function fetchAdjustmentRequests() {
-    const { data } = await supabase.from('timesheet_adjustments')
-      .select('*, staff(first_name,last_name,nickname,role,employment_type,monthly_pay)')
+    const { data, error } = await supabase.from('timesheet_adjustments')
+      .select('*, staff:staff!timesheet_adjustments_staff_id_fkey(first_name,last_name,nickname,role,employment_type,monthly_pay)')
       .order('created_at', { ascending: false })
+    if (error) console.error('fetchAdjustmentRequests error:', error)
     setAdjustmentRequests(data || [])
   }
 
