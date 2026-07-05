@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, computeAdjustmentRefundAmount, capShiftHours } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
@@ -456,18 +456,27 @@ export default function PayrollPage() {
     const originalShift = tsKey ? (archived.employees[tsKey].shifts || []).find(s => s.date === dateMMDDYYYY) : null
     const originalShiftFound = !!originalShift
     const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out) : null
-    const refundAmount = correctedShift ? computeAdjustmentRefundAmount({ hourlyRate, minuteRate, originalShift, correctedShift }) : 0
+
+    // Basic pay is a flat daily rate — it doesn't prorate by hours. If a (bad) shift record
+    // already existed for this date, that day was already counted in days_worked, so the
+    // only thing to fix is topping it up from whatever amount was actually paid for it
+    // (historically computed hourly, before this fix) up to the full flat daily rate. If no
+    // shift record existed at all, the date wasn't counted as a day worked at all, so the
+    // full daily rate is owed outright.
+    const origLateMins = originalShift?.lateMinutes || 0
+    const corrLateMins = correctedShift?.lateMinutes || 0
+    const alreadyPaidForDay = originalShiftFound ? (originalShift.paidHours || 0) * hourlyRate : 0
+    const dayTopUp = Math.round(dailyRate - alreadyPaidForDay)
 
     // Sync against the actual saved cutoff totals — "how much was really deducted for the
     // whole cutoff" vs "what it should be once this one shift is corrected."
     const recordedLateDeduction = parseFloat(existingRun.late_deduction) || 0
     const recordedTotalLateMins = existingRun.total_late_mins || 0
-    const origLateMins = originalShift?.lateMinutes || 0
-    const corrLateMins = correctedShift?.lateMinutes || 0
     const supposedTotalLateMins = Math.max(0, recordedTotalLateMins - origLateMins + corrLateMins)
     const supposedLateDeduction = Math.round(supposedTotalLateMins * minuteRate)
     const lateRefund = recordedLateDeduction - supposedLateDeduction
-    const extraHoursCredit = refundAmount - lateRefund
+    const extraHoursCredit = dayTopUp
+    const refundAmount = dayTopUp + lateRefund
 
     return {
       type: 'refund', cutoffLabel: cutoff?.label, refundAmount, originalShiftFound,
@@ -507,7 +516,7 @@ export default function PayrollPage() {
         showToast('✅', `Approved — will auto-correct ${cutoff?.label || 'the'} timesheet on next Save Payroll`)
       } else {
         if (!preview.originalShiftFound) {
-          const proceed = confirm(`⚠️ Could not find ${adj.staff?.first_name}'s original shift for this date in the archived timesheet for ${cutoff?.label}.\n\nThe refund will be calculated as if they worked 0 hours originally — meaning it will credit the FULL corrected shift (${peso(preview.refundAmount)}), not just the difference. This may overpay.\n\nApprove anyway?`)
+          const proceed = confirm(`⚠️ Could not find ${adj.staff?.first_name}'s original shift for this date in the archived timesheet for ${cutoff?.label}.\n\nThat means this date wasn't counted as a day worked at all, so this refund includes a FULL day's pay (${peso(preview.refundAmount)}) to cover it — worth double-checking they actually worked that day before approving.\n\nApprove anyway?`)
           if (!proceed) { setApproving(null); return }
         }
 
@@ -1118,7 +1127,7 @@ export default function PayrollPage() {
                                 Late ded. {peso(previews[adj.id].recordedLateDeduction)}→{peso(previews[adj.id].supposedLateDeduction)} (refund {peso(previews[adj.id].lateRefund)}) + hrs credit {peso(previews[adj.id].extraHoursCredit)} = {peso(previews[adj.id].refundAmount)}
                               </div>
                               {previews[adj.id].originalShiftFound===false && (
-                                <div style={{marginTop:6,fontSize:10,fontWeight:700,color:'#c0392b'}}>⚠️ Original shift not found in the archived timesheet — this credits the FULL corrected shift, not just the difference. Double-check before approving.</div>
+                                <div style={{marginTop:6,fontSize:10,fontWeight:700,color:'#c0392b'}}>⚠️ Original shift not found in the archived timesheet — this date wasn't counted as a day worked, so this includes a full day's pay outright. Double-check before approving.</div>
                               )}
                             </div>
                           )
