@@ -2,11 +2,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, computeAdjustmentRefundAmount } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (Math.round(n || 0)).toLocaleString('en-PH')
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
+const ISSUE_LABELS = { no_time_in:'No time-in recorded', no_time_out:'No time-out recorded', wrong_time:'Wrong time recorded', missed_entirely:'Entire shift missing' }
+const SHIFT_LABELS = { am:'AM', ops:'OPS', mid:'MID', pm:'PM' }
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
 
@@ -58,10 +60,28 @@ export default function PayrollPage() {
   const [sortKey, setSortKey]               = useState('name')
   const [sortDir, setSortDir]               = useState('asc')
   const [rateOverrides, setRateOverrides]   = useState(null)
+  const [adjustmentRequests, setAdjustmentRequests] = useState([])
+  const [reviewNotes, setReviewNotes]       = useState({})
+  const [approving, setApproving]           = useState(null)
+  const [currentStaffId, setCurrentStaffId] = useState(null)
   const fileRef = useRef()
 
-  useEffect(() => { fetchStaff(); fetchRateOverrides() }, [])
+  useEffect(() => { fetchStaff(); fetchRateOverrides(); fetchAdjustmentRequests(); fetchCurrentStaffId() }, [])
   useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet(); fetchAttendanceRefs() }, [selectedCutoff])
+
+  async function fetchCurrentStaffId() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.email) return
+    const { data } = await supabase.from('staff').select('id').eq('email', user.email).maybeSingle()
+    if (data) setCurrentStaffId(data.id)
+  }
+
+  async function fetchAdjustmentRequests() {
+    const { data } = await supabase.from('timesheet_adjustments')
+      .select('*, staff(first_name,last_name,nickname,role,employment_type,monthly_pay)')
+      .order('created_at', { ascending: false })
+    setAdjustmentRequests(data || [])
+  }
 
   async function fetchAttendanceRefs() {
     const start = selectedCutoff.start, end = selectedCutoff.end
@@ -126,6 +146,30 @@ export default function PayrollPage() {
     )].length
   }
 
+  function pendingCorrectionsFor(staffId) {
+    return adjustmentRequests.filter(a => a.staff_id === staffId && a.cutoff_id === selectedCutoff.id && a.status === 'approved' && a.resolution === 'timesheet_correction' && !a.applied)
+  }
+  function pendingRefundFor(staffId) {
+    return adjustmentRequests.filter(a => a.staff_id === staffId && a.status === 'approved' && a.resolution === 'refund' && !a.applied)
+      .reduce((sum, a) => sum + (parseFloat(a.refund_amount) || 0), 0)
+  }
+
+  // Pre-fill any banked refunds into the editable Refund field once a timesheet is loaded for review —
+  // admin can still see/adjust the number before Save Payroll locks it in.
+  useEffect(() => {
+    if (!timesheetData) return
+    setAdjustments(prev => {
+      const next = { ...prev }
+      staff.forEach(s => {
+        if (next[s.id]?.refund !== undefined && next[s.id]?.refund !== '') return
+        const pending = pendingRefundFor(s.id)
+        if (pending > 0) next[s.id] = { ...(next[s.id] || {}), refund: pending }
+      })
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timesheetData, adjustmentRequests, staff])
+
   function buildPayrollRows() {
     return staff.map(s => {
       const saved = savedRuns.find(r => r.staff_id === s.id)
@@ -133,7 +177,9 @@ export default function PayrollPage() {
       if (timesheetData) {
         const tsKey = Object.keys(timesheetData).find(k => { const ts = timesheetData[k]; return matchStaff([s], ts.lastName, ts.firstName) !== undefined })
         const ts = tsKey ? timesheetData[tsKey] : null
-        const periodShifts = ts ? filterShiftsByPeriod(ts.shifts, selectedCutoff.start, selectedCutoff.end) : []
+        const periodShiftsRaw = ts ? filterShiftsByPeriod(ts.shifts, selectedCutoff.start, selectedCutoff.end) : []
+        const corrections = pendingCorrectionsFor(s.id)
+        const periodShifts = corrections.length ? applyAdjustmentsToShifts(periodShiftsRaw, corrections) : periodShiftsRaw
         const pay = computeCutoffPayroll(s, periodShifts, rateOverrides, selectedCutoff, reqDays)
         return { staff:s, ts, periodShifts, pay, hasTimesheet:!!ts, saved, isLive:true }
       } else if (saved) {
@@ -183,13 +229,30 @@ export default function PayrollPage() {
     const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives:parseFloat(adj.incentives)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     if (error) { showToast('❌',error.message); setSaving(false); return }
-    // Persist raw timesheet for this cutoff so it can be viewed later
+    // Bake any approved timesheet corrections into the archived copy so the record reflects true attendance.
+    const correctedTimesheetData = { ...timesheetData }
+    let appliedCorrectionIds = []
+    rows.forEach(r => {
+      const corrections = pendingCorrectionsFor(r.staff.id)
+      if (!corrections.length) return
+      const tsKey = Object.keys(correctedTimesheetData).find(k => matchStaff([r.staff], correctedTimesheetData[k].lastName, correctedTimesheetData[k].firstName) !== undefined)
+      if (!tsKey) return
+      correctedTimesheetData[tsKey] = { ...correctedTimesheetData[tsKey], shifts: applyAdjustmentsToShifts(correctedTimesheetData[tsKey].shifts, corrections) }
+      appliedCorrectionIds.push(...corrections.map(c => c.id))
+    })
+    // Persist raw (corrected) timesheet for this cutoff so it can be viewed later
     const { error: tsError } = await supabase.from('timesheet_uploads').upsert(
-      { cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, employees:timesheetData, uploaded_at:new Date().toISOString() },
+      { cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, employees:correctedTimesheetData, uploaded_at:new Date().toISOString() },
       { onConflict:'cutoff_id' }
     )
     if (tsError) showToast('⚠️',`Payroll saved, but timesheet archive failed: ${tsError.message}`)
-    await fetchSavedRuns(); await fetchSavedTimesheet(); setTimesheetData(null); setSaving(false)
+    // Mark corrections baked into this save, and any banked refunds paid out this cutoff, as applied.
+    const appliedRefundIds = rows.flatMap(r => adjustmentRequests.filter(a => a.staff_id===r.staff.id && a.status==='approved' && a.resolution==='refund' && !a.applied).map(a => a.id))
+    const allAppliedIds = [...appliedCorrectionIds, ...appliedRefundIds]
+    if (allAppliedIds.length) {
+      await supabase.from('timesheet_adjustments').update({ applied:true, applied_cutoff_id:selectedCutoff.id, applied_at:new Date().toISOString() }).in('id', allAppliedIds)
+    }
+    await fetchSavedRuns(); await fetchSavedTimesheet(); await fetchAdjustmentRequests(); setTimesheetData(null); setSaving(false)
     showToast('💾',`Payroll saved for ${selectedCutoff.label}`)
   }
 
@@ -251,6 +314,71 @@ export default function PayrollPage() {
     if (error) { showToast('❌', error.message); return }
     await fetchSavedRuns()
     showToast('✅', `Marked ${unpaidIds.length} as paid`)
+  }
+
+  // ── Timesheet Adjustments: approve / reject ──────────────────────────────
+  async function rejectAdjustment(adj) {
+    const note = reviewNotes[adj.id] || ''
+    if (!confirm(`Reject ${adj.staff?.first_name}'s adjustment request?`)) return
+    const { error } = await supabase.from('timesheet_adjustments').update({
+      status: 'rejected', review_note: note, reviewed_by: currentStaffId,
+      reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq('id', adj.id)
+    if (error) { showToast('❌', error.message); return }
+    await fetchAdjustmentRequests()
+    showToast('✋', 'Adjustment rejected')
+  }
+
+  async function approveAdjustment(adj) {
+    setApproving(adj.id)
+    const note = reviewNotes[adj.id] || ''
+    const cutoff = CUTOFF_PERIODS.find(p => p.id === adj.cutoff_id)
+    try {
+      // Already-saved cutoff for this staff member? → refund path. Otherwise → auto timesheet-correction path.
+      const { data: existingRun } = await supabase.from('payroll_runs')
+        .select('id, required_days, gross, days_worked')
+        .eq('cutoff_id', adj.cutoff_id).eq('staff_id', adj.staff_id).maybeSingle()
+
+      if (!existingRun) {
+        // Before payroll approval — mark approved; the correction merges in automatically
+        // next time this cutoff is computed/saved (see buildPayrollRows / savePayroll below).
+        const { error } = await supabase.from('timesheet_adjustments').update({
+          status: 'approved', resolution: 'timesheet_correction', review_note: note, reviewed_by: currentStaffId,
+          reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq('id', adj.id)
+        if (error) throw error
+        showToast('✅', `Approved — will auto-correct ${cutoff?.label || 'the'} timesheet on next Save Payroll`)
+      } else {
+        // Post payroll approval — compute the refund owed now, bank it for the next cutoff.
+        const staffMember = adj.staff
+        const isFT = (staffMember.employment_type || 'Full-time') === 'Full-time'
+        const monthlyPay = staffMember.monthly_pay || getBaseRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)?.monthly || 0
+        const dailyRate = (isFT && existingRun.required_days > 0 && monthlyPay > 0)
+          ? (monthlyPay / 2) / existingRun.required_days
+          : getDailyRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)
+        const hourlyRate = dailyRate / 8
+        const minuteRate = hourlyRate / 60
+
+        const { data: archived } = await supabase.from('timesheet_uploads').select('employees').eq('cutoff_id', adj.cutoff_id).maybeSingle()
+        const tsKey = archived?.employees ? findTimesheetKey(archived.employees, staffMember) : null
+        const dateMMDDYYYY = isoToMMDDYYYY(adj.shift_date)
+        const originalShift = tsKey ? (archived.employees[tsKey].shifts || []).find(s => s.date === dateMMDDYYYY) : null
+        const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out) : null
+        const refundAmount = correctedShift ? computeAdjustmentRefundAmount({ hourlyRate, minuteRate, originalShift, correctedShift }) : 0
+
+        const { error } = await supabase.from('timesheet_adjustments').update({
+          status: 'approved', resolution: 'refund', refund_amount: refundAmount, review_note: note, reviewed_by: currentStaffId,
+          reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq('id', adj.id)
+        if (error) throw error
+        showToast('✅', `Approved — ${peso(refundAmount)} refund will apply to their next payroll`)
+      }
+      await fetchAdjustmentRequests()
+    } catch(e) {
+      showToast('❌', e.message)
+    } finally {
+      setApproving(null)
+    }
   }
 
   function exportCSV() {
@@ -363,7 +491,7 @@ export default function PayrollPage() {
 
         {/* Tabs */}
         <div style={{display:'flex',gap:4,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
-          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['payments','💵 Payment Status']].map(([key,label])=>(
+          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`]].map(([key,label])=>(
             <button key={key} onClick={()=>setTab(key)} style={{background:'transparent',border:'none',borderBottom:tab===key?'2px solid var(--matcha)':'2px solid transparent',marginBottom:-2,padding:'9px 16px',fontSize:12,fontWeight:tab===key?700:500,color:tab===key?'var(--matcha-dark)':'var(--text-muted)',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{label}</button>
           ))}
         </div>
@@ -784,6 +912,106 @@ export default function PayrollPage() {
                 </tfoot>
               </table>
             )}
+          </div>
+        )}
+
+        {tab==='adjustments' && (
+          <div style={{display:'flex',flexDirection:'column',gap:20}}>
+            {/* Pending */}
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+              <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Pending Requests</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Filed by staff via the Staff Portal — review against the timesheet before approving.</div>
+              </div>
+              {adjustmentRequests.filter(a=>a.status==='pending').length===0 ? (
+                <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No pending adjustment requests.</div>
+              ) : (
+                <div style={{padding:'14px 20px',display:'flex',flexDirection:'column',gap:12}}>
+                  {adjustmentRequests.filter(a=>a.status==='pending').map(adj=>{
+                    const s = adj.staff || {}
+                    return (
+                      <div key={adj.id} style={{border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',background:'var(--surface)'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,flexWrap:'wrap'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8}}>
+                            <div style={{width:28,height:28,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
+                            <div>
+                              <div style={{fontSize:12,fontWeight:700}}>{s.first_name} {s.last_name}</div>
+                              <div style={{fontSize:10,color:'var(--text-muted)'}}>{s.role} · {adj.cutoff_label}</div>
+                            </div>
+                          </div>
+                          <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:8,background:'#fef3e2',color:'#a06000'}}>{ISSUE_LABELS[adj.issue_type]||adj.issue_type}</span>
+                        </div>
+                        <div style={{marginTop:10,display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,fontSize:11}}>
+                          <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Date / Shift</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{new Date(adj.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} · {SHIFT_LABELS[adj.shift_type]||adj.shift_type||'—'}</div></div>
+                          <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Claimed Time-in</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{adj.claimed_time_in||'—'}</div></div>
+                          <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Claimed Time-out</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{adj.claimed_time_out||'—'}</div></div>
+                        </div>
+                        {adj.reason && <div style={{marginTop:8,fontSize:11,color:'var(--text-primary)',background:'var(--white)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px'}}>"{adj.reason}"</div>}
+                        <div style={{marginTop:10,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                          <input value={reviewNotes[adj.id]||''} onChange={e=>setReviewNotes(prev=>({...prev,[adj.id]:e.target.value}))} placeholder="Optional note…" style={{flex:1,minWidth:140,background:'var(--white)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px',fontSize:11,outline:'none',fontFamily:"'DM Sans',sans-serif"}}/>
+                          <button onClick={()=>rejectAdjustment(adj)} disabled={approving===adj.id} style={{background:'transparent',border:'1px solid #f5c6c6',color:'#c0392b',borderRadius:7,padding:'6px 12px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Reject</button>
+                          <button onClick={()=>approveAdjustment(adj)} disabled={approving===adj.id} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:7,padding:'6px 14px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{approving===adj.id?'Approving…':'✓ Approve'}</button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Resolved */}
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+              <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Resolved</div>
+              </div>
+              {adjustmentRequests.filter(a=>a.status!=='pending').length===0 ? (
+                <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>Nothing resolved yet.</div>
+              ) : (
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead>
+                    <tr style={{background:'var(--espresso)'}}>
+                      <th style={thBase}>Employee</th>
+                      <th style={thBase}>Cutoff / Date</th>
+                      <th style={thBase}>Issue</th>
+                      <th style={thBase}>Outcome</th>
+                      <th style={thBase}>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adjustmentRequests.filter(a=>a.status!=='pending').map((adj,i)=>{
+                      const s = adj.staff || {}
+                      const appliedCutoff = CUTOFF_PERIODS.find(p=>p.id===adj.applied_cutoff_id)
+                      return (
+                        <tr key={adj.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
+                          <td style={{padding:'9px 12px'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8}}>
+                              <div style={{width:22,height:22,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
+                              <span style={{fontWeight:600}}>{s.first_name} {s.last_name}</span>
+                            </div>
+                          </td>
+                          <td style={{padding:'9px 12px'}}>{adj.cutoff_label}<br/><span style={{color:'var(--text-muted)',fontSize:10}}>{new Date(adj.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</span></td>
+                          <td style={{padding:'9px 12px'}}>{ISSUE_LABELS[adj.issue_type]||adj.issue_type}</td>
+                          <td style={{padding:'9px 12px'}}>
+                            {adj.status==='rejected' ? (
+                              <span style={{color:'#c0392b',fontWeight:700}}>✗ Rejected</span>
+                            ) : adj.resolution==='timesheet_correction' ? (
+                              adj.applied
+                                ? <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ Timesheet corrected</span>
+                                : <span style={{color:'#a06000',fontWeight:700}}>⏳ Will auto-correct on next Save Payroll</span>
+                            ) : adj.resolution==='refund' ? (
+                              adj.applied
+                                ? <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ {peso(adj.refund_amount)} applied · {appliedCutoff?.label||''}</span>
+                                : <span style={{color:'#a06000',fontWeight:700}}>⏳ {peso(adj.refund_amount)} refund due — next payroll</span>
+                            ) : '—'}
+                          </td>
+                          <td style={{padding:'9px 12px',color:'var(--text-muted)',fontSize:10}}>{adj.review_note||'—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </div>
         )}
       </div>
