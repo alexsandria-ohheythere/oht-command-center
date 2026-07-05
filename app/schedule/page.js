@@ -285,6 +285,7 @@ export default function SchedulePage() {
           </div>
         </div>
         <div style={{display:'flex',gap:9,alignItems:'center'}}>
+          <a href="/schedule/timesheet" style={{background:'transparent',border:'1px solid var(--border)',color:'var(--text-primary)',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",textDecoration:'none'}}>🗒️ Timesheet</a>
           <button onClick={clearWeek} style={{background:'transparent',border:'1px solid #f5c6c6',color:'#c0392b',borderRadius:8,padding:'7px 14px',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Clear Week</button>
           <button onClick={()=>setShowPublishModal(true)}
             style={{background:isPublished?'var(--matcha-dark)':'var(--matcha)',color:'white',border:'none',borderRadius:8,padding:'8px 16px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
