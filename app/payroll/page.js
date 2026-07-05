@@ -350,7 +350,7 @@ export default function PayrollPage() {
     try {
       // Already-saved cutoff for this staff member? → refund path. Otherwise → auto timesheet-correction path.
       const { data: existingRun } = await supabase.from('payroll_runs')
-        .select('id, required_days, gross, days_worked')
+        .select('id, required_days, gross, days_worked, total_late_mins, late_deduction')
         .eq('cutoff_id', adj.cutoff_id).eq('staff_id', adj.staff_id).maybeSingle()
 
       if (!existingRun) {
@@ -381,6 +381,17 @@ export default function PayrollPage() {
         const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out) : null
         const refundAmount = correctedShift ? computeAdjustmentRefundAmount({ hourlyRate, minuteRate, originalShift, correctedShift }) : 0
 
+        // Sync against the actual saved cutoff totals — "how much was really deducted for the
+        // whole cutoff" vs "what it should be once this one shift is corrected."
+        const recordedLateDeduction = parseFloat(existingRun.late_deduction) || 0
+        const recordedTotalLateMins = existingRun.total_late_mins || 0
+        const origLateMins = originalShift?.lateMinutes || 0
+        const corrLateMins = correctedShift?.lateMinutes || 0
+        const supposedTotalLateMins = Math.max(0, recordedTotalLateMins - origLateMins + corrLateMins)
+        const supposedLateDeduction = Math.round(supposedTotalLateMins * minuteRate)
+        const lateRefund = recordedLateDeduction - supposedLateDeduction
+        const extraHoursCredit = refundAmount - lateRefund
+
         if (!originalShiftFound) {
           const proceed = confirm(`⚠️ Could not find ${staffMember.first_name}'s original shift on ${dateMMDDYYYY} in the archived timesheet for ${cutoff?.label}.\n\nThe refund will be calculated as if they worked 0 hours originally — meaning it will credit the FULL corrected shift (${peso(refundAmount)}), not just the difference. This may overpay.\n\nApprove anyway?`)
           if (!proceed) { setApproving(null); return }
@@ -392,9 +403,13 @@ export default function PayrollPage() {
           calc_hourly_rate: Math.round(hourlyRate * 100) / 100,
           calc_original_paid_hours: originalShift?.paidHours || 0,
           calc_corrected_paid_hours: correctedShift?.paidHours || 0,
-          calc_original_late_mins: originalShift?.lateMinutes || 0,
-          calc_corrected_late_mins: correctedShift?.lateMinutes || 0,
+          calc_original_late_mins: origLateMins,
+          calc_corrected_late_mins: corrLateMins,
           calc_original_shift_found: originalShiftFound,
+          calc_recorded_late_deduction: recordedLateDeduction,
+          calc_supposed_late_deduction: supposedLateDeduction,
+          calc_late_refund: lateRefund,
+          calc_extra_hours_credit: extraHoursCredit,
         }).eq('id', adj.id)
         if (error) throw error
         showToast('✅', `Approved — ${peso(refundAmount)} refund will apply to their next payroll`)
@@ -1038,7 +1053,11 @@ export default function PayrollPage() {
                                   {adj.calc_original_shift_found===false && (
                                     <div style={{marginTop:4,fontSize:9,fontWeight:700,color:'#c0392b'}}>⚠️ Original shift not found — full corrected shift was credited, not just the difference. Verify manually before paying.</div>
                                   )}
-                                  {adj.calc_hourly_rate!=null && (
+                                  {adj.calc_recorded_late_deduction!=null ? (
+                                    <div style={{marginTop:4,fontSize:9,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
+                                      Late ded. {peso(adj.calc_recorded_late_deduction)}→{peso(adj.calc_supposed_late_deduction)} (refund ₱{adj.calc_late_refund}) + hrs credit {peso(adj.calc_extra_hours_credit)}
+                                    </div>
+                                  ) : adj.calc_hourly_rate!=null && (
                                     <div style={{marginTop:4,fontSize:9,color:'var(--text-muted)',fontFamily:"'DM Mono',monospace"}}>
                                       {adj.calc_original_paid_hours}h→{adj.calc_corrected_paid_hours}h · late {adj.calc_original_late_mins}→{adj.calc_corrected_late_mins}m · @₱{adj.calc_hourly_rate}/hr
                                     </div>
