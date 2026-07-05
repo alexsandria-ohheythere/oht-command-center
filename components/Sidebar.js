@@ -55,6 +55,7 @@ export default function Sidebar({ user, userRole, onClose }) {
   const isActive = href => {
     if (href === '/dashboard') return pathname === href
     if (href === '/finance') return pathname === '/finance'
+    if (href === '/schedule') return pathname === '/schedule'
     return pathname.startsWith(href)
   }
 
@@ -72,6 +73,7 @@ export default function Sidebar({ user, userRole, onClose }) {
 
     { type:'section', label:'Operations' },
     { type:'link', id:'schedule',         href:'/schedule',               icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
+    { type:'link', id:'timesheet',        href:'/schedule/timesheet',     icon:'🗒️', label:'Timesheet',            show: can(role,'schedule') },
     { type:'link', id:'tasks',            href:'/tasks',                  icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
     { type:'link', id:'leave',            href:'/leave',                  icon:'🗓️', label:'Leave & Unavail.',     show: can(role,'leaveReview') },
     { type:'link', id:'dayoff',           href:'/dayoff',                 icon:'📆', label:'Day-Off',               show: can(role,'schedule') },
