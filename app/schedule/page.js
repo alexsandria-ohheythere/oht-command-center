@@ -25,28 +25,28 @@ const ROLE_ROWS = [
   // AM
   { shiftId:'am', role:'Cafe Supervisor',          label:'Cafe Supervisor',    group:'front' },
   { shiftId:'am', role:'Cafe Operations Support',  label:'Cafe Support',       group:'front' },
+  { shiftId:'am', role:'Senior Barista',            label:'Senior Barista',     group:'bar', divider:true, dividerLabel:'🧋 Bar' },
+  { shiftId:'am', role:'Junior Barista',            label:'Junior Barista',     group:'bar' },
   { shiftId:'am', role:'Executive Chef',            label:'Executive Chef',     group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen' },
   { shiftId:'am', role:'Sous Chef',                 label:'Sous Chef',          group:'kitchen' },
   { shiftId:'am', role:'Kitchen Staff',             label:'Kitchen Staff',      group:'kitchen' },
-  { shiftId:'am', role:'Senior Barista',            label:'Senior Barista',     group:'bar', divider:true, dividerLabel:'🧋 Bar' },
-  { shiftId:'am', role:'Junior Barista',            label:'Junior Barista',     group:'bar' },
   // OPS
   { shiftId:'ops', role:'Cafe Supervisor',         label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'ops', role:'Cafe Operations Support', label:'Cafe Support',      group:'front' },
   // MID
   { shiftId:'mid', role:'Cafe Supervisor',          label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'mid', role:'Cafe Operations Support',  label:'Cafe Support',      group:'front' },
+  { shiftId:'mid', role:'Junior Barista',           label:'Junior Barista',    group:'bar', divider:true, dividerLabel:'🧋 Bar' },
   { shiftId:'mid', role:'Sous Chef',                label:'Sous Chef',         group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen' },
   { shiftId:'mid', role:'Kitchen Staff',            label:'Kitchen Staff',     group:'kitchen' },
-  { shiftId:'mid', role:'Junior Barista',           label:'Junior Barista',    group:'bar', divider:true, dividerLabel:'🧋 Bar' },
   // PM
   { shiftId:'pm', role:'Cafe Supervisor',           label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'pm', role:'Cafe Operations Support',   label:'Cafe Support',      group:'front' },
+  { shiftId:'pm', role:'Senior Barista',            label:'Senior Barista',    group:'bar', divider:true, dividerLabel:'🧋 Bar' },
+  { shiftId:'pm', role:'Junior Barista',            label:'Junior Barista',    group:'bar' },
   { shiftId:'pm', role:'Executive Chef',            label:'Executive Chef',    group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen' },
   { shiftId:'pm', role:'Sous Chef',                 label:'Sous Chef',         group:'kitchen' },
   { shiftId:'pm', role:'Kitchen Staff',             label:'Kitchen Staff',     group:'kitchen' },
-  { shiftId:'pm', role:'Senior Barista',            label:'Senior Barista',    group:'bar', divider:true, dividerLabel:'🧋 Bar' },
-  { shiftId:'pm', role:'Junior Barista',            label:'Junior Barista',    group:'bar' },
 ]
 
 const DAYS = ['MON','TUE','WED','THU','FRI','SAT','SUN']
