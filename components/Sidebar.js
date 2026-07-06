@@ -70,6 +70,7 @@ export default function Sidebar({ user, userRole, onClose }) {
     { type:'link', id:'forecast',         href:'/finance/forecast',       icon:'📈', label:'Forecast',             show: can(role,'finance') },
     { type:'link', id:'bank',             href:'/finance/bank',           icon:'🏦', label:'Bank Records',         show: can(role,'finance') },
     { type:'link', id:'cogs',             href:'/finance/cogs',           icon:'🧮', label:'Cost of Goods (COGS)', show: can(role,'admin') },
+    { type:'link', id:'products',         href:'/finance/products',       icon:'🛍️', label:'Product Performance',  show: can(role,'finance') },
 
     { type:'section', label:'Operations' },
     { type:'link', id:'schedule',         href:'/schedule',               icon:'📅', label:'Scheduling',           show: can(role,'schedule') },
