@@ -6,6 +6,11 @@ import { createClient } from '../../lib/supabase'
 const peso = n => '₱' + (parseFloat(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
 const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—'
+const toMonthStr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
+const monthRange = monthStr => {
+  const [y,m] = monthStr.split('-').map(Number)
+  return [toISO(new Date(y, m-1, 1)), toISO(new Date(y, m, 0))]
+}
 
 const TABS = [
   { id:'overview',   label:'Financial Statement', icon:'📊' },
@@ -45,8 +50,9 @@ export default function FinancePage() {
   const supabase = createClient()
   const [tab, setTab]                   = useState('overview')
   const [period, setPeriod]             = useState('Monthly')
-  const [dateFrom, setDateFrom]         = useState(toISO(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
-  const [dateTo, setDateTo]             = useState(toISO(new Date()))
+  const [monthValue, setMonthValue]     = useState(toMonthStr(new Date()))
+  const [dateFrom, setDateFrom]         = useState(monthRange(toMonthStr(new Date()))[0])
+  const [dateTo, setDateTo]             = useState(monthRange(toMonthStr(new Date()))[1])
   const [sales, setSales]               = useState([])
   const [expenses, setExpenses]         = useState([])
   const [categories, setCategories]     = useState([])
@@ -95,8 +101,10 @@ export default function FinancePage() {
       const mon = new Date(now); mon.setDate(now.getDate()-(day===0?6:day-1))
       setDateFrom(toISO(mon)); setDateTo(toISO(now))
     } else if (p==='Monthly') {
-      setDateFrom(toISO(new Date(now.getFullYear(),now.getMonth(),1)))
-      setDateTo(toISO(now))
+      const mv = toMonthStr(now)
+      const [f,t] = monthRange(mv)
+      setMonthValue(mv)
+      setDateFrom(f); setDateTo(t)
     } else if (p==='Cutoff') {
       const day = now.getDate()
       if (day<=14) { setDateFrom(toISO(new Date(now.getFullYear(),now.getMonth()-1,31))); setDateTo(toISO(new Date(now.getFullYear(),now.getMonth(),14))) }
@@ -334,9 +342,26 @@ export default function FinancePage() {
               </button>
             ))}
           </div>
-          <input type="date" value={dateFrom} onChange={e=>{setDateFrom(e.target.value);setPeriod('')}} style={{...iStyle,width:'auto',padding:'6px 10px'}} />
-          <span style={{fontSize:11,color:'var(--text-muted)'}}>to</span>
-          <input type="date" value={dateTo} onChange={e=>{setDateTo(e.target.value);setPeriod('')}} style={{...iStyle,width:'auto',padding:'6px 10px'}} />
+          {period === 'Monthly' ? (
+            <input
+              type="month"
+              value={monthValue}
+              onChange={e=>{
+                const mv = e.target.value
+                if (!mv) return
+                setMonthValue(mv)
+                const [f,t] = monthRange(mv)
+                setDateFrom(f); setDateTo(t)
+              }}
+              style={{...iStyle,width:'auto',padding:'6px 10px'}}
+            />
+          ) : (
+            <>
+              <input type="date" value={dateFrom} onChange={e=>{setDateFrom(e.target.value);setPeriod('')}} style={{...iStyle,width:'auto',padding:'6px 10px'}} />
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>to</span>
+              <input type="date" value={dateTo} onChange={e=>{setDateTo(e.target.value);setPeriod('')}} style={{...iStyle,width:'auto',padding:'6px 10px'}} />
+            </>
+          )}
         </div>
       </div>
 
