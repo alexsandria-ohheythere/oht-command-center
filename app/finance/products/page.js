@@ -28,12 +28,14 @@ export default function ProductPerformancePage() {
   const [sortField, setSortField] = useState('net_sales')
   const [sortDir, setSortDir]     = useState('desc')
 
-  // Period filter: 'latest' shows the most recently uploaded snapshot for a
-  // breakdown type. 'month' / 'custom' look for a snapshot whose exact
-  // uploaded period matches the picked window (since each row is already a
-  // pre-aggregated total for whatever range was exported from StoreHub —
-  // there's no daily data underneath to re-slice).
-  const [periodMode, setPeriodMode] = useState('latest')
+  // Period filter: 'all' combines every uploaded snapshot for a breakdown type
+  // into one running total (grouped by product/category/variant/sku so the
+  // same item across multiple uploads gets summed, not duplicated). 'month' /
+  // 'custom' narrow that combination to only the uploads that fit ENTIRELY
+  // inside the picked window — a snapshot that only partially overlaps is
+  // left out rather than guessed at, since there's no daily data underneath
+  // to split it accurately.
+  const [periodMode, setPeriodMode] = useState('all')
   const [monthPick, setMonthPick]   = useState('')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo]     = useState('')
@@ -134,7 +136,6 @@ export default function ProductPerformancePage() {
       if (error) { showToast('❌',error.message); setSaving(false); return }
       await fetchProductPerf()
       setProductView(breakdownType)
-      setPeriodMode('latest')
       showToast('✅',`${rows.length} rows imported — ${PRODUCT_VIEWS.find(v=>v.id===breakdownType)?.label} (${fmtDate(periodStart)} – ${fmtDate(periodEnd)})`)
       setSaving(false)
     }
@@ -149,30 +150,58 @@ export default function ProductPerformancePage() {
       const key = `${r.period_start}_${r.period_end}`
       if (!map.has(key)) map.set(key, { start:r.period_start, end:r.period_end, uploaded_at:r.uploaded_at })
     })
-    return Array.from(map.values()).sort((a,b)=> new Date(b.uploaded_at) - new Date(a.uploaded_at))
+    return Array.from(map.values()).sort((a,b)=> new Date(a.uploaded_at) - new Date(b.uploaded_at))
   }
 
-  function resolvePeriod(type) {
+  // Which uploaded periods qualify to be combined together, given the current filter.
+  function qualifyingPeriods(type) {
     const periods = availablePeriods(type)
-    if (!periods.length) return { period:null, periods }
+    if (!periods.length) return { list:[], periods, awaitingInput:false }
     if (periodMode==='month') {
-      if (!monthPick) return { period:null, periods, awaitingInput:true }
+      if (!monthPick) return { list:[], periods, awaitingInput:true }
       const [y,m] = monthPick.split('-').map(Number)
-      const first = `${monthPick}-01`
-      const last  = toISO(new Date(y, m, 0))
-      return { period: periods.find(p=>p.start===first && p.end===last) || null, periods }
+      const monthStart = `${monthPick}-01`
+      const monthEnd   = toISO(new Date(y, m, 0))
+      return { list: periods.filter(p=>p.start>=monthStart && p.end<=monthEnd), periods, awaitingInput:false }
     }
     if (periodMode==='custom') {
-      if (!customFrom || !customTo) return { period:null, periods, awaitingInput:true }
-      return { period: periods.find(p=>p.start===customFrom && p.end===customTo) || null, periods }
+      if (!customFrom || !customTo) return { list:[], periods, awaitingInput:true }
+      return { list: periods.filter(p=>p.start>=customFrom && p.end<=customTo), periods, awaitingInput:false }
     }
-    return { period: periods[0], periods }
+    return { list: periods, periods, awaitingInput:false } // 'all'
+  }
+
+  // Merge rows from every qualifying period into one running total,
+  // grouped by the entity's natural identity (so the same product across
+  // multiple uploads adds up instead of appearing as duplicate rows).
+  function mergeRows(type, rawRows) {
+    const keyFor = r => {
+      if (type==='product')  return 'p:'+(r.product_name||'Unnamed').trim().toLowerCase()
+      if (type==='category') return 'c:'+(r.category||'Uncategorized').trim().toLowerCase()
+      if (type==='variant')  return 'v:'+(r.variant_group||'Ungrouped').trim().toLowerCase()+'|'+(r.variant_option||'—').trim().toLowerCase()
+      if (type==='sku')      return r.sku ? 's:'+r.sku.trim().toLowerCase() : 'noskufor:'+(r.product_name||'Unnamed').trim().toLowerCase()
+      return r.id
+    }
+    const groups = new Map()
+    for (const r of rawRows) {
+      const key = keyFor(r)
+      if (!groups.has(key)) groups.set(key, { ...r, quantity:0, gross_sales:0, sales_returned:0, discount_amount:0, net_sales:0, gross_profit:0 })
+      const g = groups.get(key)
+      g.quantity        += parseFloat(r.quantity)||0
+      g.gross_sales     += parseFloat(r.gross_sales)||0
+      g.sales_returned  += parseFloat(r.sales_returned)||0
+      g.discount_amount += parseFloat(r.discount_amount)||0
+      g.net_sales       += parseFloat(r.net_sales)||0
+      g.gross_profit    += parseFloat(r.gross_profit)||0
+    }
+    return Array.from(groups.values()).map(g=>({ ...g, gross_profit_pct: g.gross_sales>0 ? (g.gross_profit/g.gross_sales*100) : 0 }))
   }
 
   function rowsForType(type) {
-    const { period } = resolvePeriod(type)
-    if (!period) return []
-    return productPerf.filter(r=>r.breakdown_type===type && r.period_start===period.start && r.period_end===period.end)
+    const { list } = qualifyingPeriods(type)
+    if (!list.length) return []
+    const raw = productPerf.filter(r=>r.breakdown_type===type && list.some(p=>p.start===r.period_start && p.end===r.period_end))
+    return mergeRows(type, raw)
   }
 
   // ── SORTING ──
@@ -201,7 +230,8 @@ export default function ProductPerformancePage() {
   }
 
   const isSummary = productView==='summary'
-  const { period: activePeriod, periods: activePeriods, awaitingInput } = isSummary ? resolvePeriod('product') : resolvePeriod(productView)
+  const bannerType = isSummary ? 'product' : productView
+  const { list: qualifyingList, periods: allPeriodsForType, awaitingInput } = qualifyingPeriods(bannerType)
   const rawRows = isSummary ? [] : rowsForType(productView)
   const rows = isSummary ? [] : sortRows(rawRows)
   const totalQty    = rawRows.reduce((a,r)=>a+(parseFloat(r.quantity)||0),0)
@@ -270,7 +300,7 @@ export default function ProductPerformancePage() {
         {/* ── PERIOD FILTER ── */}
         <div style={{display:'flex',gap:9,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
           <div style={{display:'flex',gap:5}}>
-            {[['latest','Latest Upload'],['month','By Month'],['custom','Custom Range']].map(([id,label])=>(
+            {[['all','All Combined'],['month','By Month'],['custom','Custom Range']].map(([id,label])=>(
               <button key={id} onClick={()=>setPeriodMode(id)}
                 style={{padding:'6px 12px',borderRadius:7,border:`1px solid ${periodMode===id?'var(--espresso)':'var(--border)'}`,background:periodMode===id?'var(--espresso)':'transparent',color:periodMode===id?'var(--cream)':'var(--text-muted)',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
                 {label}
@@ -295,20 +325,26 @@ export default function ProductPerformancePage() {
           )}
         </div>
 
-        {activePeriod ? (
+        {qualifyingList.length>0 ? (
           <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>
-            📅 Showing: <strong>{fmtDate(activePeriod.start)} – {fmtDate(activePeriod.end)}</strong>
+            📅 {qualifyingList.length===1
+              ? <>Showing: <strong>{fmtDate(qualifyingList[0].start)} – {fmtDate(qualifyingList[0].end)}</strong></>
+              : <>Combining {qualifyingList.length} uploads: <strong>{qualifyingList.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}</strong></>
+            }
+            {qualifyingList.length < allPeriodsForType.length && (
+              <span style={{color:'#b8860b'}}> · {allPeriodsForType.length - qualifyingList.length} other upload(s) excluded — they extend outside this range</span>
+            )}
           </div>
         ) : awaitingInput ? (
           <div style={{fontSize:11,color:'var(--sky)',marginBottom:14,background:'var(--sky-pale)',border:'1px solid #4a90c444',borderRadius:8,padding:'8px 12px'}}>
-            {periodMode==='month' ? 'Pick a month above' : 'Pick a start and end date above'} to view that period.
-            {activePeriods.length>0 && <> Uploaded periods available: {activePeriods.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}.</>}
+            {periodMode==='month' ? 'Pick a month above' : 'Pick a start and end date above'} to combine uploads within that window.
+            {allPeriodsForType.length>0 && <> Uploaded periods available: {allPeriodsForType.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}.</>}
           </div>
-        ) : (periodMode!=='latest' && (
+        ) : (periodMode!=='all' && allPeriodsForType.length>0 && (
           <div style={{fontSize:11,color:'#c0392b',marginBottom:14,background:'#fdeaea',border:'1px solid #f5c6c6',borderRadius:8,padding:'8px 12px'}}>
-            No uploaded report matches that {periodMode==='month'?'month':'date range'} exactly.
-            {activePeriods.length>0 && <> Available: {activePeriods.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}.</>}
-            {' '}Upload a StoreHub export covering this exact range to see it here.
+            No uploaded report fits entirely inside that {periodMode==='month'?'month':'date range'}.
+            {' '}Available: {allPeriodsForType.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}.
+            {' '}Switch to "All Combined" to see everything, or upload a report scoped to this exact window.
           </div>
         ))}
 
