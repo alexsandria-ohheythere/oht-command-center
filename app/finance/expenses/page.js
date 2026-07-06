@@ -39,7 +39,7 @@ export default function ExpensesPage() {
 
   async function fetchAll() {
     setLoading(true)
-    let q = supabase.from('expenses').select('*, expense_categories(name,color,icon)').order('expense_date',{ascending:false})
+    let q = supabase.from('expenses').select('id, expense_date, category_id, notes, description, amount, company, tin, address, discount, vat_type, vatable_sales, vat_amount, payment_method, owner, uploader, paid_by, receipt_url, expense_categories(name,color,icon)').order('expense_date',{ascending:false})
     if(!allTime) q = q.gte('expense_date',dateFrom).lte('expense_date',dateTo)
     const [{data:e},{data:c}] = await Promise.all([
       q,
@@ -142,6 +142,7 @@ export default function ExpensesPage() {
                   <div><label style={lStyle}>Date</label><input style={iStyle} type="date" value={form.expense_date} onChange={fv('expense_date')}/></div>
                   <div><label style={lStyle}>Amount</label><input style={iStyle} type="number" placeholder="0.00" value={form.amount} onChange={fv('amount')}/></div>
                   <div style={{gridColumn:'1/-1'}}><label style={lStyle}>Description</label><input style={iStyle} placeholder="What was this for?" value={form.description} onChange={fv('description')}/></div>
+                  <div style={{gridColumn:'1/-1'}}><label style={lStyle}>Notes (optional)</label><input style={iStyle} placeholder="Any additional notes" value={form.notes} onChange={fv('notes')}/></div>
                   <div style={{gridColumn:'1/-1'}}><label style={lStyle}>Vendor / Company (optional)</label><input style={iStyle} placeholder="e.g. Puregold, Grab, Meralco" value={form.company} onChange={fv('company')}/></div>
                   <div>
                     <label style={lStyle}>Category</label>
@@ -230,7 +231,7 @@ export default function ExpensesPage() {
               <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                   <thead><tr style={{background:'var(--espresso)'}}>
-                    {['Date','Category','Description','Vendor','Amount','Payment',''].map(h=>(
+                    {['Date','Category','Notes','Amount','Company','TIN','Address',''].map(h=>(
                       <th key={h} style={{padding:'10px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}}>{h}</th>
                     ))}
                   </tr></thead>
@@ -238,33 +239,32 @@ export default function ExpensesPage() {
                     {filtered.map((e,i)=>{
                       const cat=e.expense_categories
                       const expanded = expandedId===e.id
-                      const hasDetails = e.tin||e.address||e.vat_type||e.discount>0||e.receipt_url||e.uploader||e.owner
+                      const hasDetails = e.payment_method||e.vat_type||e.discount>0||e.receipt_url||e.uploader||e.owner||e.vatable_sales||e.vat_amount
                       return(
                         <>
                         <tr key={e.id} style={{borderBottom:expanded?'none':'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
-                          <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontWeight:600}}>{fmtDate(e.expense_date)}</td>
+                          <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontWeight:600,whiteSpace:'nowrap'}}>{fmtDate(e.expense_date)}</td>
                           <td style={{padding:'9px 12px'}}>{cat?<span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:6,background:cat.color+'22',color:cat.color}}>{cat.icon} {cat.name}</span>:<span style={{color:'var(--text-muted)',fontSize:10}}>—</span>}</td>
-                          <td style={{padding:'9px 12px',fontWeight:500}}>{e.description}</td>
+                          <td style={{padding:'9px 12px',fontWeight:500}}>{e.notes||e.description||'—'}</td>
+                          <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#c0392b',whiteSpace:'nowrap'}}>{peso(e.amount)}</td>
                           <td style={{padding:'9px 12px',color:'var(--text-muted)'}}>{e.company||'—'}</td>
-                          <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#c0392b'}}>{peso(e.amount)}</td>
-                          <td style={{padding:'9px 12px',color:'var(--text-muted)'}}>{e.payment_method||(e.paid_by?e.paid_by.charAt(0).toUpperCase()+e.paid_by.slice(1):'—')}</td>
+                          <td style={{padding:'9px 12px',color:'var(--text-muted)',fontFamily:"'DM Mono',monospace",fontSize:11}}>{e.tin||'—'}</td>
+                          <td style={{padding:'9px 12px',color:'var(--text-muted)',maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={e.address||''}>{e.address||'—'}</td>
                           <td style={{padding:'9px 12px',whiteSpace:'nowrap'}}>
-                            {hasDetails&&<button onClick={()=>setExpandedId(expanded?null:e.id)} style={{background:'transparent',border:'none',color:'var(--sky)',cursor:'pointer',fontSize:10,fontWeight:600,marginRight:8}}>{expanded?'Hide':'Details'}</button>}
+                            {hasDetails&&<button onClick={()=>setExpandedId(expanded?null:e.id)} style={{background:'transparent',border:'none',color:'var(--sky)',cursor:'pointer',fontSize:10,fontWeight:600,marginRight:8}}>{expanded?'Hide':'More'}</button>}
                             <button onClick={()=>deleteExpense(e.id)} style={{background:'transparent',border:'none',color:'var(--border)',cursor:'pointer',fontSize:13}} onMouseEnter={x=>x.target.style.color='#c0392b'} onMouseLeave={x=>x.target.style.color='var(--border)'}>🗑</button>
                           </td>
                         </tr>
                         {expanded&&(
                           <tr key={e.id+'-details'} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
-                            <td colSpan={7} style={{padding:'4px 12px 14px 12px'}}>
+                            <td colSpan={8} style={{padding:'4px 12px 14px 12px'}}>
                               <div style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:'6px 18px',fontSize:11,background:'var(--cream)',borderRadius:8,padding:'10px 14px'}}>
-                                {e.tin&&<div><span style={{color:'var(--text-muted)'}}>TIN: </span><span style={{fontFamily:"'DM Mono',monospace"}}>{e.tin}</span></div>}
+                                {e.payment_method&&<div><span style={{color:'var(--text-muted)'}}>Payment: </span>{e.payment_method}</div>}
                                 {e.discount>0&&<div><span style={{color:'var(--text-muted)'}}>Discount: </span>{peso(e.discount)}</div>}
                                 {e.vat_type&&<div><span style={{color:'var(--text-muted)'}}>VAT: </span>{e.vat_type} {e.vat_amount?`(${peso(e.vat_amount)})`:''}</div>}
                                 {e.uploader&&<div><span style={{color:'var(--text-muted)'}}>Uploaded by: </span>{e.uploader}</div>}
                                 {e.owner&&<div><span style={{color:'var(--text-muted)'}}>Owner: </span>{e.owner}</div>}
                                 {e.receipt_url&&<div><a href={e.receipt_url} target="_blank" rel="noreferrer" style={{color:'var(--sky)',fontWeight:600,textDecoration:'none'}}>📎 View receipt</a></div>}
-                                {e.address&&<div style={{gridColumn:'1/-1'}}><span style={{color:'var(--text-muted)'}}>Address: </span>{e.address}</div>}
-                                {e.notes&&<div style={{gridColumn:'1/-1'}}><span style={{color:'var(--text-muted)'}}>Notes: </span>{e.notes}</div>}
                               </div>
                             </td>
                           </tr>
@@ -274,9 +274,9 @@ export default function ExpensesPage() {
                     })}
                   </tbody>
                   <tfoot><tr style={{background:'var(--espresso)'}}>
-                    <td colSpan={4} style={{padding:'10px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
+                    <td colSpan={3} style={{padding:'10px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
                     <td style={{padding:'10px 12px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#f5a0a0'}}>{peso(total)}</td>
-                    <td colSpan={2}/>
+                    <td colSpan={4}/>
                   </tr></tfoot>
                 </table>
               </div>
