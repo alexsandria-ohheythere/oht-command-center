@@ -153,27 +153,46 @@ export default function ProductPerformancePage() {
     return Array.from(map.values()).sort((a,b)=> new Date(a.uploaded_at) - new Date(b.uploaded_at))
   }
 
+  // What fraction of an uploaded period's days fall inside the requested window.
+  // 1.0 = fully inside (exact numbers). Less than 1.0 = the upload spans beyond
+  // the window, so its totals are proportionally scaled assuming sales were spread
+  // evenly across its days — an ESTIMATE, not an exact figure.
+  function overlapFraction(period, winStart, winEnd) {
+    const pStart = new Date(period.start+'T00:00:00'), pEnd = new Date(period.end+'T00:00:00')
+    const wStart = new Date(winStart+'T00:00:00'), wEnd = new Date(winEnd+'T00:00:00')
+    const oStart = pStart > wStart ? pStart : wStart
+    const oEnd   = pEnd < wEnd ? pEnd : wEnd
+    const overlapDays = Math.max(0, Math.round((oEnd-oStart)/86400000) + 1)
+    const periodDays  = Math.max(1, Math.round((pEnd-pStart)/86400000) + 1)
+    return Math.min(1, overlapDays/periodDays)
+  }
+
   // Which uploaded periods qualify to be combined together, given the current filter.
+  // Each returned period carries a `weight` (0–1) reflecting how much of it falls
+  // inside the window — 1 for 'All Combined' and for uploads fully inside the window.
   function qualifyingPeriods(type) {
     const periods = availablePeriods(type)
     if (!periods.length) return { list:[], periods, awaitingInput:false }
     if (periodMode==='month') {
       if (!monthPick) return { list:[], periods, awaitingInput:true }
       const [y,m] = monthPick.split('-').map(Number)
-      const monthStart = `${monthPick}-01`
-      const monthEnd   = toISO(new Date(y, m, 0))
-      return { list: periods.filter(p=>p.start>=monthStart && p.end<=monthEnd), periods, awaitingInput:false }
+      const winStart = `${monthPick}-01`
+      const winEnd   = toISO(new Date(y, m, 0))
+      const list = periods.map(p=>({ ...p, weight: overlapFraction(p, winStart, winEnd) })).filter(p=>p.weight>0)
+      return { list, periods, awaitingInput:false }
     }
     if (periodMode==='custom') {
       if (!customFrom || !customTo) return { list:[], periods, awaitingInput:true }
-      return { list: periods.filter(p=>p.start>=customFrom && p.end<=customTo), periods, awaitingInput:false }
+      const list = periods.map(p=>({ ...p, weight: overlapFraction(p, customFrom, customTo) })).filter(p=>p.weight>0)
+      return { list, periods, awaitingInput:false }
     }
-    return { list: periods, periods, awaitingInput:false } // 'all'
+    return { list: periods.map(p=>({ ...p, weight:1 })), periods, awaitingInput:false } // 'all'
   }
 
   // Merge rows from every qualifying period into one running total,
   // grouped by the entity's natural identity (so the same product across
   // multiple uploads adds up instead of appearing as duplicate rows).
+  // Rows are pre-scaled by their period's overlap weight before merging.
   function mergeRows(type, rawRows) {
     const keyFor = r => {
       if (type==='product')  return 'p:'+(r.product_name||'Unnamed').trim().toLowerCase()
@@ -201,7 +220,20 @@ export default function ProductPerformancePage() {
     const { list } = qualifyingPeriods(type)
     if (!list.length) return []
     const raw = productPerf.filter(r=>r.breakdown_type===type && list.some(p=>p.start===r.period_start && p.end===r.period_end))
-    return mergeRows(type, raw)
+    const weighted = raw.map(r=>{
+      const p = list.find(p=>p.start===r.period_start && p.end===r.period_end)
+      const w = p ? p.weight : 1
+      return {
+        ...r,
+        quantity:        (parseFloat(r.quantity)||0) * w,
+        gross_sales:     (parseFloat(r.gross_sales)||0) * w,
+        sales_returned:  (parseFloat(r.sales_returned)||0) * w,
+        discount_amount: (parseFloat(r.discount_amount)||0) * w,
+        net_sales:       (parseFloat(r.net_sales)||0) * w,
+        gross_profit:    (parseFloat(r.gross_profit)||0) * w,
+      }
+    })
+    return mergeRows(type, weighted)
   }
 
   // ── SORTING ──
@@ -327,12 +359,14 @@ export default function ProductPerformancePage() {
 
         {qualifyingList.length>0 ? (
           <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>
-            📅 {qualifyingList.length===1
+            📅 {qualifyingList.length===1 && qualifyingList[0].weight===1
               ? <>Showing: <strong>{fmtDate(qualifyingList[0].start)} – {fmtDate(qualifyingList[0].end)}</strong></>
-              : <>Combining {qualifyingList.length} uploads: <strong>{qualifyingList.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}</strong></>
+              : <>Combining {qualifyingList.length} upload{qualifyingList.length>1?'s':''}: <strong>{qualifyingList.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}</strong></>
             }
-            {qualifyingList.length < allPeriodsForType.length && (
-              <span style={{color:'#b8860b'}}> · {allPeriodsForType.length - qualifyingList.length} other upload(s) excluded — they extend outside this range</span>
+            {qualifyingList.some(p=>p.weight<1) && (
+              <div style={{color:'#b8860b',marginTop:4}}>
+                ⚠️ Estimated: {periodMode==='month'?'this month':'this range'} doesn't line up exactly with your upload(s), so figures from the partially-overlapping upload are prorated by day count (assumes sales were spread evenly across it) — treat as an approximation, not an exact number.
+              </div>
             )}
           </div>
         ) : awaitingInput ? (
@@ -342,9 +376,8 @@ export default function ProductPerformancePage() {
           </div>
         ) : (periodMode!=='all' && allPeriodsForType.length>0 && (
           <div style={{fontSize:11,color:'#c0392b',marginBottom:14,background:'#fdeaea',border:'1px solid #f5c6c6',borderRadius:8,padding:'8px 12px'}}>
-            No uploaded report fits entirely inside that {periodMode==='month'?'month':'date range'}.
+            None of your uploads overlap that {periodMode==='month'?'month':'date range'} at all.
             {' '}Available: {allPeriodsForType.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}.
-            {' '}Switch to "All Combined" to see everything, or upload a report scoped to this exact window.
           </div>
         ))}
 
