@@ -155,13 +155,15 @@ export default function ProductPerformancePage() {
   function resolvePeriod(type) {
     const periods = availablePeriods(type)
     if (!periods.length) return { period:null, periods }
-    if (periodMode==='month' && monthPick) {
+    if (periodMode==='month') {
+      if (!monthPick) return { period:null, periods, awaitingInput:true }
       const [y,m] = monthPick.split('-').map(Number)
       const first = `${monthPick}-01`
       const last  = toISO(new Date(y, m, 0))
       return { period: periods.find(p=>p.start===first && p.end===last) || null, periods }
     }
-    if (periodMode==='custom' && customFrom && customTo) {
+    if (periodMode==='custom') {
+      if (!customFrom || !customTo) return { period:null, periods, awaitingInput:true }
       return { period: periods.find(p=>p.start===customFrom && p.end===customTo) || null, periods }
     }
     return { period: periods[0], periods }
@@ -199,7 +201,7 @@ export default function ProductPerformancePage() {
   }
 
   const isSummary = productView==='summary'
-  const { period: activePeriod, periods: activePeriods } = isSummary ? resolvePeriod('product') : resolvePeriod(productView)
+  const { period: activePeriod, periods: activePeriods, awaitingInput } = isSummary ? resolvePeriod('product') : resolvePeriod(productView)
   const rawRows = isSummary ? [] : rowsForType(productView)
   const rows = isSummary ? [] : sortRows(rawRows)
   const totalQty    = rawRows.reduce((a,r)=>a+(parseFloat(r.quantity)||0),0)
@@ -296,6 +298,11 @@ export default function ProductPerformancePage() {
         {activePeriod ? (
           <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>
             📅 Showing: <strong>{fmtDate(activePeriod.start)} – {fmtDate(activePeriod.end)}</strong>
+          </div>
+        ) : awaitingInput ? (
+          <div style={{fontSize:11,color:'var(--sky)',marginBottom:14,background:'var(--sky-pale)',border:'1px solid #4a90c444',borderRadius:8,padding:'8px 12px'}}>
+            {periodMode==='month' ? 'Pick a month above' : 'Pick a start and end date above'} to view that period.
+            {activePeriods.length>0 && <> Uploaded periods available: {activePeriods.map(p=>`${fmtDate(p.start)}–${fmtDate(p.end)}`).join(', ')}.</>}
           </div>
         ) : (periodMode!=='latest' && (
           <div style={{fontSize:11,color:'#c0392b',marginBottom:14,background:'#fdeaea',border:'1px solid #f5c6c6',borderRadius:8,padding:'8px 12px'}}>
