@@ -281,7 +281,7 @@ export default function ProductPerformancePage() {
   const sumAvgGP      = sumProducts.length ? sumProducts.reduce((a,r)=>a+(parseFloat(r.gross_profit_pct)||0),0)/sumProducts.length : 0
 
   function TopList({ title, list, nameFn, subFn }) {
-    const top = list.slice(0,5)
+    const top = list.slice(0,20)
     const maxNet = top[0]?.net_sales || 1
     return (
       <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:18}}>
@@ -351,7 +351,7 @@ export default function ProductPerformancePage() {
           )}
           {!isSummary && (
             <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:14}}>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:'var(--text-muted)'}}>{totalQty.toLocaleString()} units</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:'var(--text-muted)'}}>{Math.round(totalQty).toLocaleString()} units</div>
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:'var(--matcha-dark)',fontWeight:700}}>{peso(totalNetP)} net</div>
             </div>
           )}
@@ -397,7 +397,7 @@ export default function ProductPerformancePage() {
               {[
                 ['Total Net Sales', peso(sumTotalNet), 'var(--matcha-dark)'],
                 ['Total Gross Sales', peso(sumTotalGross), 'var(--text-primary)'],
-                ['Total Units Sold', sumTotalQty.toLocaleString(), 'var(--text-primary)'],
+                ['Total Units Sold', Math.round(sumTotalQty).toLocaleString(), 'var(--text-primary)'],
                 ['Avg. Gross Profit %', sumAvgGP.toFixed(1)+'%', 'var(--text-primary)'],
               ].map(([label,val,color])=>(
                 <div key={label} style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:16}}>
@@ -414,9 +414,9 @@ export default function ProductPerformancePage() {
               </div>
             ):(
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
-                <TopList title="🏆 Top 5 Products" list={sumProducts} nameFn={r=>r.product_name||'—'} subFn={r=>r.category||'Uncategorized'}/>
-                <TopList title="📦 Top 5 Categories" list={sumCategories} nameFn={r=>r.category||'Uncategorized'}/>
-                <TopList title="🎛️ Top 5 Variants" list={sumVariants} nameFn={r=>r.variant_option||'—'} subFn={r=>r.variant_group||'Ungrouped'}/>
+                <TopList title="🏆 Top 20 Products" list={sumProducts} nameFn={r=>r.product_name||'—'} subFn={r=>r.category||'Uncategorized'}/>
+                <TopList title="📦 Top 20 Categories" list={sumCategories} nameFn={r=>r.category||'Uncategorized'}/>
+                <TopList title="🎛️ Top 20 Variants" list={sumVariants} nameFn={r=>r.variant_option||'—'} subFn={r=>r.variant_group||'Ungrouped'}/>
               </div>
             )}
           </div>
@@ -448,7 +448,7 @@ export default function ProductPerformancePage() {
                       <div style={{fontWeight:600}}>{colConfig.getName(r)}</div>
                       {colConfig.getSub && <div style={{fontSize:10,color:'var(--text-muted)'}}>{colConfig.getSub(r)}</div>}
                     </td>
-                    <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",color:'var(--text-muted)'}}>{(parseFloat(r.quantity)||0).toLocaleString()}</td>
+                    <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",color:'var(--text-muted)'}}>{Math.round(parseFloat(r.quantity)||0).toLocaleString()}</td>
                     <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)',fontWeight:600}}>{peso(r.gross_sales)}</td>
                     <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace"}}>{peso(r.net_sales)}</td>
                     <td style={{padding:'10px 14px',color:'var(--text-muted)'}}>{(parseFloat(r.gross_profit_pct)||0).toFixed(1)}%</td>
@@ -467,7 +467,7 @@ export default function ProductPerformancePage() {
               <tfoot>
                 <tr style={{background:'var(--espresso)'}}>
                   <td style={{padding:'11px 14px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
-                  <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{totalQty.toLocaleString()}</td>
+                  <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{Math.round(totalQty).toLocaleString()}</td>
                   <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(totalGrossP)}</td>
                   <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672'}}>{peso(totalNetP)}</td>
                   <td colSpan={2}/>
