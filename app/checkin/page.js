@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { syncRecurringTasksForDate } from '../../lib/recurringTaskSync'
+import { syncRoleTasksForDate } from '../../lib/roleTaskSync'
 
 const SHIFTS = [
   { id:'am',  label:'AM',  time:'6:30AM–3:30PM',  color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648', emoji:'🌅' },
@@ -74,6 +75,14 @@ export default function CheckinPage() {
   async function fetchAll() {
     setLoading(true)
     try {
+      // Auto-populate today's checklist for anyone scheduled that matches a role task
+      // template for their role + shift (no-op if already synced). This used to only
+      // happen lazily when an admin opened a specific staff member's card below — now it
+      // runs for everyone up front, so the Staff Portal checklist shows up immediately.
+      if (dateISO <= todayISO) {
+        await syncRoleTasksForDate(supabase, dateISO)
+      }
+
       // Auto-populate weekly recurring tasks for anyone scheduled today that matches
       // a recurring template for their role + day-of-week (no-op if already synced)
       if (dateISO <= todayISO) {
