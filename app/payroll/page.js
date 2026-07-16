@@ -69,13 +69,20 @@ export default function PayrollPage() {
   const [previews, setPreviews]             = useState({})
   const [previewing, setPreviewing]         = useState(null)
   const [currentStaffId, setCurrentStaffId] = useState(null)
-  // Service Charge: total pool sourced from Finance > Sales for the selected cutoff's date range
+  // Service Charge: computed and paid out MONTHLY (not per cutoff) — the pool is the sum of
+  // Finance > Sales "service_charge" entries for a whole calendar month, split by hours worked
+  // across whichever cutoff(s) belong to that month, then saved as a lump sum onto ONE chosen
+  // cutoff's payroll_runs row (typically the later cutoff, once the full month's sales are in).
+  const [scMonth, setScMonth]               = useState(selectedCutoff.end.slice(0,7))
+  const [scTargetCutoffId, setScTargetCutoffId] = useState(null)
   const [serviceChargePool, setServiceChargePool] = useState(0)
+  const [scRuns, setScRuns]                 = useState([]) // payroll_runs rows for the month's cutoff(s)
   const [scSaving, setScSaving]             = useState(false)
   const fileRef = useRef()
 
   useEffect(() => { fetchStaff(); fetchRateOverrides(); fetchAdjustmentRequests(); fetchCurrentStaffId() }, [])
-  useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet(); fetchAttendanceRefs(); fetchServiceChargePool() }, [selectedCutoff])
+  useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet(); fetchAttendanceRefs() }, [selectedCutoff])
+  useEffect(() => { fetchScMonthData() }, [scMonth])
 
   async function fetchCurrentStaffId() {
     const { data: { user } } = await supabase.auth.getUser()
@@ -103,13 +110,36 @@ export default function PayrollPage() {
     setDayOffs(doff || [])
   }
 
-  // Service Charge total for this cutoff — sourced from Finance > Sales entries
-  // (each sale record can carry a service_charge amount), summed across the cutoff's date range.
-  async function fetchServiceChargePool() {
-    const { data, error } = await supabase.from('sales').select('service_charge')
-      .gte('sale_date', selectedCutoff.start).lte('sale_date', selectedCutoff.end)
-    if (error) { console.error('fetchServiceChargePool error:', error); setServiceChargePool(0); return }
-    const total = (data || []).reduce((sum, s) => sum + (parseFloat(s.service_charge) || 0), 0)
+  // A cutoff "belongs" to whichever calendar month its END date falls in — same convention
+  // already used by computeCutoffPayroll's isFirstCutoffOfMonth check. Most months resolve to
+  // exactly 2 cutoffs (first half + second half).
+  function cutoffsForMonth(monthStr) {
+    return CUTOFF_PERIODS.filter(p => p.end.slice(0,7) === monthStr)
+  }
+  function monthEndISO(monthStr) {
+    const [y,m] = monthStr.split('-').map(Number)
+    const d = new Date(y, m, 0)
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  }
+
+  // Service Charge pool + hours source for the selected MONTH — sourced from Finance > Sales
+  // entries (each sale record can carry a service_charge amount) summed across the whole
+  // calendar month, and payroll_runs for whichever cutoff(s) belong to that month.
+  async function fetchScMonthData() {
+    const cutoffs = cutoffsForMonth(scMonth)
+    const ids = cutoffs.map(c => c.id)
+    if (!ids.length) { setScRuns([]); setServiceChargePool(0); setScTargetCutoffId(null); return }
+    // Default the "apply to" cutoff to the LAST one in the month (once the full month's sales are in),
+    // unless the admin already picked one for this month.
+    setScTargetCutoffId(prev => (prev && ids.includes(prev)) ? prev : ids[ids.length - 1])
+    const [{ data: runs, error: runsErr }, { data: salesRows, error: salesErr }] = await Promise.all([
+      supabase.from('payroll_runs').select('*, staff(first_name,last_name,nickname,role,employment_type)').in('cutoff_id', ids),
+      supabase.from('sales').select('service_charge').gte('sale_date', scMonth+'-01').lte('sale_date', monthEndISO(scMonth)),
+    ])
+    if (runsErr) console.error('fetchScMonthData runs error:', runsErr)
+    if (salesErr) console.error('fetchScMonthData sales error:', salesErr)
+    setScRuns(runs || [])
+    const total = (salesRows || []).reduce((sum, s) => sum + (parseFloat(s.service_charge) || 0), 0)
     setServiceChargePool(round2(total))
   }
 
@@ -592,31 +622,49 @@ export default function PayrollPage() {
     showToast('📥','Payroll exported')
   }
 
-  // ── SERVICE CHARGE: compute + save per-employee shares for the selected cutoff ──
+  // ── SERVICE CHARGE: aggregate hours across the month's cutoff(s), compute shares, save to the target cutoff ──
   const serviceChargeRows = useMemo(() => {
+    // Aggregate paid hours per staff across every cutoff belonging to scMonth. Only hours from
+    // a cutoff where that staff was marked service_charge_eligible for THAT cutoff count toward
+    // the denominator/payout — same per-cutoff eligibility rule as everywhere else in Payroll.
+    const byStaff = {}
+    scRuns.forEach(r => {
+      const id = r.staff_id
+      if (!byStaff[id]) byStaff[id] = { staff: r.staff, totalHours: 0, eligibleHours: 0 }
+      byStaff[id].totalHours += parseFloat(r.paid_hours) || 0
+      if (r.service_charge_eligible) byStaff[id].eligibleHours += parseFloat(r.paid_hours) || 0
+    })
     const eligibleHours = {}
-    payrollRowsForSC().forEach(r => { if (r.pay.eligible) eligibleHours[r.staff.id] = r.pay.paidHours })
+    Object.keys(byStaff).forEach(id => { if (byStaff[id].eligibleHours > 0) eligibleHours[id] = byStaff[id].eligibleHours })
     const { ratePerHour, shares } = computeServiceChargeShares(serviceChargePool, eligibleHours)
-    return { ratePerHour, shares, rows: payrollRowsForSC() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceChargePool, savedRuns, staff, timesheetData, schedules, rateOverrides])
-
-  // Service Charge tab only makes sense against SAVED payroll (paid hours must be locked in) —
-  // reuse buildPayrollRows so figures match the Summary tab exactly.
-  function payrollRowsForSC() { return buildPayrollRows() }
+    return { ratePerHour, shares, byStaff }
+  }, [serviceChargePool, scRuns])
 
   async function saveServiceCharge() {
-    if (!savedRuns.length) { showToast('⚠️','Save Payroll for this cutoff first — Service Charge needs each employee\'s paid hours on record.'); return }
+    if (!scRuns.length || !scTargetCutoffId) { showToast('⚠️','Save Payroll for at least one cutoff in this month first — Service Charge needs paid hours on record.'); return }
+    const monthCutoffs = cutoffsForMonth(scMonth)
+    const existingPairs = new Set(scRuns.map(r => `${r.cutoff_id}_${r.staff_id}`))
     setScSaving(true)
-    const upsertData = serviceChargeRows.rows.map(r => ({
-      cutoff_id: selectedCutoff.id, staff_id: r.staff.id,
-      service_charge: r.pay.eligible ? (serviceChargeRows.shares[r.staff.id] || 0) : 0,
-    }))
+    const upsertData = []
+    let skipped = 0
+    Object.keys(serviceChargeRows.byStaff).forEach(staffId => {
+      // Only write into cutoffs that already have a saved payroll_runs row for this staff —
+      // never create a phantom row just to carry a service_charge value.
+      if (!existingPairs.has(`${scTargetCutoffId}_${staffId}`)) { skipped++; return }
+      monthCutoffs.forEach(c => {
+        if (!existingPairs.has(`${c.id}_${staffId}`)) return
+        upsertData.push({
+          cutoff_id: c.id, staff_id: staffId,
+          service_charge: c.id === scTargetCutoffId ? (serviceChargeRows.shares[staffId] || 0) : 0,
+        })
+      })
+    })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     setScSaving(false)
     if (error) { showToast('❌', error.message); return }
-    await fetchSavedRuns()
-    showToast('💾', `Service Charge saved for ${selectedCutoff.label}`)
+    await fetchSavedRuns(); await fetchScMonthData()
+    const targetLabel = monthCutoffs.find(c=>c.id===scTargetCutoffId)?.label || ''
+    showToast('💾', `Service Charge saved to ${targetLabel}${skipped?` · ${skipped} staff skipped (no payroll run there yet)`:''}`)
   }
 
   const allPayrollRows = buildPayrollRows()
@@ -675,6 +723,7 @@ export default function PayrollPage() {
   const tsIsLive = !!timesheetData
   const iStyle = {background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 12px',fontSize:12,fontFamily:"'DM Sans',sans-serif",color:'var(--text-primary)',outline:'none',cursor:'pointer'}
   const thBase = {padding:'11px 12px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)',whiteSpace:'nowrap'}
+  const monthCutoffOptions = cutoffsForMonth(scMonth)
 
   return (
     <AuthShell>
@@ -1073,9 +1122,19 @@ export default function PayrollPage() {
         {tab==='servicecharge' && (
           <div style={{display:'flex',flexDirection:'column',gap:16}}>
             <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 20px'}}>
-              <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)',marginBottom:4}}>Service Charge — {selectedCutoff.label}</div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:10,marginBottom:4}}>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Service Charge — Monthly</div>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <input type="month" value={scMonth} onChange={e=>e.target.value&&setScMonth(e.target.value)} style={{...iStyle,width:'auto',padding:'6px 10px'}}/>
+                  {monthCutoffOptions.length>0 && (
+                    <select style={iStyle} value={scTargetCutoffId||''} onChange={e=>setScTargetCutoffId(parseInt(e.target.value))}>
+                      {monthCutoffOptions.map(c=><option key={c.id} value={c.id}>Apply to: {c.label}</option>)}
+                    </select>
+                  )}
+                </div>
+              </div>
               <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>
-                Pool is the sum of "Service Charge" entered on Finance &gt; Sales for {selectedCutoff.start} to {selectedCutoff.end}. It's split across service-charge-eligible staff (late count ≤3 and zero violations this cutoff), proportional to paid hours worked.
+                Pool is the sum of "Service Charge" entered on Finance &gt; Sales for the whole month of {scMonth}. It's split across service-charge-eligible staff (late count ≤3 and zero violations that cutoff), proportional to paid hours worked across {monthCutoffOptions.length>1?'both cutoffs that month':'this month\'s cutoff'} — then paid out as one lump sum on the cutoff selected above.
               </div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:14}}>
                 <div style={{textAlign:'center',padding:12,background:'var(--surface)',borderRadius:10}}>
@@ -1087,12 +1146,12 @@ export default function PayrollPage() {
                   <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:3}}>Rate per Eligible Hour</div>
                 </div>
                 <div style={{textAlign:'center',padding:12,background:'var(--surface)',borderRadius:10}}>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700,color:'var(--matcha-dark)'}}>{serviceChargeRows.rows.filter(r=>r.pay.eligible).length} / {serviceChargeRows.rows.length}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700,color:'var(--matcha-dark)'}}>{Object.values(serviceChargeRows.byStaff).filter(v=>v.eligibleHours>0).length} / {Object.keys(serviceChargeRows.byStaff).length}</div>
                   <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:3}}>Eligible Staff</div>
                 </div>
               </div>
-              {!hasSavedData ? (
-                <div style={{background:'#fef3e2',border:'1px solid var(--gold)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#a06000',fontWeight:600}}>💡 Save Payroll for this cutoff first — Service Charge needs each employee's paid hours on record.</div>
+              {!scRuns.length ? (
+                <div style={{background:'#fef3e2',border:'1px solid var(--gold)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#a06000',fontWeight:600}}>💡 No saved payroll found for {scMonth} yet — Save Payroll for at least one of this month's cutoffs first (Cutoff Period selector above), then come back here.</div>
               ) : (
                 <button className="btn btn-primary" style={{background:'var(--matcha)'}} onClick={saveServiceCharge} disabled={scSaving}>{scSaving?'💾 Saving…':'💾 Save Service Charge'}</button>
               )}
@@ -1105,33 +1164,35 @@ export default function PayrollPage() {
                     <th style={thBase}>Employee</th>
                     <th style={thBase}>Role</th>
                     <th style={{...thBase,textAlign:'center'}}>Eligible</th>
-                    <th style={{...thBase,textAlign:'right'}}>Paid Hours</th>
+                    <th style={{...thBase,textAlign:'right'}}>Hours (Month)</th>
                     <th style={{...thBase,textAlign:'right'}}>Service Charge Share</th>
-                    <th style={{...thBase,textAlign:'right'}}>Saved</th>
+                    <th style={{...thBase,textAlign:'right'}}>Saved on Target Cutoff</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {serviceChargeRows.rows.filter(r=>r.pay.daysWorked>0 || r.saved).map((r,i)=>(
-                    <tr key={r.staff.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
+                  {Object.entries(serviceChargeRows.byStaff).sort((a,b)=>(a[1].staff?.last_name||'').localeCompare(b[1].staff?.last_name||'')).map(([staffId,v],i)=>{
+                    const savedRun = scRuns.find(r=>r.staff_id===staffId && r.cutoff_id===scTargetCutoffId)
+                    return (
+                    <tr key={staffId} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
                       <td style={{padding:'9px 12px'}}>
                         <div style={{display:'flex',alignItems:'center',gap:8}}>
-                          <div style={{width:26,height:26,borderRadius:'50%',background:getRoleColor(r.staff.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'white',flexShrink:0}}>{initials(r.staff.first_name,r.staff.last_name)}</div>
-                          <div style={{fontWeight:600,fontSize:11}}>{r.staff.last_name}, {r.staff.first_name}</div>
+                          <div style={{width:26,height:26,borderRadius:'50%',background:getRoleColor(v.staff?.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'white',flexShrink:0}}>{initials(v.staff?.first_name,v.staff?.last_name)}</div>
+                          <div style={{fontWeight:600,fontSize:11}}>{v.staff?.last_name}, {v.staff?.first_name}</div>
                         </div>
                       </td>
-                      <td style={{padding:'9px 12px'}}><span style={{fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:5,background:getRoleColor(r.staff.role)+'22',color:getRoleColor(r.staff.role)}}>{r.staff.role}</span></td>
-                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}}>{r.pay.eligible?'✅':'❌'}</td>
-                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace"}}>{r.pay.paidHours.toFixed(1)}h</td>
-                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-dark)'}}>{r.pay.eligible ? peso(serviceChargeRows.shares[r.staff.id]||0) : '—'}</td>
-                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,color:'var(--text-muted)'}}>{r.saved ? peso(parseFloat(r.saved.service_charge)||0) : '—'}</td>
+                      <td style={{padding:'9px 12px'}}><span style={{fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:5,background:getRoleColor(v.staff?.role)+'22',color:getRoleColor(v.staff?.role)}}>{v.staff?.role}</span></td>
+                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}}>{v.eligibleHours>0?'✅':'❌'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace"}}>{v.totalHours.toFixed(1)}h</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-dark)'}}>{v.eligibleHours>0 ? peso(serviceChargeRows.shares[staffId]||0) : '—'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,color:'var(--text-muted)'}}>{savedRun ? peso(parseFloat(savedRun.service_charge)||0) : '—'}</td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
                 <tfoot>
                   <tr style={{background:'var(--espresso)',borderTop:'2px solid var(--matcha)'}}>
                     <td colSpan={4} style={{padding:'11px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
                     <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(Object.values(serviceChargeRows.shares).reduce((s,v)=>s+v,0))}</td>
-                    <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672'}}>{peso(serviceChargeRows.rows.reduce((s,r)=>s+(parseFloat(r.saved?.service_charge)||0),0))}</td>
+                    <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672'}}>{peso(scRuns.filter(r=>r.cutoff_id===scTargetCutoffId).reduce((s,r)=>s+(parseFloat(r.service_charge)||0),0))}</td>
                   </tr>
                 </tfoot>
               </table>
