@@ -666,6 +666,10 @@ export default function PayrollPage() {
       return
     }
     setScSaving(true)
+    // cutoff_id, cutoff_label, cutoff_start, cutoff_end are all NOT NULL on payroll_runs with no
+    // default — include them even though we only expect to hit existing rows, so an upsert can
+    // never crash on that constraint if the existence check below is ever wrong.
+    const targetCutoff = CUTOFF_PERIODS.find(c => c.id === scTargetCutoffId)
     const upsertData = []
     let skipped = 0
     Object.keys(serviceChargeRows.byStaff).forEach(staffId => {
@@ -673,7 +677,8 @@ export default function PayrollPage() {
       // staff — never create a phantom row just to carry a service_charge value.
       if (!existingTargetPairs.has(staffId)) { skipped++; return }
       upsertData.push({
-        cutoff_id: scTargetCutoffId, staff_id: staffId,
+        cutoff_id: scTargetCutoffId, cutoff_label: targetCutoff?.label, cutoff_start: targetCutoff?.start, cutoff_end: targetCutoff?.end,
+        staff_id: staffId,
         service_charge: serviceChargeRows.shares[staffId] || 0,
       })
     })
