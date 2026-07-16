@@ -12,6 +12,20 @@ const monthRange = monthStr => {
   return [toISO(new Date(y, m-1, 1)), toISO(new Date(y, m, 0))]
 }
 
+// StoreHub's "Sales over time" export dates look like "24 Jun 2026 (Wed)" — the
+// weekday-in-parens suffix trips up plain `new Date(...)` in some browsers, and the
+// header name for this column mangles unpredictably during normalization (the "/" in
+// "Date / Time" gets stripped), so it's parsed directly from the raw first cell instead
+// of being looked up by header name.
+const MONTHS = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11}
+function parseStoreHubDate(raw) {
+  const m = (raw||'').match(/(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/)
+  if (!m) return null
+  const mon = MONTHS[m[2].slice(0,3).toLowerCase()]
+  if (mon === undefined) return null
+  return toISO(new Date(parseInt(m[3],10), mon, parseInt(m[1],10)))
+}
+
 const TABS = [
   { id:'overview',   label:'Financial Statement', icon:'📊' },
   { id:'sales',      label:'Sales',               icon:'💰' },
@@ -131,18 +145,21 @@ export default function FinancePage() {
       for (let i=1;i<lines.length;i++) {
         const vals = lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''))
         const obj = {}; headers.forEach((h,idx)=>{obj[h]=vals[idx]||''})
-        // Try to parse date
-        const rawDate = obj.date||obj.sale_date||obj.transaction_date||''
-        let saleDate = null
-        if (rawDate) {
-          const d = new Date(rawDate)
-          if (!isNaN(d)) saleDate = toISO(d)
+        // Date column is always first — parsed from the raw cell (see parseStoreHubDate above)
+        // rather than by header name, since "Date / Time" mangles unpredictably.
+        let saleDate = parseStoreHubDate(vals[0])
+        if (!saleDate) {
+          const rawDate = obj.date||obj.sale_date||obj.transaction_date||vals[0]||''
+          if (rawDate) { const d = new Date(rawDate); if (!isNaN(d)) saleDate = toISO(d) }
         }
         if (!saleDate) continue
-        const gross = parseFloat(obj.gross_sales||obj.gross||obj.total||obj.amount||0)
+        // "Total Sales" / "Net Sales" / "Total Transactions" / "Service Charge" are the
+        // StoreHub "Sales over time" report's actual column names; the older aliases are
+        // kept as a fallback for other export shapes.
+        const gross = parseFloat(obj.total_sales||obj.gross_sales||obj.gross||obj.total||obj.amount||0)
         const net   = parseFloat(obj.net_sales||obj.net||obj.net_amount||gross)
         const svcCharge = parseFloat(obj.service_charge||obj.svc_charge||obj.sc||0)
-        const txns  = parseInt(obj.transactions||obj.transaction_count||obj.orders||0)
+        const txns  = parseInt(obj.total_transactions||obj.transactions||obj.transaction_count||obj.orders||0)
         if (gross > 0) rows.push({ sale_date:saleDate, source:'storehub', gross_sales:gross, net_sales:net, service_charge:svcCharge, transaction_count:txns, uploaded_by:'alex' })
       }
       if (!rows.length) { showToast('⚠️','No valid rows found in CSV'); return }
