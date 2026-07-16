@@ -67,7 +67,7 @@ export default function FinancePage() {
   const [showCatForm, setShowCatForm]         = useState(false)
 
   // Forms
-  const [saleForm, setSaleForm] = useState({ sale_date: toISO(new Date()), source:'storehub', gross_sales:'', net_sales:'', transaction_count:'', notes:'' })
+  const [saleForm, setSaleForm] = useState({ sale_date: toISO(new Date()), source:'storehub', gross_sales:'', net_sales:'', service_charge:'', transaction_count:'', notes:'' })
   const [expForm, setExpForm]   = useState({ expense_date: toISO(new Date()), category_id:'', description:'', amount:'', paid_by:'alex', notes:'', receipt_url:'' })
   const [catForm, setCatForm]   = useState({ name:'', color:'#7ab648', icon:'📦' })
 
@@ -116,6 +116,7 @@ export default function FinancePage() {
   // ── TOTALS ──
   const totalGross    = sales.reduce((a,s)=>a+(parseFloat(s.gross_sales)||0),0)
   const totalNet      = sales.reduce((a,s)=>a+(parseFloat(s.net_sales)||0),0)
+  const totalSvcCharge = sales.reduce((a,s)=>a+(parseFloat(s.service_charge)||0),0)
   const totalExpenses = expenses.reduce((a,e)=>a+(parseFloat(e.amount)||0),0)
   const netIncome     = totalNet - totalExpenses
 
@@ -140,8 +141,9 @@ export default function FinancePage() {
         if (!saleDate) continue
         const gross = parseFloat(obj.gross_sales||obj.gross||obj.total||obj.amount||0)
         const net   = parseFloat(obj.net_sales||obj.net||obj.net_amount||gross)
+        const svcCharge = parseFloat(obj.service_charge||obj.svc_charge||obj.sc||0)
         const txns  = parseInt(obj.transactions||obj.transaction_count||obj.orders||0)
-        if (gross > 0) rows.push({ sale_date:saleDate, source:'storehub', gross_sales:gross, net_sales:net, transaction_count:txns, uploaded_by:'alex' })
+        if (gross > 0) rows.push({ sale_date:saleDate, source:'storehub', gross_sales:gross, net_sales:net, service_charge:svcCharge, transaction_count:txns, uploaded_by:'alex' })
       }
       if (!rows.length) { showToast('⚠️','No valid rows found in CSV'); return }
       setSaving(true)
@@ -248,11 +250,12 @@ export default function FinancePage() {
       ...saleForm,
       gross_sales: parseFloat(saleForm.gross_sales)||0,
       net_sales: parseFloat(saleForm.net_sales||saleForm.gross_sales)||0,
+      service_charge: parseFloat(saleForm.service_charge)||0,
       transaction_count: parseInt(saleForm.transaction_count)||0,
       uploaded_by:'alex'
     }])
     if (error) { showToast('❌',error.message); setSaving(false); return }
-    await fetchAll(); setShowSaleForm(false); setSaleForm({sale_date:toISO(new Date()),source:'storehub',gross_sales:'',net_sales:'',transaction_count:'',notes:''})
+    await fetchAll(); setShowSaleForm(false); setSaleForm({sale_date:toISO(new Date()),source:'storehub',gross_sales:'',net_sales:'',service_charge:'',transaction_count:'',notes:''})
     showToast('✅','Sale record added'); setSaving(false)
   }
 
@@ -385,6 +388,7 @@ export default function FinancePage() {
               {[
                 {label:'Gross Sales',  value:peso(totalGross),   cls:'c-matcha', icon:'💰', sub:`${sales.length} records`},
                 {label:'Net Sales',    value:peso(totalNet),     cls:'c-gold',   icon:'📈', sub:'After discounts'},
+                {label:'Service Charge', value:peso(totalSvcCharge), cls:'c-sky', icon:'🍽️', sub:'For staff distribution'},
                 {label:'Expenses',     value:peso(totalExpenses),cls:'c-blush',  icon:'🧾', sub:`${expenses.length} entries`},
                 {label:'Net Income',   value:peso(netIncome),    cls:netIncome>=0?'c-matcha':'c-bark', icon:netIncome>=0?'✅':'⚠️', sub:netIncome>=0?'Profitable':'Review expenses'},
               ].map(k=>(
@@ -403,6 +407,7 @@ export default function FinancePage() {
                 <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700,marginBottom:16}}>Profit & Loss Summary</div>
                 <PRow label="Gross Sales"        value={peso(totalGross)}    />
                 <PRow label="Net Sales"          value={peso(totalNet)}      />
+                <PRow label="Service Charge (pass-through)" value={peso(totalSvcCharge)} />
                 <div style={{borderTop:'1px solid var(--border)',margin:'10px 0'}}/>
                 <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6}}>Expenses by Category</div>
                 {catBreakdown.length===0?(
@@ -466,6 +471,7 @@ export default function FinancePage() {
               <button className="btn btn-primary" onClick={()=>setShowSaleForm(true)}>+ Add Manual Sale</button>
               <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:10}}>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:'var(--matcha-dark)',fontWeight:700}}>{peso(totalNet)} net</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:'var(--sky)',fontWeight:700}}>{peso(totalSvcCharge)} svc charge</div>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:'var(--text-muted)'}}>{sales.length} records</div>
               </div>
             </div>
@@ -481,7 +487,7 @@ export default function FinancePage() {
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                   <thead>
                     <tr style={{background:'var(--espresso)'}}>
-                      {['Date','Source','Gross Sales','Net Sales','Transactions','Notes',''].map(h=>(
+                      {['Date','Source','Gross Sales','Net Sales','Service Charge','Transactions','Notes',''].map(h=>(
                         <th key={h} style={{padding:'11px 14px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}}>{h}</th>
                       ))}
                     </tr>
@@ -495,6 +501,7 @@ export default function FinancePage() {
                           <td style={{padding:'10px 14px'}}><span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:6,background:src.color+'22',color:src.color}}>{src.label}</span></td>
                           <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)',fontWeight:600}}>{peso(s.gross_sales)}</td>
                           <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace"}}>{peso(s.net_sales)}</td>
+                          <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",color:'var(--sky)'}}>{peso(s.service_charge)}</td>
                           <td style={{padding:'10px 14px',color:'var(--text-muted)'}}>{s.transaction_count||'—'}</td>
                           <td style={{padding:'10px 14px',color:'var(--text-muted)',fontSize:11}}>{s.notes||'—'}</td>
                           <td style={{padding:'10px 14px'}}><button onClick={()=>deleteSale(s.id)} style={{background:'transparent',border:'none',color:'var(--border)',cursor:'pointer',fontSize:14}} onMouseEnter={e=>e.target.style.color='#c0392b'} onMouseLeave={e=>e.target.style.color='var(--border)'}>🗑</button></td>
@@ -507,6 +514,7 @@ export default function FinancePage() {
                       <td colSpan={2} style={{padding:'11px 14px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
                       <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(totalGross)}</td>
                       <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672'}}>{peso(totalNet)}</td>
+                      <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#8ec9f0'}}>{peso(totalSvcCharge)}</td>
                       <td colSpan={3}/>
                     </tr>
                   </tfoot>
@@ -686,8 +694,9 @@ export default function FinancePage() {
           </div>
           <div><label style={lStyle}>Gross Sales *</label><input style={iStyle} type="number" placeholder="0.00" value={saleForm.gross_sales} onChange={sf('gross_sales')}/></div>
           <div><label style={lStyle}>Net Sales</label><input style={iStyle} type="number" placeholder="Same as gross if no discount" value={saleForm.net_sales} onChange={sf('net_sales')}/></div>
+          <div><label style={lStyle}>Service Charge</label><input style={iStyle} type="number" placeholder="0.00" value={saleForm.service_charge} onChange={sf('service_charge')}/></div>
           <div><label style={lStyle}>Transactions</label><input style={iStyle} type="number" placeholder="0" value={saleForm.transaction_count} onChange={sf('transaction_count')}/></div>
-          <div><label style={lStyle}>Notes</label><input style={iStyle} placeholder="Optional" value={saleForm.notes} onChange={sf('notes')}/></div>
+          <div style={{gridColumn:'1/-1'}}><label style={lStyle}>Notes</label><input style={iStyle} placeholder="Optional" value={saleForm.notes} onChange={sf('notes')}/></div>
         </div>
         <div style={{display:'flex',gap:9}}>
           <button className="btn btn-secondary" onClick={()=>setShowSaleForm(false)}>Cancel</button>
