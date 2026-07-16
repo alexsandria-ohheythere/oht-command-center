@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2 } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -69,10 +69,13 @@ export default function PayrollPage() {
   const [previews, setPreviews]             = useState({})
   const [previewing, setPreviewing]         = useState(null)
   const [currentStaffId, setCurrentStaffId] = useState(null)
+  // Service Charge: total pool sourced from Finance > Sales for the selected cutoff's date range
+  const [serviceChargePool, setServiceChargePool] = useState(0)
+  const [scSaving, setScSaving]             = useState(false)
   const fileRef = useRef()
 
   useEffect(() => { fetchStaff(); fetchRateOverrides(); fetchAdjustmentRequests(); fetchCurrentStaffId() }, [])
-  useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet(); fetchAttendanceRefs() }, [selectedCutoff])
+  useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet(); fetchAttendanceRefs(); fetchServiceChargePool() }, [selectedCutoff])
 
   async function fetchCurrentStaffId() {
     const { data: { user } } = await supabase.auth.getUser()
@@ -98,6 +101,16 @@ export default function PayrollPage() {
     setApprovedLeaves(lv || [])
     const { data: doff } = await supabase.from('day_offs').select('staff_id,date_from,date_to')
     setDayOffs(doff || [])
+  }
+
+  // Service Charge total for this cutoff — sourced from Finance > Sales entries
+  // (each sale record can carry a service_charge amount), summed across the cutoff's date range.
+  async function fetchServiceChargePool() {
+    const { data, error } = await supabase.from('sales').select('service_charge')
+      .gte('sale_date', selectedCutoff.start).lte('sale_date', selectedCutoff.end)
+    if (error) { console.error('fetchServiceChargePool error:', error); setServiceChargePool(0); return }
+    const total = (data || []).reduce((sum, s) => sum + (parseFloat(s.service_charge) || 0), 0)
+    setServiceChargePool(round2(total))
   }
 
   async function fetchSavedTimesheet() {
@@ -309,6 +322,7 @@ export default function PayrollPage() {
         overtime: r.saved ? saved.overtime : (parseFloat(adj.overtime)||0),
         refund: r.saved ? saved.refund : (parseFloat(adj.refund)||0),
         undertime: r.saved ? saved.undertime : (parseFloat(adj.undertime)||0),
+        service_charge: r.saved ? (parseFloat(saved.service_charge)||0) : 0,
       }
       // Resolve absence days for this staff from current timesheet source
       const tsKey = tsSource ? Object.keys(tsSource).find(k=>matchStaff([r.staff], tsSource[k].lastName, tsSource[k].firstName)!==undefined) : null
@@ -567,8 +581,8 @@ export default function PayrollPage() {
   function exportCSV() {
     const rows = buildPayrollRows()
     const data = [
-      ['Name','Role','Type','Days','Paid Hours','Late (mins)','Gross','Late Deduction','SSS','PhilHealth','Pag-IBIG','Tax','Total Deductions','Net Pay','Service Charge'],
-      ...rows.map(r => [`${r.staff.last_name}, ${r.staff.first_name}`,r.staff.role,r.staff.employment_type||'Full-time',r.pay.daysWorked,r.pay.paidHours.toFixed(2),r.pay.totalLateMins,r.pay.gross,r.pay.lateDeduction,r.pay.sss,r.pay.philhealth,r.pay.pagibig,r.pay.tax,r.pay.totalDeductions,r.pay.netPay,r.pay.eligible?'Yes':'No'])
+      ['Name','Role','Type','Days','Paid Hours','Late (mins)','Gross','Late Deduction','SSS','PhilHealth','Pag-IBIG','Tax','Total Deductions','Service Charge','Net Pay','SC Eligible'],
+      ...rows.map(r => [`${r.staff.last_name}, ${r.staff.first_name}`,r.staff.role,r.staff.employment_type||'Full-time',r.pay.daysWorked,r.pay.paidHours.toFixed(2),r.pay.totalLateMins,r.pay.gross,r.pay.lateDeduction,r.pay.sss,r.pay.philhealth,r.pay.pagibig,r.pay.tax,r.pay.totalDeductions,parseFloat(r.saved?.service_charge)||0,r.pay.netPay,r.pay.eligible?'Yes':'No'])
     ]
     const csv = data.map(r=>r.join(',')).join('\n')
     const blob = new Blob([csv],{type:'text/csv'})
@@ -576,6 +590,33 @@ export default function PayrollPage() {
     const a = document.createElement('a'); a.href=url; a.download=`OHT-Payroll-${selectedCutoff.label.replace(/\s/g,'-')}.csv`; a.click()
     URL.revokeObjectURL(url)
     showToast('📥','Payroll exported')
+  }
+
+  // ── SERVICE CHARGE: compute + save per-employee shares for the selected cutoff ──
+  const serviceChargeRows = useMemo(() => {
+    const eligibleHours = {}
+    payrollRowsForSC().forEach(r => { if (r.pay.eligible) eligibleHours[r.staff.id] = r.pay.paidHours })
+    const { ratePerHour, shares } = computeServiceChargeShares(serviceChargePool, eligibleHours)
+    return { ratePerHour, shares, rows: payrollRowsForSC() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceChargePool, savedRuns, staff, timesheetData, schedules, rateOverrides])
+
+  // Service Charge tab only makes sense against SAVED payroll (paid hours must be locked in) —
+  // reuse buildPayrollRows so figures match the Summary tab exactly.
+  function payrollRowsForSC() { return buildPayrollRows() }
+
+  async function saveServiceCharge() {
+    if (!savedRuns.length) { showToast('⚠️','Save Payroll for this cutoff first — Service Charge needs each employee\'s paid hours on record.'); return }
+    setScSaving(true)
+    const upsertData = serviceChargeRows.rows.map(r => ({
+      cutoff_id: selectedCutoff.id, staff_id: r.staff.id,
+      service_charge: r.pay.eligible ? (serviceChargeRows.shares[r.staff.id] || 0) : 0,
+    }))
+    const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
+    setScSaving(false)
+    if (error) { showToast('❌', error.message); return }
+    await fetchSavedRuns()
+    showToast('💾', `Service Charge saved for ${selectedCutoff.label}`)
   }
 
   const allPayrollRows = buildPayrollRows()
@@ -674,7 +715,7 @@ export default function PayrollPage() {
 
         {/* Tabs */}
         <div style={{display:'flex',gap:4,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
-          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`],['audit','🔍 Accuracy Check']].map(([key,label])=>(
+          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['servicecharge','🍽️ Service Charge'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`],['audit','🔍 Accuracy Check']].map(([key,label])=>(
             <button key={key} onClick={()=>setTab(key)} style={{background:'transparent',border:'none',borderBottom:tab===key?'2px solid var(--matcha)':'2px solid transparent',marginBottom:-2,padding:'9px 16px',fontSize:12,fontWeight:tab===key?700:500,color:tab===key?'var(--matcha-dark)':'var(--text-muted)',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{label}</button>
           ))}
         </div>
@@ -937,8 +978,9 @@ export default function PayrollPage() {
                   const overtime   = isLocked ? (parseFloat(r.saved.overtime)||0)   : (parseFloat(adj.overtime)||0)
                   const refund     = isLocked ? (parseFloat(r.saved.refund)||0)     : (parseFloat(adj.refund)||0)
                   const undertime  = isLocked ? (parseFloat(r.saved.undertime)||0)  : (parseFloat(adj.undertime)||0)
+                  const serviceCharge = isLocked ? (parseFloat(r.saved.service_charge)||0) : 0
                   const isFT = (r.staff.employment_type||'Full-time')==='Full-time'
-                  const grossPay = r.pay.gross + incentives + overtime + refund
+                  const grossPay = r.pay.gross + incentives + overtime + refund + serviceCharge
                   const govDed = r.pay.sss + r.pay.philhealth + r.pay.pagibig + r.pay.tax
                   // For full-time, unpaid missed days are already excluded from gross (rate × daysWorked),
                   // so absence is NOT subtracted again here. Late/undertime still apply.
@@ -984,6 +1026,11 @@ export default function PayrollPage() {
                               : <input type="number" value={adj[field]??''} placeholder="0" onChange={e=>setAdj(field,e.target.value)} style={{width:78,textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:10,border:'1px solid var(--border)',borderRadius:5,padding:'2px 5px',outline:'none'}}/>}
                           </div>
                         ))}
+                        {/* Service Charge — auto-computed on the Service Charge tab, not manually editable here */}
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}>
+                          <span>Service Charge</span>
+                          <span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(serviceCharge)}</span>
+                        </div>
                         <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'3px 0',fontWeight:600,borderTop:'1px solid var(--cream-dark)',marginTop:3}}><span>Gross Pay</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(grossPay)}</span></div>
                         {[['SSS',r.pay.sss],['PhilHealth',r.pay.philhealth],['Pag-IBIG',r.pay.pagibig],['Tax',r.pay.tax],['Late',r.pay.lateDeduction]].map(([l,v])=>(
                           <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}><span>{l}</span><span style={{fontFamily:"'DM Mono',monospace",color:'#c0392b'}}>-{peso(v)}</span></div>
@@ -1023,8 +1070,77 @@ export default function PayrollPage() {
           </div>
         )}
 
+        {tab==='servicecharge' && (
+          <div style={{display:'flex',flexDirection:'column',gap:16}}>
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'16px 20px'}}>
+              <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)',marginBottom:4}}>Service Charge — {selectedCutoff.label}</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>
+                Pool is the sum of "Service Charge" entered on Finance &gt; Sales for {selectedCutoff.start} to {selectedCutoff.end}. It's split across service-charge-eligible staff (late count ≤3 and zero violations this cutoff), proportional to paid hours worked.
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:14}}>
+                <div style={{textAlign:'center',padding:12,background:'var(--surface)',borderRadius:10}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700,color:'var(--matcha-dark)'}}>{peso(serviceChargePool)}</div>
+                  <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:3}}>Total SC Pool (from Finance)</div>
+                </div>
+                <div style={{textAlign:'center',padding:12,background:'var(--surface)',borderRadius:10}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700,color:'var(--matcha-dark)'}}>{serviceChargeRows.ratePerHour ? peso(serviceChargeRows.ratePerHour) : '—'}</div>
+                  <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:3}}>Rate per Eligible Hour</div>
+                </div>
+                <div style={{textAlign:'center',padding:12,background:'var(--surface)',borderRadius:10}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700,color:'var(--matcha-dark)'}}>{serviceChargeRows.rows.filter(r=>r.pay.eligible).length} / {serviceChargeRows.rows.length}</div>
+                  <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:3}}>Eligible Staff</div>
+                </div>
+              </div>
+              {!hasSavedData ? (
+                <div style={{background:'#fef3e2',border:'1px solid var(--gold)',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#a06000',fontWeight:600}}>💡 Save Payroll for this cutoff first — Service Charge needs each employee's paid hours on record.</div>
+              ) : (
+                <button className="btn btn-primary" style={{background:'var(--matcha)'}} onClick={saveServiceCharge} disabled={scSaving}>{scSaving?'💾 Saving…':'💾 Save Service Charge'}</button>
+              )}
+            </div>
+
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{background:'var(--espresso)'}}>
+                    <th style={thBase}>Employee</th>
+                    <th style={thBase}>Role</th>
+                    <th style={{...thBase,textAlign:'center'}}>Eligible</th>
+                    <th style={{...thBase,textAlign:'right'}}>Paid Hours</th>
+                    <th style={{...thBase,textAlign:'right'}}>Service Charge Share</th>
+                    <th style={{...thBase,textAlign:'right'}}>Saved</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {serviceChargeRows.rows.filter(r=>r.pay.daysWorked>0 || r.saved).map((r,i)=>(
+                    <tr key={r.staff.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
+                      <td style={{padding:'9px 12px'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <div style={{width:26,height:26,borderRadius:'50%',background:getRoleColor(r.staff.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'white',flexShrink:0}}>{initials(r.staff.first_name,r.staff.last_name)}</div>
+                          <div style={{fontWeight:600,fontSize:11}}>{r.staff.last_name}, {r.staff.first_name}</div>
+                        </div>
+                      </td>
+                      <td style={{padding:'9px 12px'}}><span style={{fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:5,background:getRoleColor(r.staff.role)+'22',color:getRoleColor(r.staff.role)}}>{r.staff.role}</span></td>
+                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}}>{r.pay.eligible?'✅':'❌'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace"}}>{r.pay.paidHours.toFixed(1)}h</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-dark)'}}>{r.pay.eligible ? peso(serviceChargeRows.shares[r.staff.id]||0) : '—'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,color:'var(--text-muted)'}}>{r.saved ? peso(parseFloat(r.saved.service_charge)||0) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{background:'var(--espresso)',borderTop:'2px solid var(--matcha)'}}>
+                    <td colSpan={4} style={{padding:'11px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
+                    <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(Object.values(serviceChargeRows.shares).reduce((s,v)=>s+v,0))}</td>
+                    <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672'}}>{peso(serviceChargeRows.rows.reduce((s,r)=>s+(parseFloat(r.saved?.service_charge)||0),0))}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
+
         {tab==='payments' && (
-          <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+          <div style={{background:'var(--white)',border:'1px solid var(--border)',overflow:'hidden'}}>
             <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
               <div>
                 <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Payment Status</div>
@@ -1282,34 +1398,23 @@ export default function PayrollPage() {
                     <div key={key} style={{border:`1px solid ${items.length?'#e0b0b0':'var(--border)'}`,borderRadius:10,padding:'12px 14px',background:items.length?'#fff8f6':'var(--surface)'}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                         <div style={{fontWeight:700,fontSize:12,color:items.length?'#c0392b':'var(--matcha-dark)'}}>{items.length ? '⚠️' : '✓'} {title}</div>
-                        <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)'}}>{items.length} found</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)'}}>{items.length} found</div>
                       </div>
-                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,fontStyle:'italic'}}>{hint}</div>
-                      {items.length > 0 && (
-                        <div style={{marginTop:8,display:'flex',flexDirection:'column',gap:3}}>
-                          {items.map((r,i) => (
-                            <div key={i} style={{fontSize:10,fontFamily:"'DM Mono',monospace",color:'var(--text-primary)',background:'white',borderRadius:6,padding:'5px 8px'}}>{render(r)}</div>
-                          ))}
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,marginBottom:items.length?8:0}}>{hint}</div>
+                      {items.length>0 && (
+                        <div style={{fontSize:11,color:'var(--text-primary)',display:'flex',flexDirection:'column',gap:3,marginTop:6}}>
+                          {items.map((it,idx)=>(<div key={idx} style={{fontFamily:"'DM Mono',monospace",fontSize:10}}>{render(it)}</div>))}
                         </div>
                       )}
                     </div>
                   )
                 })}
-
-                <div style={{border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',background:'var(--surface)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <div style={{fontSize:11,color:'var(--text-muted)'}}>Rate card loaded from Settings (not the code fallback)</div>
-                  <div style={{fontWeight:700,fontSize:12,color:auditResults.rateOverridesLoaded?'var(--matcha-dark)':'#c0392b'}}>{auditResults.rateOverridesLoaded ? '✓ yes' : '⚠️ no — using code defaults'}</div>
-                </div>
-                <div style={{border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',background:'var(--surface)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <div style={{fontSize:11,color:'var(--text-muted)'}}>Pending adjustment requests · Approved refunds not yet paid</div>
-                  <div style={{fontWeight:700,fontSize:12,color:'var(--text-primary)'}}>{auditResults.pendingAdjustments} pending · {auditResults.approvedUnpaidRefunds} unpaid</div>
-                </div>
               </div>
             )}
           </div>
         )}
-      </div>
 
+      </div>
 
       {toast&&(
         <div style={{position:'fixed',bottom:22,right:22,background:'var(--espresso)',color:'var(--cream)',border:'1px solid #3d3020',borderRadius:12,padding:'12px 16px',fontSize:12,fontWeight:500,display:'flex',alignItems:'center',gap:9,boxShadow:'0 8px 28px rgba(0,0,0,.2)',zIndex:1000}}>
