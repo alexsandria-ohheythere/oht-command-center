@@ -7,6 +7,8 @@ import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
+// Ownership/management roles excluded entirely from the Service Charge pool — it's for rank-and-file staff, not the owners.
+const SC_EXCLUDED_ROLES = ['CEO','Managing Director']
 const ISSUE_LABELS = { no_time_in:'No time-in recorded', no_time_out:'No time-out recorded', wrong_time:'Wrong time recorded', missed_entirely:'Entire shift missing', payroll_correction:'Payroll correction (admin-initiated)' }
 const SHIFT_LABELS = { am:'AM', ops:'OPS', mid:'MID', pm:'PM' }
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
@@ -645,6 +647,9 @@ export default function PayrollPage() {
   const serviceChargeRows = useMemo(() => {
     const byStaff = {}
     scRuns.forEach(r => {
+      // Ownership/management roles (CEO, Managing Director) aren't part of the service charge
+      // pool at all — it's for rank-and-file staff, not the owners running the business.
+      if (SC_EXCLUDED_ROLES.includes(r.staff?.role)) return
       const id = r.staff_id
       if (!byStaff[id]) byStaff[id] = { staff: r.staff, totalHours: 0, totalLateCount: 0, violationCount: r.staff?.violation_count || 0 }
       byStaff[id].totalHours += parseFloat(r.paid_hours) || 0
