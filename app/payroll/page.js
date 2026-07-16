@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares, isServiceChargeEligible } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -144,7 +144,7 @@ export default function PayrollPage() {
     const allIds = [...new Set([...ids, ...payoutIds])]
     const [{ data: runs, error: runsErr }, { data: salesRows, error: salesErr }] = await Promise.all([
       allIds.length
-        ? supabase.from('payroll_runs').select('*, staff(first_name,last_name,nickname,role,employment_type)').in('cutoff_id', allIds)
+        ? supabase.from('payroll_runs').select('*, staff(first_name,last_name,nickname,role,employment_type,violation_count)').in('cutoff_id', allIds)
         : Promise.resolve({ data: [] }),
       supabase.from('sales').select('service_charge').gte('sale_date', scMonth+'-01').lte('sale_date', monthEndISO(scMonth)),
     ])
@@ -636,20 +636,26 @@ export default function PayrollPage() {
     showToast('📥','Payroll exported')
   }
 
-  // ── SERVICE CHARGE: aggregate hours across the month's cutoff(s), compute shares, save to the target cutoff ──
+  // ── SERVICE CHARGE: aggregate hours + lates across the WHOLE month, eligibility is all-or-nothing ──
+  // Eligibility is judged on the month as a whole — total lates from the start of the month to the
+  // end (summed across both of that month's cutoffs), not per-cutoff. Someone with 7 lates in the
+  // first half and 3 in the second half has 10 lates that month and is NOT eligible at all, even
+  // though one of the two cutoffs individually looked fine. If eligible, ALL their hours that
+  // month count; if not, NONE of their hours count (not just the excess).
   const serviceChargeRows = useMemo(() => {
-    // Aggregate paid hours per staff across every cutoff belonging to scMonth. Only hours from
-    // a cutoff where that staff was marked service_charge_eligible for THAT cutoff count toward
-    // the denominator/payout — same per-cutoff eligibility rule as everywhere else in Payroll.
     const byStaff = {}
     scRuns.forEach(r => {
       const id = r.staff_id
-      if (!byStaff[id]) byStaff[id] = { staff: r.staff, totalHours: 0, eligibleHours: 0 }
+      if (!byStaff[id]) byStaff[id] = { staff: r.staff, totalHours: 0, totalLateCount: 0, violationCount: r.staff?.violation_count || 0 }
       byStaff[id].totalHours += parseFloat(r.paid_hours) || 0
-      if (r.service_charge_eligible) byStaff[id].eligibleHours += parseFloat(r.paid_hours) || 0
+      byStaff[id].totalLateCount += parseInt(r.late_count) || 0
     })
     const eligibleHours = {}
-    Object.keys(byStaff).forEach(id => { if (byStaff[id].eligibleHours > 0) eligibleHours[id] = byStaff[id].eligibleHours })
+    Object.keys(byStaff).forEach(id => {
+      const v = byStaff[id]
+      v.eligible = isServiceChargeEligible(v.totalLateCount, v.violationCount)
+      if (v.eligible) eligibleHours[id] = v.totalHours
+    })
     const { ratePerHour, shares } = computeServiceChargeShares(serviceChargePool, eligibleHours)
     return { ratePerHour, shares, byStaff }
   }, [serviceChargePool, scRuns])
@@ -1157,7 +1163,7 @@ export default function PayrollPage() {
                 </div>
               </div>
               <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>
-                Pool is the sum of "Service Charge" entered on Finance &gt; Sales for the whole month of {scMonth}. It's split across service-charge-eligible staff (late count ≤3 and zero violations that cutoff), proportional to paid hours worked across {cutoffsForMonth(scMonth).length>1?"that month's cutoffs":"that month's cutoff"} — then paid out as one lump sum on next month's cutoff selected above (once that month's sales are fully in).
+                Pool is the sum of "Service Charge" entered on Finance &gt; Sales for the whole month of {scMonth}. Eligibility is judged on the WHOLE month (total lates from the 1st cutoff through the last, added together) — more than 3 lates or any violation that month excludes someone entirely, not just the excess. Eligible staff split the pool proportional to their total hours worked that month — then it's paid out as one lump sum on next month's cutoff selected above (once that month's sales are fully in).
               </div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:14}}>
                 <div style={{textAlign:'center',padding:12,background:'var(--surface)',borderRadius:10}}>
@@ -1169,7 +1175,7 @@ export default function PayrollPage() {
                   <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:3}}>Rate per Eligible Hour</div>
                 </div>
                 <div style={{textAlign:'center',padding:12,background:'var(--surface)',borderRadius:10}}>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700,color:'var(--matcha-dark)'}}>{Object.values(serviceChargeRows.byStaff).filter(v=>v.eligibleHours>0).length} / {Object.keys(serviceChargeRows.byStaff).length}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700,color:'var(--matcha-dark)'}}>{Object.values(serviceChargeRows.byStaff).filter(v=>v.eligible).length} / {Object.keys(serviceChargeRows.byStaff).length}</div>
                   <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginTop:3}}>Eligible Staff</div>
                 </div>
               </div>
@@ -1189,6 +1195,7 @@ export default function PayrollPage() {
                     <th style={thBase}>Employee</th>
                     <th style={thBase}>Role</th>
                     <th style={{...thBase,textAlign:'center'}}>Eligible</th>
+                    <th style={{...thBase,textAlign:'right'}}>Lates (Month)</th>
                     <th style={{...thBase,textAlign:'right'}}>Hours (Month)</th>
                     <th style={{...thBase,textAlign:'right'}}>Service Charge Share</th>
                     <th style={{...thBase,textAlign:'right'}}>Saved on Target Cutoff</th>
@@ -1206,16 +1213,17 @@ export default function PayrollPage() {
                         </div>
                       </td>
                       <td style={{padding:'9px 12px'}}><span style={{fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:5,background:getRoleColor(v.staff?.role)+'22',color:getRoleColor(v.staff?.role)}}>{v.staff?.role}</span></td>
-                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}}>{v.eligibleHours>0?'✅':'❌'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}} title={`${v.totalLateCount} late(s) this month · ${v.violationCount} violation(s)`}>{v.eligible?'✅':'❌'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:v.totalLateCount>3?'#c0392b':'var(--text-muted)'}}>{v.totalLateCount}</td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace"}}>{v.totalHours.toFixed(1)}h</td>
-                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-dark)'}}>{v.eligibleHours>0 ? peso(serviceChargeRows.shares[staffId]||0) : '—'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-dark)'}}>{v.eligible ? peso(serviceChargeRows.shares[staffId]||0) : '—'}</td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,color:'var(--text-muted)'}}>{savedRun ? peso(parseFloat(savedRun.service_charge)||0) : '—'}</td>
                     </tr>
                   )})}
                 </tbody>
                 <tfoot>
                   <tr style={{background:'var(--espresso)',borderTop:'2px solid var(--matcha)'}}>
-                    <td colSpan={4} style={{padding:'11px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
+                    <td colSpan={5} style={{padding:'11px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
                     <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(Object.values(serviceChargeRows.shares).reduce((s,v)=>s+v,0))}</td>
                     <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672'}}>{peso(scTargetRuns.filter(r=>r.cutoff_id===scTargetCutoffId).reduce((s,r)=>s+(parseFloat(r.service_charge)||0),0))}</td>
                   </tr>
