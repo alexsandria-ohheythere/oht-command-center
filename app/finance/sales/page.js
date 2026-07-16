@@ -130,7 +130,7 @@ export default function SalesPage() {
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({sale_date:toISO(today),source:'storehub',gross_sales:'',net_sales:'',transaction_count:'',notes:''})
+  const [form, setForm] = useState({sale_date:toISO(today),source:'storehub',gross_sales:'',net_sales:'',service_charge:'',transaction_count:'',notes:''})
   const [toast, setToast]       = useState(null)
   const [selected, setSelected] = useState(new Set())
   const [deleteModal, setDeleteModal] = useState(null)
@@ -250,7 +250,7 @@ export default function SalesPage() {
     const file = e.target.files[0]; if(!file) return
     const reader = new FileReader()
     reader.onload = async ev => {
-      const text = ev.target.result.replace(/^\uFEFF/, '')
+      const text = ev.target.result.replace(/^﻿/, '')
       const lines = text.split('\n').filter(l=>l.trim())
       const rawHeaders = lines[0].split(',').map(h=>h.trim())
       const col = {}
@@ -262,6 +262,7 @@ export default function SalesPage() {
         if (n === 'total transactions')            col.txns = i
         if (n === 'total discount')                col.discount = i
         if (n === 'tax')                           col.tax = i
+        if (n === 'service charge')                col.service_charge = i
       })
       if (col.date === undefined) { showToast('⚠️', 'Date column not found — is this a StoreHub CSV?'); return }
       const rows = []
@@ -282,6 +283,7 @@ export default function SalesPage() {
           source:            'storehub',
           gross_sales:       gross,
           net_sales:         parseFloat(vals[col.net] || gross),
+          service_charge:    col.service_charge !== undefined ? (parseFloat(vals[col.service_charge]) || 0) : 0,
           transaction_count: parseInt(vals[col.txns]  || 0) || 0,
           notes:             notes || null,
           uploaded_by:       'alex',
@@ -301,9 +303,9 @@ export default function SalesPage() {
   async function saveSale() {
     if(!form.gross_sales){showToast('⚠️','Enter gross sales');return}
     setSaving(true)
-    const {error}=await supabase.from('sales').insert([{...form,gross_sales:parseFloat(form.gross_sales)||0,net_sales:parseFloat(form.net_sales||form.gross_sales)||0,transaction_count:parseInt(form.transaction_count)||0,uploaded_by:'alex'}])
+    const {error}=await supabase.from('sales').insert([{...form,gross_sales:parseFloat(form.gross_sales)||0,net_sales:parseFloat(form.net_sales||form.gross_sales)||0,service_charge:parseFloat(form.service_charge)||0,transaction_count:parseInt(form.transaction_count)||0,uploaded_by:'alex'}])
     if(error){showToast('❌',error.message);setSaving(false);return}
-    await fetchSales(); setShowForm(false); setForm({sale_date:toISO(today),source:'storehub',gross_sales:'',net_sales:'',transaction_count:'',notes:''})
+    await fetchSales(); setShowForm(false); setForm({sale_date:toISO(today),source:'storehub',gross_sales:'',net_sales:'',service_charge:'',transaction_count:'',notes:''})
     showToast('✅','Sale added'); setSaving(false)
   }
 
@@ -339,9 +341,10 @@ export default function SalesPage() {
     netByDate[s.sale_date] = (netByDate[s.sale_date] || 0) + (parseFloat(s.net_sales) || 0)
   })
 
-  const totalGross = sales.reduce((a,s)=>a+(parseFloat(s.gross_sales)||0),0)
-  const totalNet   = sales.reduce((a,s)=>a+(parseFloat(s.net_sales)||0),0)
-  const totalTxns  = sales.reduce((a,s)=>a+(parseInt(s.transaction_count)||0),0)
+  const totalGross    = sales.reduce((a,s)=>a+(parseFloat(s.gross_sales)||0),0)
+  const totalNet      = sales.reduce((a,s)=>a+(parseFloat(s.net_sales)||0),0)
+  const totalSvcCharge = sales.reduce((a,s)=>a+(parseFloat(s.service_charge)||0),0)
+  const totalTxns     = sales.reduce((a,s)=>a+(parseInt(s.transaction_count)||0),0)
 
   const todayISO = toISO(today)
   const todaySales = netByDate[todayISO] || 0
@@ -518,10 +521,11 @@ export default function SalesPage() {
         {/* KPIs */}
         <div className="kpi-grid" style={{marginBottom:16}}>
           {[
-            {label:'Gross Sales',  value:peso(totalGross), cls:'c-matcha', icon:'💰'},
-            {label:'Net Sales',    value:peso(totalNet),   cls:'c-gold',   icon:'📈'},
-            {label:'Transactions', value:totalTxns,        cls:'c-blush',  icon:'🧾'},
-            {label:'Avg per Day',  value:peso(totalNet/Math.max(1,sales.length)), cls:'c-bark', icon:'📅'},
+            {label:'Gross Sales',    value:peso(totalGross),    cls:'c-matcha', icon:'💰'},
+            {label:'Net Sales',      value:peso(totalNet),      cls:'c-gold',   icon:'📈'},
+            {label:'Service Charge', value:peso(totalSvcCharge),cls:'c-blush',  icon:'🍽️'},
+            {label:'Transactions',   value:totalTxns,           cls:'c-blush',  icon:'🧾'},
+            {label:'Avg per Day',    value:peso(totalNet/Math.max(1,sales.length)), cls:'c-bark', icon:'📅'},
           ].map(k=>(
             <div key={k.label} className={`kpi-card ${k.cls}`}>
               <div className="kpi-icon">{k.icon}</div>
@@ -539,6 +543,7 @@ export default function SalesPage() {
               <div><label style={lStyle}>Date</label><input style={iStyle} type="date" value={form.sale_date} onChange={fv('sale_date')}/></div>
               <div><label style={lStyle}>Gross Sales</label><input style={iStyle} type="number" placeholder="0.00" value={form.gross_sales} onChange={fv('gross_sales')}/></div>
               <div><label style={lStyle}>Net Sales</label><input style={iStyle} type="number" placeholder="Same as gross" value={form.net_sales} onChange={fv('net_sales')}/></div>
+              <div><label style={lStyle}>Service Charge</label><input style={iStyle} type="number" placeholder="0.00" value={form.service_charge} onChange={fv('service_charge')}/></div>
               <div><label style={lStyle}>Transactions</label><input style={iStyle} type="number" placeholder="0" value={form.transaction_count} onChange={fv('transaction_count')}/></div>
             </div>
             <div style={{display:'grid',gridTemplateColumns:'1fr auto auto',gap:10,alignItems:'end'}}>
@@ -585,7 +590,7 @@ export default function SalesPage() {
                 <th style={{padding:'11px 14px',width:36}}>
                   <input type="checkbox" checked={selected.size===sales.length&&sales.length>0} onChange={toggleSelectAll} style={{cursor:'pointer',accentColor:'#EF4576'}}/>
                 </th>
-                {['Date','Source','Gross Sales','Net Sales','Transactions','Notes',''].map(h=>(
+                {['Date','Source','Gross Sales','Net Sales','Service Charge','Transactions','Notes',''].map(h=>(
                   <th key={h} style={{padding:'11px 14px',textAlign:'left',fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--matcha-light)'}}>{h}</th>
                 ))}
               </tr></thead>
@@ -611,6 +616,7 @@ export default function SalesPage() {
                       <td style={{padding:'10px 14px'}}><span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:6,background:src.color+'22',color:src.color}}>{src.label}</span></td>
                       <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)',fontWeight:600}}>{peso(s.gross_sales)}</td>
                       <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace"}}>{peso(s.net_sales)}</td>
+                      <td style={{padding:'10px 14px',fontFamily:"'DM Mono',monospace",color:'var(--sky)'}}>{peso(s.service_charge)}</td>
                       <td style={{padding:'10px 14px',color:'var(--text-muted)'}}>{s.transaction_count||'—'}</td>
                       <td style={{padding:'10px 14px',color:'var(--text-muted)',fontSize:11,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.notes||'—'}</td>
                       <td style={{padding:'10px 14px'}}>
@@ -628,6 +634,7 @@ export default function SalesPage() {
                 <td colSpan={2} style={{padding:'11px 14px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
                 <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(totalGross)}</td>
                 <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672'}}>{peso(totalNet)}</td>
+                <td style={{padding:'11px 14px',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#8ec9f0'}}>{peso(totalSvcCharge)}</td>
                 <td style={{padding:'11px 14px',color:'var(--matcha-light)',fontFamily:"'DM Mono',monospace"}}>{totalTxns}</td>
                 <td colSpan={2}/>
               </tr></tfoot>
