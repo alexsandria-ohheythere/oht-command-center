@@ -88,6 +88,7 @@ const ROLE_COLORS = {
   'Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843',
   'Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b',
   'Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e',
+  'R&D Specialist':'#5b5ea6',
 }
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
