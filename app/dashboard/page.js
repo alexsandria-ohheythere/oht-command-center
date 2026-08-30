@@ -188,7 +188,6 @@ export default function DashboardPage() {
 
   // KPI data
   const [incidentCount, setIncidentCount]     = useState(0)
-  const [pendingInventory, setPendingInventory] = useState(0)
   const [pendingLeaves, setPendingLeaves]     = useState(0)
   const [manpowerCost, setManpowerCost]       = useState(0)
   const [todayShifts, setTodayShifts]         = useState([])
@@ -236,7 +235,6 @@ export default function DashboardPage() {
       { data: schedules },
       { data: leaves },
       { data: incidents },
-      { data: inventoryPending },
       { data: staffAll },
       { data: checkinData },
       { data: jobData },
@@ -245,7 +243,6 @@ export default function DashboardPage() {
       supabase.from('schedules').select('*, staff(first_name,last_name,role,nickname,employment_type)').eq('shift_date', today),
       supabase.from('leave_requests').select('id').eq('status','pending'),
       supabase.from('incident_reports').select('id').eq('status','pending'),
-      supabase.from('inventory_reports').select('id').eq('status','pending'),
       supabase.from('staff').select('id,first_name,last_name,role,employment_type'),
       supabase.from('shift_task_assignments').select('*').eq('shift_date', today),
       supabase.from('job_orders').select('*, staff(first_name,last_name)').in('status',['todo','inprogress']).order('created_at',{ascending:false}).limit(6),
@@ -256,7 +253,6 @@ export default function DashboardPage() {
     setTodayShifts(shifts)
     setPendingLeaves((leaves||[]).length)
     setIncidentCount((incidents||[]).length)
-    setPendingInventory((inventoryPending||[]).length)
     setTaskAssignments(checkinData || [])
     setJobOrders(jobData || [])
     setAnnouncements(announceData || [])
@@ -469,13 +465,6 @@ export default function DashboardPage() {
               delta: incidentCount>0?'Pending review':'All clear',
               dir: incidentCount>0?'down':'up',
               icon:'⚠️', cls:'c-blush', href:'/reports'
-            },
-            {
-              label:'Inventory Approval',
-              value: loading?'…':pendingInventory,
-              delta: pendingInventory>0?'Awaiting approval':'Queue clear',
-              dir: pendingInventory>0?'down':'up',
-              icon:'📦', cls:'c-bark', href:'/inventory/inventory-approvals'
             },
             {
               label:'Pending Leaves',
