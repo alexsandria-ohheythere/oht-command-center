@@ -86,11 +86,6 @@ export default function Sidebar({ user, userRole, onClose }) {
 
     { type:'section', label:'Inventory' },
     { type:'link', id:'inv-catalog',      href:'/inventory/catalog',      icon:'📦', label:'Catalog',              show: can(role,'admin') },
-    { type:'link', id:'inv-support',      href:'/inventory/support',      icon:'🛒', label:'Purchase Queue',       show: can(role,'admin') },
-    { type:'link', id:'inv-approve',      href:'/inventory/approve',      icon:'✅', label:'Purchase Approvals',   show: can(role,'admin') },
-    { type:'link', id:'inv-templates', href:'/inventory/templates',            icon:'📝', label:'Templates',           show: can(role,'admin') },
-    { type:'link', id:'inv-reports',   href:'/inventory/reports',              icon:'📊', label:'Inventory Reports',    show: can(role,'admin') },
-    { type:'link', id:'inv-approvals', href:'/inventory/inventory-approvals',  icon:'✅', label:'Inventory Approvals',  show: can(role,'admin') },
     { type:'link', id:'inv-recipes',   href:'/inventory/recipes',              icon:'📒', label:'Recipes',              show: can(role,'admin') },
 
     { type:'section', label:'Reports', show: can(role,'incidentReports') },
