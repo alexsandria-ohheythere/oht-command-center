@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
+import { useRoles } from '../../lib/roles'
 
 const SHIFTS = [
   { id:'am',  label:'AM',  time:'6:30AM–3:30PM',  paid:8, color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648' },
@@ -27,7 +28,7 @@ const ROLE_ROWS = [
   { shiftId:'am', role:'Cafe Operations Support',  label:'Cafe Support',       group:'front' },
   { shiftId:'am', role:'Senior Barista',            label:'Senior Barista',     group:'bar', divider:true, dividerLabel:'🧋 Bar' },
   { shiftId:'am', role:'Junior Barista',            label:'Junior Barista',     group:'bar' },
-  { shiftId:'am', role:'Executive Chef',            label:'Executive Chef',     group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen' },
+  { shiftId:'am', role:'Executive Chef',            label:'Executive Chef / R&D Specialist', group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen' },
   { shiftId:'am', role:'Sous Chef',                 label:'Sous Chef',          group:'kitchen' },
   { shiftId:'am', role:'Kitchen Staff',             label:'Kitchen Staff',      group:'kitchen' },
   // OPS
@@ -44,25 +45,13 @@ const ROLE_ROWS = [
   { shiftId:'pm', role:'Cafe Operations Support',   label:'Cafe Support',      group:'front' },
   { shiftId:'pm', role:'Senior Barista',            label:'Senior Barista',    group:'bar', divider:true, dividerLabel:'🧋 Bar' },
   { shiftId:'pm', role:'Junior Barista',            label:'Junior Barista',    group:'bar' },
-  { shiftId:'pm', role:'Executive Chef',            label:'Executive Chef',    group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen' },
+  { shiftId:'pm', role:'Executive Chef',            label:'Executive Chef / R&D Specialist', group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen' },
   { shiftId:'pm', role:'Sous Chef',                 label:'Sous Chef',         group:'kitchen' },
   { shiftId:'pm', role:'Kitchen Staff',             label:'Kitchen Staff',     group:'kitchen' },
 ]
 
 const DAYS = ['MON','TUE','WED','THU','FRI','SAT','SUN']
 
-const ROLE_COLORS = {
-  'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4',
-  'Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843',
-  'Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b',
-  'Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e',
-}
-const getRoleColor = r => {
-  if (!r) return '#7a6a50'
-  // fuzzy match Junior Barista variants
-  if (r.startsWith('Junior Barista')) return '#e8845a'
-  return ROLE_COLORS[r] || '#7a6a50'
-}
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
 
 function getWeekDates(offset=0) {
@@ -85,10 +74,20 @@ function roleMatches(staffRole, rowRole) {
   if (!staffRole) return false
   if (staffRole === rowRole) return true
   if (rowRole === 'Junior Barista' && staffRole.startsWith('Junior Barista')) return true
+  // Executive Chef row also covers R&D Specialist — they share the same kitchen slot.
+  if (rowRole === 'Executive Chef' && staffRole === 'R&D Specialist') return true
   return false
 }
 
 export default function SchedulePage() {
+  const { getRoleColor: baseRoleColor } = useRoles()
+  const getRoleColor = r => {
+    if (!r) return '#7a6a50'
+    const c = baseRoleColor(r)
+    if (c !== '#7a6a50') return c
+    if (r.startsWith('Junior Barista')) return '#e8845a'
+    return '#7a6a50'
+  }
   const supabase = createClient()
   const [staff, setStaff]           = useState([])
   const [schedules, setSchedules]   = useState([])
@@ -300,7 +299,9 @@ export default function SchedulePage() {
         const assigned = schedules.filter(sc => sc.shift_date === iso && sc.shift_type === shiftId)
         const hasCoverage = assigned.some(sc => {
           const s = staff.find(st => st.id === sc.staff_id)
-          return s && (s.role === role || (role === 'Senior Barista' && s.role === 'Senior Barista'))
+          if (!s) return false
+          if (role === 'Executive Chef') return s.role === 'Executive Chef' || s.role === 'R&D Specialist'
+          return s.role === role
         })
         if (!assigned.length || !hasCoverage) {
           coverageGaps.push({ date, iso, day: DAYS[di], shiftId, shiftLabel: shift.label, role })
