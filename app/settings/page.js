@@ -73,7 +73,7 @@ export default function SettingsPage() {
   })
 
   // Rate cards — employment type × role
-  const ROLES = ['Cafe Supervisor','Cafe Operations Support','Senior Barista','Junior Barista - Milk Station','Junior Barista - Cashier','Executive Chef','Sous Chef','Kitchen Staff']
+  const ROLES = ['Cafe Supervisor','Cafe Operations Support','Senior Barista','Junior Barista - Milk Station','Junior Barista - Cashier','Executive Chef','Sous Chef','Kitchen Staff','R&D Specialist']
   const EMP_TYPES = ['Full-time','Part-time','Freelancer']
   const DEFAULT_RATES = {
     'Full-time': {
