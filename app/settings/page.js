@@ -307,7 +307,7 @@ export default function SettingsPage() {
                   <div style={{ marginBottom:16 }}>
                     <div style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:'var(--text-muted)', marginBottom:4 }}>Rate Cards</div>
                     <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:14, lineHeight:1.6 }}>
-                      Set the base pay rate for each role and employment type. Full-time uses monthly salary (÷26 for daily rate). Part-time and Freelancer use daily rates directly.
+                      Set the base pay rate for each role and employment type. Full-time uses monthly salary (÷20 for daily rate). Part-time and Freelancer use daily rates directly.
                     </div>
                     {EMP_TYPES.map(empType => (
                       <div key={empType} style={{ marginBottom:20 }}>
@@ -340,7 +340,7 @@ export default function SettingsPage() {
                                     </span>
                                     {empType === 'Full-time' && entry.amount > 0 && (
                                       <span style={{ fontSize:9, color:'var(--matcha-dark)', background:'var(--matcha-pale)', padding:'2px 6px', borderRadius:5, whiteSpace:'nowrap' }}>
-                                        ₱{Math.round(entry.amount / 26).toLocaleString('en-PH')}/day
+                                        ₱{Math.round(entry.amount / 20).toLocaleString('en-PH')}/day
                                       </span>
                                     )}
                                   </div>
