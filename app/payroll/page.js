@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares, isServiceChargeEligible } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, applyScheduleToLateMinutes, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares, isServiceChargeEligible } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 
 const peso = n => '₱' + (n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -249,7 +249,10 @@ export default function PayrollPage() {
       if (timesheetData) {
         const tsKey = Object.keys(timesheetData).find(k => { const ts = timesheetData[k]; return matchStaff([s], ts.lastName, ts.firstName) !== undefined })
         const ts = tsKey ? timesheetData[tsKey] : null
-        const periodShiftsRaw = ts ? filterShiftsByPeriod(ts.shifts, selectedCutoff.start, selectedCutoff.end) : []
+        const periodShiftsFiltered = ts ? filterShiftsByPeriod(ts.shifts, selectedCutoff.start, selectedCutoff.end) : []
+        // Correct late-minutes using each date's ACTUAL published shift assignment (am/ops/mid/pm)
+        // instead of the parse-time guess from the clock-in time band alone — see applyScheduleToLateMinutes.
+        const periodShiftsRaw = applyScheduleToLateMinutes(periodShiftsFiltered, s.id, schedules)
         const corrections = pendingCorrectionsFor(s.id)
         const periodShifts = corrections.length ? applyAdjustmentsToShifts(periodShiftsRaw, corrections) : periodShiftsRaw
         const pay = computeCutoffPayroll(s, periodShifts, rateOverrides, selectedCutoff, reqDays)
@@ -463,7 +466,11 @@ export default function PayrollPage() {
         if (!matched) results.unmatchedCsvRows.push({ key, name: `${emp.firstName} ${emp.lastName}` })
 
         // Scope to THIS cutoff's date range only — the uploaded file can span many months.
-        const inRangeShifts = filterShiftsByPeriod(emp.shifts || [], cutoffToCheck.start, cutoffToCheck.end)
+        // Correct late-minutes against each date's ACTUAL published shift (am/ops/mid/pm) before
+        // flagging "unusually high" lates — otherwise a legitimate OPS-shift clock-in gets flagged
+        // as a false positive against the AM 06:30 guess (the exact bug this check exists to catch).
+        const inRangeShiftsRaw = filterShiftsByPeriod(emp.shifts || [], cutoffToCheck.start, cutoffToCheck.end)
+        const inRangeShifts = matched ? applyScheduleToLateMinutes(inRangeShiftsRaw, matched.id, schedules) : inRangeShiftsRaw
         const payrollRow = matched ? payrollRows.find(r => r.staff.id === matched.id) : null
         const isFT = matched && (matched.employment_type||'Full-time') === 'Full-time'
 
@@ -533,7 +540,7 @@ export default function PayrollPage() {
     const dateMMDDYYYY = isoToMMDDYYYY(adj.shift_date)
     const originalShift = tsKey ? (archived.employees[tsKey].shifts || []).find(s => s.date === dateMMDDYYYY) : null
     const originalShiftFound = !!originalShift
-    const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out) : null
+    const correctedShift = (adj.claimed_time_in && adj.claimed_time_out) ? buildCorrectedShift(dateMMDDYYYY, adj.claimed_time_in, adj.claimed_time_out, adj.shift_type || null) : null
 
     // Basic pay is a flat daily rate — it doesn't prorate by hours, and correcting a day's clock
     // times never changes what Basic owes for that day. Two distinct cases:
@@ -969,11 +976,16 @@ export default function PayrollPage() {
                 <tbody>
                   {Object.entries(tsSource).sort((a,b)=>(a[1].lastName||'').localeCompare(b[1].lastName||'')).map(([key,ts])=>{
                     // Only show shifts that fall within the selected cutoff window
-                    const shifts = filterShiftsByPeriod(ts.shifts||[], selectedCutoff.start, selectedCutoff.end)
+                    const matchedStaff = matchStaff(staff, ts.lastName, ts.firstName)
+                    // Correct late-minutes against each date's ACTUAL published shift, same as payroll
+                    // computation, so this view never shows a different "late" number than what's charged.
+                    const shifts = applyScheduleToLateMinutes(
+                      filterShiftsByPeriod(ts.shifts||[], selectedCutoff.start, selectedCutoff.end),
+                      matchedStaff?.id, schedules
+                    )
                     const rawTot = shifts.reduce((s,x)=>s+(x.rawHours||0),0)
                     const paidTot = shifts.reduce((s,x)=>s+(x.paidHours||0),0)
                     const lateTot = shifts.reduce((s,x)=>s+(x.lateMinutes||0),0)
-                    const matchedStaff = matchStaff(staff, ts.lastName, ts.firstName)
                     const matched = !!matchedStaff
                     const abs = matchedStaff ? computeAbsences(matchedStaff, ts) : { noShow:[], excused:[], total:0 }
                     const isOpen = expandedEmp===key
