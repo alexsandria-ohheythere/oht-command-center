@@ -4,6 +4,7 @@ import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, applyScheduleToLateMinutes, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares, isServiceChargeEligible, FULL_TIME_SHIFTS_PER_CUTOFF } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
+import { notifyOne } from '../../lib/notify'
 
 const peso = n => '₱' + (n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
@@ -66,6 +67,14 @@ export default function PayrollPage() {
   const [reviewNotes, setReviewNotes]       = useState({})
   const [approving, setApproving]           = useState(null)
   const [settling, setSettling]             = useState(null)
+  // Staff-filed Overtime requests (overtime_requests table) — reviewed in the Overtime tab,
+  // reflected into payroll_runs.overtime for the SAME cutoff the shift belongs to.
+  const [otRequests, setOtRequests]         = useState([])
+  const [otReviewNotes, setOtReviewNotes]   = useState({})
+  const [otPreviews, setOtPreviews]         = useState({})
+  const [otPreviewing, setOtPreviewing]     = useState(null)
+  const [otAmounts, setOtAmounts]           = useState({})
+  const [otApproving, setOtApproving]       = useState(null)
   const [auditResults, setAuditResults]     = useState(null)
   const [auditing, setAuditing]             = useState(false)
   const [previews, setPreviews]             = useState({})
@@ -83,7 +92,7 @@ export default function PayrollPage() {
   const [scSaving, setScSaving]             = useState(false)
   const fileRef = useRef()
 
-  useEffect(() => { fetchStaff(); fetchRateOverrides(); fetchAdjustmentRequests(); fetchCurrentStaffId() }, [])
+  useEffect(() => { fetchStaff(); fetchRateOverrides(); fetchAdjustmentRequests(); fetchOvertimeRequests(); fetchCurrentStaffId() }, [])
   useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet(); fetchAttendanceRefs() }, [selectedCutoff])
   useEffect(() => { fetchScMonthData() }, [scMonth])
 
@@ -100,6 +109,14 @@ export default function PayrollPage() {
       .order('created_at', { ascending: false })
     if (error) console.error('fetchAdjustmentRequests error:', error)
     setAdjustmentRequests(data || [])
+  }
+
+  async function fetchOvertimeRequests() {
+    const { data, error } = await supabase.from('overtime_requests')
+      .select('*, staff:staff!overtime_requests_staff_id_fkey(first_name,last_name,nickname,role,employment_type,monthly_pay)')
+      .order('created_at', { ascending: false })
+    if (error) console.error('fetchOvertimeRequests error:', error)
+    setOtRequests(data || [])
   }
 
   async function fetchAttendanceRefs() {
@@ -223,24 +240,37 @@ export default function PayrollPage() {
     return adjustmentRequests.filter(a => a.staff_id === staffId && a.status === 'approved' && a.resolution === 'refund' && !a.applied)
       .reduce((sum, a) => sum + (parseFloat(a.refund_amount) || 0), 0)
   }
+  // Approved-but-not-yet-applied overtime, SCOPED to the cutoff currently being viewed —
+  // unlike refunds, overtime always belongs to the exact cutoff its shift fell in, so it
+  // only pre-fills when that same cutoff is selected (never rolled into whichever cutoff
+  // happens to be open next).
+  function pendingOvertimeFor(staffId) {
+    return otRequests.filter(o => o.staff_id === staffId && o.cutoff_id === selectedCutoff.id && o.status === 'approved' && !o.applied)
+      .reduce((sum, o) => sum + (parseFloat(o.amount) || 0), 0)
+  }
 
-  // Pre-fill any banked refunds into the editable Refund field as soon as we know about them —
-  // this must NOT wait for a timesheet upload, since a payslip card (and the refund owed) can
-  // already exist before this cutoff's timesheet is uploaded. Admin can still see/adjust the
-  // number before Save Payroll locks it in.
+  // Pre-fill any banked refunds/approved overtime into their editable fields as soon as we
+  // know about them — this must NOT wait for a timesheet upload, since a payslip card (and
+  // the amount owed) can already exist before this cutoff's timesheet is uploaded. Admin can
+  // still see/adjust the number before Save Payroll locks it in.
   useEffect(() => {
     if (!staff.length) return
     setAdjustments(prev => {
       const next = { ...prev }
       staff.forEach(s => {
-        if (next[s.id]?.refund !== undefined && next[s.id]?.refund !== '') return
-        const pending = pendingRefundFor(s.id)
-        if (pending > 0) next[s.id] = { ...(next[s.id] || {}), refund: pending }
+        if (next[s.id]?.refund === undefined || next[s.id]?.refund === '') {
+          const pendingR = pendingRefundFor(s.id)
+          if (pendingR > 0) next[s.id] = { ...(next[s.id] || {}), refund: pendingR }
+        }
+        if (next[s.id]?.overtime === undefined || next[s.id]?.overtime === '') {
+          const pendingOT = pendingOvertimeFor(s.id)
+          if (pendingOT > 0) next[s.id] = { ...(next[s.id] || {}), overtime: pendingOT }
+        }
       })
       return next
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timesheetData, adjustmentRequests, staff])
+  }, [timesheetData, adjustmentRequests, otRequests, staff, selectedCutoff])
 
   function buildPayrollRows() {
     return staff.map(s => {
@@ -337,7 +367,13 @@ export default function PayrollPage() {
     if (allAppliedIds.length) {
       await supabase.from('timesheet_adjustments').update({ applied:true, applied_cutoff_id:selectedCutoff.id, applied_at:new Date().toISOString() }).in('id', allAppliedIds)
     }
-    await fetchSavedRuns(); await fetchSavedTimesheet(); await fetchAdjustmentRequests(); setTimesheetData(null); setSaving(false)
+    // Mark any approved overtime for THIS cutoff as applied — its amount just got folded into
+    // the upsert above via the pre-filled adjustments[staffId].overtime field.
+    const appliedOvertimeIds = rows.flatMap(r => otRequests.filter(o => o.staff_id===r.staff.id && o.cutoff_id===selectedCutoff.id && o.status==='approved' && !o.applied).map(o => o.id))
+    if (appliedOvertimeIds.length) {
+      await supabase.from('overtime_requests').update({ applied:true, applied_cutoff_id:selectedCutoff.id, applied_at:new Date().toISOString() }).in('id', appliedOvertimeIds)
+    }
+    await fetchSavedRuns(); await fetchSavedTimesheet(); await fetchAdjustmentRequests(); await fetchOvertimeRequests(); setTimesheetData(null); setSaving(false)
     showToast('💾',`Payroll saved for ${selectedCutoff.label}`)
   }
 
@@ -632,6 +668,110 @@ export default function PayrollPage() {
     }
   }
 
+  // ── Overtime Requests: preview / approve / reject ─────────────────────────
+  // Self-contained rate lookup (mirrors computeAdjustmentPreview above) so this works whether
+  // the request's cutoff is the one currently selected on screen or not: prefers the ALREADY
+  // SAVED payroll_runs row's required_days for that cutoff+staff when one exists (source of
+  // truth once saved), otherwise counts published schedule days for that cutoff directly.
+  async function computeOvertimeAmount(req) {
+    const cutoff = CUTOFF_PERIODS.find(p => p.id === req.cutoff_id)
+    const staffMember = req.staff
+    const isFT = (staffMember.employment_type || 'Full-time') === 'Full-time'
+    const monthlyPay = staffMember.monthly_pay || getBaseRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)?.monthly || 0
+    const { data: existingRun } = await supabase.from('payroll_runs')
+      .select('id, required_days, overtime, net_pay')
+      .eq('cutoff_id', req.cutoff_id).eq('staff_id', req.staff_id).maybeSingle()
+    let requiredDays = existingRun?.required_days || 0
+    if (!requiredDays && cutoff) {
+      const { data: sch } = await supabase.from('schedules').select('shift_date')
+        .eq('staff_id', req.staff_id).eq('published', true)
+        .gte('shift_date', cutoff.start).lte('shift_date', cutoff.end)
+      requiredDays = new Set((sch || []).map(s => s.shift_date)).size
+    }
+    const dailyRate = (isFT && requiredDays > 0 && monthlyPay > 0)
+      ? (monthlyPay / 2) / requiredDays
+      : getDailyRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)
+    const hourlyRate = round2(dailyRate / 8)
+    const amount = round2(hourlyRate * (parseFloat(req.hours) || 0))
+    return { hourlyRate, amount, cutoffLabel: cutoff?.label, existingRun }
+  }
+
+  async function previewOvertime(req) {
+    setOtPreviewing(req.id)
+    try {
+      const result = await computeOvertimeAmount(req)
+      setOtPreviews(p => ({ ...p, [req.id]: result }))
+      setOtAmounts(p => (p[req.id] !== undefined ? p : { ...p, [req.id]: result.amount }))
+    } catch (e) {
+      showToast('❌', 'Preview failed: ' + e.message)
+    }
+    setOtPreviewing(null)
+  }
+
+  async function rejectOvertime(req) {
+    const note = otReviewNotes[req.id] || ''
+    if (!confirm(`Reject ${req.staff?.first_name}'s overtime request?`)) return
+    const { error } = await supabase.from('overtime_requests').update({
+      status: 'rejected', review_note: note, reviewed_by: currentStaffId,
+      reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq('id', req.id)
+    if (error) { showToast('❌', error.message); return }
+    notifyOne(req.staff_id, {
+      type: 'overtime_rejected',
+      title: '⏰ Overtime Request Rejected',
+      message: `Your ${req.hours}h overtime request for ${new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} (${req.cutoff_label}) was rejected${note ? ': ' + note : '.'}`,
+    }).catch(() => {})
+    await fetchOvertimeRequests()
+    showToast('✋', 'Overtime request rejected')
+  }
+
+  async function approveOvertime(req) {
+    setOtApproving(req.id)
+    const note = otReviewNotes[req.id] || ''
+    const cutoff = CUTOFF_PERIODS.find(p => p.id === req.cutoff_id)
+    try {
+      const preview = otPreviews[req.id] || await computeOvertimeAmount(req)
+      const finalAmount = round2(parseFloat(otAmounts[req.id] ?? preview.amount) || 0)
+
+      if (preview.existingRun) {
+        // This cutoff's payroll is already saved (and its Overtime field is locked in the
+        // Payslips tab) — patch the saved row directly so the money lands on THIS cutoff's
+        // payslip, not whichever one happens to be open next.
+        const newOvertime = round2((parseFloat(preview.existingRun.overtime) || 0) + finalAmount)
+        const newNetPay = round2((parseFloat(preview.existingRun.net_pay) || 0) + finalAmount)
+        const { error: runError } = await supabase.from('payroll_runs').update({
+          overtime: newOvertime, net_pay: newNetPay, updated_at: new Date().toISOString(),
+        }).eq('id', preview.existingRun.id)
+        if (runError) throw runError
+        const { error } = await supabase.from('overtime_requests').update({
+          status: 'approved', hourly_rate: preview.hourlyRate, amount: finalAmount,
+          applied: true, applied_cutoff_id: req.cutoff_id, applied_at: new Date().toISOString(),
+          review_note: note, reviewed_by: currentStaffId, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq('id', req.id)
+        if (error) throw error
+        await fetchSavedRuns()
+        showToast('✅', `Approved — ${peso(finalAmount)} added directly to their saved ${cutoff?.label || ''} payslip`)
+      } else {
+        const { error } = await supabase.from('overtime_requests').update({
+          status: 'approved', hourly_rate: preview.hourlyRate, amount: finalAmount,
+          review_note: note, reviewed_by: currentStaffId, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq('id', req.id)
+        if (error) throw error
+        showToast('✅', `Approved — ${peso(finalAmount)} will be added to ${cutoff?.label || 'their'} payroll on Save`)
+      }
+      notifyOne(req.staff_id, {
+        type: 'overtime_approved',
+        title: '⏰ Overtime Approved ✅',
+        message: `Your ${req.hours}h overtime for ${new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} was approved — ${peso(finalAmount)} on your ${cutoff?.label || ''} payslip.`,
+      }).catch(() => {})
+      await fetchOvertimeRequests()
+    } catch(e) {
+      showToast('❌', e.message)
+    } finally {
+      setOtApproving(null)
+    }
+  }
+
   function exportCSV() {
     const rows = buildPayrollRows()
     const data = [
@@ -807,7 +947,7 @@ export default function PayrollPage() {
 
         {/* Tabs */}
         <div style={{display:'flex',gap:4,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
-          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['servicecharge','🍽️ Service Charge'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`],['audit','🔍 Accuracy Check']].map(([key,label])=>(
+          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['servicecharge','🍽️ Service Charge'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`],['overtime',`⏰ Overtime${otRequests.filter(o=>o.status==='pending').length>0?` (${otRequests.filter(o=>o.status==='pending').length})`:''}`],['audit','🔍 Accuracy Check']].map(([key,label])=>(
             <button key={key} onClick={()=>setTab(key)} style={{background:'transparent',border:'none',borderBottom:tab===key?'2px solid var(--matcha)':'2px solid transparent',marginBottom:-2,padding:'9px 16px',fontSize:12,fontWeight:tab===key?700:500,color:tab===key?'var(--matcha-dark)':'var(--text-muted)',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{label}</button>
           ))}
         </div>
@@ -1484,6 +1624,118 @@ export default function PayrollPage() {
                               >↩️ Undo{adj.applied?' (applied)':''}</button>
                             )}
                           </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab==='overtime' && (
+          <div style={{display:'flex',flexDirection:'column',gap:20}}>
+            {/* Pending */}
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+              <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Pending Overtime Requests</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Filed by staff via the Staff Portal. Preview computes the amount from their hourly rate for the shift's own cutoff — adjust it if needed before approving.</div>
+              </div>
+              {otRequests.filter(o=>o.status==='pending').length===0 ? (
+                <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No pending overtime requests.</div>
+              ) : (
+                <div style={{padding:'14px 20px',display:'flex',flexDirection:'column',gap:12}}>
+                  {otRequests.filter(o=>o.status==='pending').map(req=>{
+                    const s = req.staff || {}
+                    const preview = otPreviews[req.id]
+                    return (
+                      <div key={req.id} style={{border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',background:'var(--surface)'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,flexWrap:'wrap'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8}}>
+                            <div style={{width:28,height:28,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
+                            <div>
+                              <div style={{fontSize:12,fontWeight:700}}>{s.first_name} {s.last_name}</div>
+                              <div style={{fontSize:10,color:'var(--text-muted)'}}>{s.role} · {req.cutoff_label}</div>
+                            </div>
+                          </div>
+                          <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:8,background:'#fef3e2',color:'#a06000'}}>{req.hours}h overtime</span>
+                        </div>
+                        <div style={{marginTop:10,display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,fontSize:11}}>
+                          <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Date / Shift</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} · {SHIFT_LABELS[req.shift_type]||req.shift_type||'—'}</div></div>
+                          <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Hours Claimed</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{req.hours}h</div></div>
+                        </div>
+                        {req.reason && <div style={{marginTop:8,fontSize:11,color:'var(--text-primary)',background:'var(--white)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px'}}>"{req.reason}"</div>}
+
+                        {preview && (
+                          <div style={{marginTop:10,background:'#eef6f2',border:'1px solid var(--matcha)',borderRadius:8,padding:'10px 12px'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                              <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Suggested: {peso(preview.amount)} ({req.hours}h × {peso(preview.hourlyRate)}/hr)</div>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <span style={{fontSize:10,color:'var(--text-muted)'}}>Amount to approve</span>
+                                <input type="number" value={otAmounts[req.id]??preview.amount} onChange={e=>setOtAmounts(p=>({...p,[req.id]:e.target.value}))} style={{width:90,textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,border:'1px solid var(--border)',borderRadius:6,padding:'4px 8px',outline:'none'}}/>
+                              </div>
+                            </div>
+                            <div style={{marginTop:4,fontSize:10,color:'var(--text-muted)'}}>
+                              {preview.existingRun ? `⚠️ ${req.cutoff_label} payroll is already saved — approving will patch this amount straight into that saved payslip and net pay.` : `${req.cutoff_label} hasn't been saved yet — approving pre-fills the Overtime field on the Payslips tab; it locks in when you Save Payroll for that cutoff.`}
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{marginTop:10,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                          <input value={otReviewNotes[req.id]||''} onChange={e=>setOtReviewNotes(prev=>({...prev,[req.id]:e.target.value}))} placeholder="Optional note…" style={{flex:1,minWidth:140,background:'var(--white)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px',fontSize:11,outline:'none',fontFamily:"'DM Sans',sans-serif"}}/>
+                          <button onClick={()=>previewOvertime(req)} disabled={otPreviewing===req.id} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--text-muted)',borderRadius:7,padding:'6px 12px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{otPreviewing===req.id?'Checking…':(preview?'🔄 Refresh':'👁 Preview Amount')}</button>
+                          <button onClick={()=>rejectOvertime(req)} disabled={otApproving===req.id} style={{background:'transparent',border:'1px solid #f5c6c6',color:'#c0392b',borderRadius:7,padding:'6px 12px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>Reject</button>
+                          <button onClick={()=>approveOvertime(req)} disabled={otApproving===req.id} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:7,padding:'6px 14px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{otApproving===req.id?'Approving…':'✓ Approve'}</button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Resolved */}
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+              <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Resolved</div>
+              </div>
+              {otRequests.filter(o=>o.status!=='pending').length===0 ? (
+                <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>Nothing resolved yet.</div>
+              ) : (
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead>
+                    <tr style={{background:'var(--espresso)'}}>
+                      <th style={thBase}>Employee</th>
+                      <th style={thBase}>Cutoff / Date</th>
+                      <th style={thBase}>Hours</th>
+                      <th style={thBase}>Outcome</th>
+                      <th style={thBase}>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {otRequests.filter(o=>o.status!=='pending').map((req,i)=>{
+                      const s = req.staff || {}
+                      return (
+                        <tr key={req.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
+                          <td style={{padding:'9px 12px'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8}}>
+                              <div style={{width:22,height:22,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
+                              <span style={{fontWeight:600}}>{s.first_name} {s.last_name}</span>
+                            </div>
+                          </td>
+                          <td style={{padding:'9px 12px'}}>{req.cutoff_label}<br/><span style={{color:'var(--text-muted)',fontSize:10}}>{new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</span></td>
+                          <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace"}}>{req.hours}h</td>
+                          <td style={{padding:'9px 12px'}}>
+                            {req.status==='rejected' ? (
+                              <span style={{color:'#c0392b',fontWeight:700}}>✗ Rejected</span>
+                            ) : req.applied ? (
+                              <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ {peso(req.amount)} applied · {req.cutoff_label}</span>
+                            ) : (
+                              <span style={{color:'#a06000',fontWeight:700}}>⏳ {peso(req.amount)} — on next Save Payroll</span>
+                            )}
+                          </td>
+                          <td style={{padding:'9px 12px',color:'var(--text-muted)',fontSize:10}}>{req.review_note||'—'}</td>
                         </tr>
                       )
                     })}
