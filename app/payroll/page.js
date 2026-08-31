@@ -76,7 +76,7 @@ export default function PayrollPage() {
   const [otAmounts, setOtAmounts]           = useState({})
   const [otApproving, setOtApproving]       = useState(null)
   // Management-initiated Overtime request form (Request Overtime card)
-  const [otForm, setOtForm]                 = useState({ staffId: '', date: '', shiftType: '', requestedHours: '', note: '' })
+  const [otForm, setOtForm]                 = useState({ staffId: '', date: '', cutoffId: '', shiftType: '', requestedHours: '', note: '' })
   const [creatingOt, setCreatingOt]         = useState(false)
   const [auditResults, setAuditResults]     = useState(null)
   const [auditing, setAuditing]             = useState(false)
@@ -127,8 +127,11 @@ export default function PayrollPage() {
   // which is what lands here for approval.
   async function createOvertimeRequest() {
     if (!otForm.staffId || !otForm.date || !otForm.requestedHours) { showToast('⚠️', 'Pick a staff member, date, and requested hours'); return }
-    const cutoff = CUTOFF_PERIODS.find(p => otForm.date >= p.start && otForm.date <= p.end)
-    if (!cutoff) { showToast('❌', "Couldn't match this date to a payroll cutoff"); return }
+    // Cutoff is normally auto-matched from the date, but the Payroll Cutoff field lets you
+    // override it — e.g. overtime worked right at a cutoff boundary that you want reflected
+    // in a specific payslip regardless of which cutoff the calendar date technically falls in.
+    const cutoff = CUTOFF_PERIODS.find(p => p.id === parseInt(otForm.cutoffId))
+    if (!cutoff) { showToast('❌', 'Pick which payroll cutoff this overtime should land in'); return }
     setCreatingOt(true)
     const { data, error } = await supabase.from('overtime_requests').insert([{
       staff_id: otForm.staffId,
@@ -142,7 +145,7 @@ export default function PayrollPage() {
     setCreatingOt(false)
     if (error) { showToast('❌', error.message); return }
     const noteText = otForm.note.trim()
-    setOtForm({ staffId: '', date: '', shiftType: '', requestedHours: '', note: '' })
+    setOtForm({ staffId: '', date: '', cutoffId: '', shiftType: '', requestedHours: '', note: '' })
     await fetchOvertimeRequests()
     showToast('✅', 'Overtime request sent to staff')
     notifyOne(data.staff_id, {
@@ -1679,7 +1682,7 @@ export default function PayrollPage() {
                 <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Request Overtime</div>
                 <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Sends a request to the staff member's portal — they accept or decline, then (if accepted) submit the actual period they worked for your approval.</div>
               </div>
-              <div style={{padding:'14px 20px',display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,alignItems:'end'}}>
+              <div style={{padding:'14px 20px',display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10,alignItems:'end'}}>
                 <div>
                   <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Staff Member</div>
                   <select value={otForm.staffId} onChange={e=>setOtForm(f=>({...f,staffId:e.target.value}))} style={iStyle}>
@@ -1691,7 +1694,18 @@ export default function PayrollPage() {
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Date</div>
-                  <input type="date" value={otForm.date} onChange={e=>setOtForm(f=>({...f,date:e.target.value}))} style={iStyle}/>
+                  <input type="date" value={otForm.date} onChange={e=>{
+                    const d = e.target.value
+                    const matched = CUTOFF_PERIODS.find(p => d >= p.start && d <= p.end)
+                    setOtForm(f=>({...f, date: d, cutoffId: matched ? String(matched.id) : f.cutoffId}))
+                  }} style={iStyle}/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Payroll Cutoff</div>
+                  <select value={otForm.cutoffId} onChange={e=>setOtForm(f=>({...f,cutoffId:e.target.value}))} style={iStyle}>
+                    <option value="">Select…</option>
+                    {CUTOFF_PERIODS.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+                  </select>
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Shift (optional)</div>
@@ -1704,7 +1718,7 @@ export default function PayrollPage() {
                   <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Requested Hours</div>
                   <input type="number" step="0.5" min="0.5" value={otForm.requestedHours} onChange={e=>setOtForm(f=>({...f,requestedHours:e.target.value}))} style={iStyle}/>
                 </div>
-                <div style={{gridColumn:'span 3'}}>
+                <div style={{gridColumn:'span 4'}}>
                   <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Note (optional)</div>
                   <input value={otForm.note} onChange={e=>setOtForm(f=>({...f,note:e.target.value}))} placeholder="e.g. Cover the late inventory count" style={iStyle}/>
                 </div>
