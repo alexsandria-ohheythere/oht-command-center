@@ -31,13 +31,17 @@ const iStyle = {width:'100%',background:'var(--surface)',border:'1px solid var(-
 const lStyle = {display:'block',fontSize:9,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:5}
 const EMPTY_FORM = { title:'', description:'', priority:'normal', assigned_to:'', due_date:'', status:'todo' }
 
-function ArchivedColumn({ tasks, search, pri, getRoleColor, initials, openDrawer, deleteTask, restoreTask, isAdmin }) {
+function ArchivedColumn({ tasks, search, pri, getRoleColor, initials, openDrawer, deleteTask, restoreTask, isAdmin, archiveTask, dragTask, setDragTask, dragOver, setDragOver }) {
   const archivedTasks = tasks.filter(t =>
     t.status === 'archived' &&
     (!search || `${t.ticket_no} ${t.title} ${t.description||''}`.toLowerCase().includes(search.toLowerCase()))
   )
   return (
-    <div style={{background:'var(--surface)',borderRadius:13,display:'flex',flexDirection:'column',overflow:'hidden',opacity:0.88}}>
+    <div
+      onDragOver={e=>{e.preventDefault();setDragOver('archived')}}
+      onDragLeave={()=>setDragOver(null)}
+      onDrop={e=>{e.preventDefault();if(dragTask&&dragTask.status!=='archived')archiveTask(dragTask.id);setDragTask(null);setDragOver(null)}}
+      style={{background:dragOver==='archived'?ARCHIVED_COL.bg:'var(--surface)',border:`2px dashed ${dragOver==='archived'?ARCHIVED_COL.color:'transparent'}`,borderRadius:13,display:'flex',flexDirection:'column',overflow:'hidden',opacity:0.88,transition:'all .2s'}}>
       <div style={{padding:'14px 16px',background:ARCHIVED_COL.bg,borderBottom:`1px solid ${ARCHIVED_COL.color}22`,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <div style={{width:10,height:10,borderRadius:'50%',background:ARCHIVED_COL.color}}/>
@@ -647,7 +651,7 @@ export default function JobOrderPage() {
               )
             })}
 
-            {isAdmin && <ArchivedColumn tasks={tasks} search={search} pri={pri} getRoleColor={getRoleColor} initials={initials} openDrawer={openDrawer} deleteTask={deleteTask} restoreTask={restoreTask} isAdmin={isAdmin}/>}
+            {isAdmin && <ArchivedColumn tasks={tasks} search={search} pri={pri} getRoleColor={getRoleColor} initials={initials} openDrawer={openDrawer} deleteTask={deleteTask} restoreTask={restoreTask} isAdmin={isAdmin} archiveTask={archiveTask} dragTask={dragTask} setDragTask={setDragTask} dragOver={dragOver} setDragOver={setDragOver}/>}
           </div>
         )}
       </div>
