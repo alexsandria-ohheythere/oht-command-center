@@ -642,7 +642,7 @@ export default function PayrollPage() {
   async function computeAdjustmentPreview(adj) {
     const cutoff = CUTOFF_PERIODS.find(p => p.id === adj.cutoff_id)
     const { data: existingRun } = await supabase.from('payroll_runs')
-      .select('id, required_days, gross, days_worked, total_late_mins, late_deduction')
+      .select('id, required_days, gross, days_worked, total_late_mins, late_deduction, refund, net_pay')
       .eq('cutoff_id', adj.cutoff_id).eq('staff_id', adj.staff_id).maybeSingle()
 
     if (!existingRun) {
@@ -693,6 +693,7 @@ export default function PayrollPage() {
       origPaid: originalShift?.paidHours || 0, corrPaid: correctedShift?.paidHours || 0,
       origLate: origLateMins, corrLate: corrLateMins,
       recordedLateDeduction, supposedLateDeduction, lateRefund, extraHoursCredit,
+      existingRun,
     }
   }
 
@@ -729,7 +730,7 @@ export default function PayrollPage() {
           if (!proceed) { setApproving(null); return }
         }
 
-        const { error } = await supabase.from('timesheet_adjustments').update({
+        const baseFields = {
           status: 'approved', resolution: 'refund', refund_amount: preview.refundAmount, review_note: note, reviewed_by: currentStaffId,
           reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
           calc_hourly_rate: preview.hourlyRate,
@@ -742,9 +743,31 @@ export default function PayrollPage() {
           calc_supposed_late_deduction: preview.supposedLateDeduction,
           calc_late_refund: preview.lateRefund,
           calc_extra_hours_credit: preview.extraHoursCredit,
-        }).eq('id', adj.id)
-        if (error) throw error
-        showToast('✅', `Approved — ${peso(preview.refundAmount)} refund will apply to their next payroll`)
+        }
+
+        if (preview.existingRun) {
+          // This cutoff's payroll is already saved — patch the saved row directly so the
+          // refund lands on THIS cutoff's payslip right away, instead of sitting "due — next
+          // payroll" until some unrelated future cutoff gets saved (mirrors the same fix
+          // already applied to Overtime approval, for the same reason).
+          const newRefund = round2((parseFloat(preview.existingRun.refund) || 0) + preview.refundAmount)
+          const newNetPay = round2((parseFloat(preview.existingRun.net_pay) || 0) + preview.refundAmount)
+          const { error: runError } = await supabase.from('payroll_runs').update({
+            refund: newRefund, net_pay: newNetPay, updated_at: new Date().toISOString(),
+          }).eq('id', preview.existingRun.id)
+          if (runError) throw runError
+
+          const { error } = await supabase.from('timesheet_adjustments').update({
+            ...baseFields, applied: true, applied_cutoff_id: adj.cutoff_id, applied_at: new Date().toISOString(),
+          }).eq('id', adj.id)
+          if (error) throw error
+          await fetchSavedRuns()
+          showToast('✅', `Approved — ${peso(preview.refundAmount)} added directly to their saved ${cutoff?.label || ''} payslip`)
+        } else {
+          const { error } = await supabase.from('timesheet_adjustments').update(baseFields).eq('id', adj.id)
+          if (error) throw error
+          showToast('✅', `Approved — ${peso(preview.refundAmount)} will be added to ${cutoff?.label || 'their'} payroll on Save`)
+        }
       }
       await fetchAdjustmentRequests()
     } catch(e) {
