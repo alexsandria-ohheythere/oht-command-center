@@ -78,6 +78,7 @@ export default function PayrollPage() {
   // Management-initiated Overtime request form (Request Overtime card)
   const [otForm, setOtForm]                 = useState({ staffId: '', date: '', cutoffId: '', shiftType: '', requestedHours: '', note: '' })
   const [creatingOt, setCreatingOt]         = useState(false)
+  const [cancellingOt, setCancellingOt]     = useState(null)
   const [auditResults, setAuditResults]     = useState(null)
   const [auditing, setAuditing]             = useState(false)
   const [previews, setPreviews]             = useState({})
@@ -153,6 +154,27 @@ export default function PayrollPage() {
       title: '⏰ Overtime Requested',
       message: `Management is asking you to work ${data.requested_hours}h overtime on ${new Date(data.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} (${cutoff.label}) — please accept or decline in the portal.${noteText ? ' Note: ' + noteText : ''}`,
     }).catch(() => {})
+  }
+
+  // Withdraws a request YOU sent, before it's been acted on — e.g. you asked the wrong
+  // person, or the coverage need went away. Only valid pre-submission ('requested' or
+  // 'accepted'); once they've submitted an actual period, use Reject instead. Dead end,
+  // same as decline/reject — no auto-retry.
+  async function cancelOvertimeRequest(req) {
+    if (!confirm(`Cancel the overtime request sent to ${req.staff?.first_name}? This withdraws it — they'll no longer be able to respond.`)) return
+    setCancellingOt(req.id)
+    const { error } = await supabase.from('overtime_requests').update({
+      status: 'cancelled', reviewed_by: currentStaffId, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq('id', req.id)
+    setCancellingOt(null)
+    if (error) { showToast('❌', error.message); return }
+    notifyOne(req.staff_id, {
+      type: 'overtime_cancelled',
+      title: '⏰ Overtime Request Cancelled',
+      message: `Management withdrew the ${req.requested_hours}h overtime request for ${new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} (${req.cutoff_label}).`,
+    }).catch(() => {})
+    await fetchOvertimeRequests()
+    showToast('🗑️', 'Overtime request cancelled')
   }
 
   async function fetchAttendanceRefs() {
@@ -1747,9 +1769,12 @@ export default function PayrollPage() {
                             <div style={{fontSize:10,color:'var(--text-muted)'}}>{new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} · {req.cutoff_label} · asked for {req.requested_hours}h</div>
                           </div>
                         </div>
-                        <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:8,background: req.status==='requested' ? '#fef3e2' : '#eef6f2', color: req.status==='requested' ? '#a06000' : 'var(--matcha-dark)'}}>
-                          {req.status==='requested' ? '⏳ Awaiting response' : '✓ Accepted — awaiting their submission'}
-                        </span>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:8,background: req.status==='requested' ? '#fef3e2' : '#eef6f2', color: req.status==='requested' ? '#a06000' : 'var(--matcha-dark)'}}>
+                            {req.status==='requested' ? '⏳ Awaiting response' : '✓ Accepted — awaiting their submission'}
+                          </span>
+                          <button onClick={()=>cancelOvertimeRequest(req)} disabled={cancellingOt===req.id} style={{background:'transparent',border:'1px solid #f5c6c6',color:'#c0392b',borderRadius:7,padding:'5px 10px',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{cancellingOt===req.id?'Cancelling…':'Cancel'}</button>
+                        </div>
                       </div>
                     )
                   })}
@@ -1822,7 +1847,7 @@ export default function PayrollPage() {
               <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
                 <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Resolved</div>
               </div>
-              {otRequests.filter(o=>['declined','rejected','approved'].includes(o.status)).length===0 ? (
+              {otRequests.filter(o=>['declined','rejected','approved','cancelled'].includes(o.status)).length===0 ? (
                 <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>Nothing resolved yet.</div>
               ) : (
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
@@ -1836,7 +1861,7 @@ export default function PayrollPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {otRequests.filter(o=>['declined','rejected','approved'].includes(o.status)).map((req,i)=>{
+                    {otRequests.filter(o=>['declined','rejected','approved','cancelled'].includes(o.status)).map((req,i)=>{
                       const s = req.staff || {}
                       return (
                         <tr key={req.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
@@ -1849,7 +1874,9 @@ export default function PayrollPage() {
                           <td style={{padding:'9px 12px'}}>{req.cutoff_label}<br/><span style={{color:'var(--text-muted)',fontSize:10}}>{new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</span></td>
                           <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace"}}>{req.requested_hours}h{req.actual_hours!=null?` → ${req.actual_hours}h`:''}</td>
                           <td style={{padding:'9px 12px'}}>
-                            {req.status==='declined' ? (
+                            {req.status==='cancelled' ? (
+                              <span style={{color:'var(--text-muted)',fontWeight:700}}>🗑️ Cancelled by management</span>
+                            ) : req.status==='declined' ? (
                               <span style={{color:'var(--text-muted)',fontWeight:700}}>👍 Declined by employee</span>
                             ) : req.status==='rejected' ? (
                               <span style={{color:'#c0392b',fontWeight:700}}>✗ Rejected</span>
