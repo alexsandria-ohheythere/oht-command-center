@@ -313,7 +313,11 @@ export default function PayrollPage() {
     let lateRefundNet = 0, basicTopUp = 0
     records.forEach(a => {
       if (String(a.cutoff_id) === String(selectedCutoff.id)) {
-        lateRefundNet += parseFloat(a.calc_late_refund) || 0
+        // Newer approvals correct total_late_mins/late_deduction directly at the source, so
+        // r.pay.lateDeduction is already accurate for them — netting calc_late_refund again
+        // here would double-count. Only older records (approved before that fix shipped)
+        // still need it netted here on the display side.
+        if (!a.applied_late_at_source) lateRefundNet += parseFloat(a.calc_late_refund) || 0
         basicTopUp += parseFloat(a.calc_extra_hours_credit) || 0
       } else {
         basicTopUp += parseFloat(a.refund_amount) || 0
@@ -715,7 +719,7 @@ export default function PayrollPage() {
       hourlyRate: round2(hourlyRate),
       origPaid: originalShift?.paidHours || 0, corrPaid: correctedShift?.paidHours || 0,
       origLate: origLateMins, corrLate: corrLateMins,
-      recordedLateDeduction, supposedLateDeduction, lateRefund, extraHoursCredit,
+      recordedLateDeduction, supposedLateDeduction, supposedTotalLateMins, lateRefund, extraHoursCredit,
       existingRun,
     }
   }
@@ -773,19 +777,46 @@ export default function PayrollPage() {
           // refund lands on THIS cutoff's payslip right away, instead of sitting "due — next
           // payroll" until some unrelated future cutoff gets saved (mirrors the same fix
           // already applied to Overtime approval, for the same reason).
-          const newRefund = round2((parseFloat(preview.existingRun.refund) || 0) + preview.refundAmount)
+          //
+          // This also actually fixes the underlying timesheet record, not just the money:
+          // the archived shift for this date gets corrected (or inserted, if it was missing
+          // entirely) with the claimed time-in/out, and the cutoff's total_late_mins/late_deduction
+          // are corrected at the source instead of being left stale forever. Only the
+          // extra-hours-worked portion (a fully missing day) still flows through the `refund`
+          // bucket, since that's new pay rather than a late-minutes fix.
+          if (adj.claimed_time_in && adj.claimed_time_out) {
+            const { data: archivedNow } = await supabase.from('timesheet_uploads').select('employees').eq('cutoff_id', adj.cutoff_id).maybeSingle()
+            if (archivedNow?.employees) {
+              const tsKeyNow = findTimesheetKey(archivedNow.employees, adj.staff)
+              if (tsKeyNow) {
+                const updatedEmployees = { ...archivedNow.employees }
+                updatedEmployees[tsKeyNow] = {
+                  ...updatedEmployees[tsKeyNow],
+                  shifts: applyAdjustmentsToShifts(updatedEmployees[tsKeyNow].shifts || [], [adj]),
+                }
+                const { error: tsError } = await supabase.from('timesheet_uploads').update({ employees: updatedEmployees }).eq('cutoff_id', adj.cutoff_id)
+                if (tsError) throw tsError
+              }
+            }
+          }
+
+          const newRefund = round2((parseFloat(preview.existingRun.refund) || 0) + preview.extraHoursCredit)
           const newNetPay = round2((parseFloat(preview.existingRun.net_pay) || 0) + preview.refundAmount)
           const { error: runError } = await supabase.from('payroll_runs').update({
-            refund: newRefund, net_pay: newNetPay, updated_at: new Date().toISOString(),
+            refund: newRefund, net_pay: newNetPay,
+            total_late_mins: preview.supposedTotalLateMins, late_deduction: preview.supposedLateDeduction,
+            updated_at: new Date().toISOString(),
           }).eq('id', preview.existingRun.id)
           if (runError) throw runError
 
           const { error } = await supabase.from('timesheet_adjustments').update({
             ...baseFields, applied: true, applied_cutoff_id: adj.cutoff_id, applied_at: new Date().toISOString(),
+            applied_late_at_source: true,
           }).eq('id', adj.id)
           if (error) throw error
           await fetchSavedRuns()
-          showToast('✅', `Approved — ${peso(preview.refundAmount)} added directly to their saved ${cutoff?.label || ''} payslip`)
+          await fetchSavedTimesheet()
+          showToast('✅', `Approved — timesheet corrected and ${peso(preview.refundAmount)} added directly to their saved ${cutoff?.label || ''} payslip`)
         } else {
           const { error } = await supabase.from('timesheet_adjustments').update(baseFields).eq('id', adj.id)
           if (error) throw error
