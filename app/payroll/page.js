@@ -530,7 +530,34 @@ export default function PayrollPage() {
     showToast('✋', 'Adjustment rejected')
   }
 
-  async function markRefundPaid(adj) {
+    // Separate from rejectAdjustment/undoApproval — reverses a REJECTED request back to Pending
+  // so it reappears in the review queue, instead of the reject decision being final.
+  async function undoRejection(adj) {
+    if (!confirm(`Undo the rejection on ${adj.staff?.first_name} ${adj.staff?.last_name}'s adjustment and move it back to Pending for review?`)) return
+    const { error } = await supabase.from('timesheet_adjustments').update({
+    }).eq('id', adj.id)
+    if (error) { showToast('❌', error.message); return }
+    await fetchAdjustmentRequests()
+    showToast('↩️', 'Rejection undone — back in Pending')
+  }
+
+  // Lets an admin override which payroll cutoff a staff-filed adjustment posts against — the
+  // Staff Portal auto-assigns a cutoff from the shift date, which can land on the wrong side of
+  // a cutoff boundary (see the known off-by-one note in the overtime-feature doc). Re-picking it
+  // here changes which payroll run the correction/refund is computed and applied into.
+  async function updateAdjustmentCutoff(adj, newCutoffId) {
+    const cutoff = CUTOFF_PERIODS.find(p => String(p.id) === String(newCutoffId))
+    if (!cutoff || String(cutoff.id) === String(adj.cutoff_id)) return
+    const { error } = await supabase.from('timesheet_adjustments').update({
+      cutoff_id: cutoff.id, cutoff_label: cutoff.label, updated_at: new Date().toISOString(),
+    }).eq('id', adj.id)
+    if (error) { showToast('❌', error.message); return }
+    setPreviews(p => { if (!p[adj.id]) return p; const n = { ...p }; delete n[adj.id]; return n })
+    await fetchAdjustmentRequests()
+    showToast('🔀', `Moved to ${cutoff.label} payroll`)
+  }
+
+async function markRefundPaid(adj) {
     if (!confirm(`Mark ${peso(adj.refund_amount)} refund for ${adj.staff?.first_name} ${adj.staff?.last_name} as paid now? This settles it outside payroll — it will NOT be added to their next payslip.`)) return
     setSettling(adj.id)
     const { error } = await supabase.from('timesheet_adjustments').update({
@@ -1187,10 +1214,16 @@ export default function PayrollPage() {
                     const matchedStaff = matchStaff(staff, ts.lastName, ts.firstName)
                     // Correct late-minutes against each date's ACTUAL published shift, same as payroll
                     // computation, so this view never shows a different "late" number than what's charged.
-                    const shifts = applyScheduleToLateMinutes(
+                    const rawShifts = applyScheduleToLateMinutes(
                       filterShiftsByPeriod(ts.shifts||[], selectedCutoff.start, selectedCutoff.end),
                       matchedStaff?.id, schedules
                     )
+                    // Merge in approved-but-not-yet-applied Timesheet Adjustments for this cutoff, same
+                    // as payroll computation does, so an approved correction shows here immediately
+                    // instead of only becoming visible after the next Save Payroll bakes it in.
+                    const corrections = matchedStaff ? pendingCorrectionsFor(matchedStaff.id) : []
+                    const shifts = corrections.length ? applyAdjustmentsToShifts(rawShifts, corrections) : rawShifts
+                    const correctedDates = new Set(corrections.map(c => isoToMMDDYYYY(c.shift_date)))
                     const rawTot = shifts.reduce((s,x)=>s+(x.rawHours||0),0)
                     const paidTot = shifts.reduce((s,x)=>s+(x.paidHours||0),0)
                     const lateTot = shifts.reduce((s,x)=>s+(x.lateMinutes||0),0)
@@ -1563,7 +1596,20 @@ export default function PayrollPage() {
                             <div style={{width:28,height:28,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
                             <div>
                               <div style={{fontSize:12,fontWeight:700}}>{s.first_name} {s.last_name}</div>
-                              <div style={{fontSize:10,color:'var(--text-muted)'}}>{s.role} · {adj.cutoff_label}</div>
+                              <div style={{fontSize:10,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginTop:1}}>
+                                <span>{s.role}</span>
+                                <span style={{display:'flex',alignItems:'center',gap:4}}>
+                                  <span style={{fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:0.5}}>Payroll:</span>
+                                  <select
+                                    value={String(adj.cutoff_id)}
+                                    onChange={e=>updateAdjustmentCutoff(adj, e.target.value)}
+                                    title="Which payroll cutoff this adjustment's correction/refund applies to"
+                                    style={{fontSize:10,fontWeight:700,color:'var(--text-primary)',background:'var(--white)',border:'1px solid var(--border)',borderRadius:5,padding:'2px 6px',fontFamily:"'DM Sans',sans-serif",cursor:'pointer'}}
+                                  >
+                                    {CUTOFF_PERIODS.map(p=><option key={p.id} value={String(p.id)}>{p.label}</option>)}
+                                  </select>
+                                </span>
+                              </div>
                             </div>
                           </div>
                           <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:8,background:'#fef3e2',color:'#a06000'}}>{ISSUE_LABELS[adj.issue_type]||adj.issue_type}</span>
