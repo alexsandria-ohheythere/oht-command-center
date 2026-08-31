@@ -535,6 +535,7 @@ export default function PayrollPage() {
   async function undoRejection(adj) {
     if (!confirm(`Undo the rejection on ${adj.staff?.first_name} ${adj.staff?.last_name}'s adjustment and move it back to Pending for review?`)) return
     const { error } = await supabase.from('timesheet_adjustments').update({
+      status: 'pending', review_note: null, reviewed_by: null, reviewed_at: null, updated_at: new Date().toISOString(),
     }).eq('id', adj.id)
     if (error) { showToast('❌', error.message); return }
     await fetchAdjustmentRequests()
