@@ -311,7 +311,8 @@ export default function JobOrderPage() {
 
   async function moveTask(taskId, newStatus) {
     const col = COLUMNS.find(c=>c.id===newStatus)
-    await supabase.from('tasks').update({ status:newStatus }).eq('id', taskId)
+    const { error } = await supabase.from('tasks').update({ status:newStatus }).eq('id', taskId)
+    if (error) { showToast('❌', error.message); return }
     await supabase.from('task_activity').insert([{ task_id:taskId, actor_id:currentUser?.id||null, action:`Moved to ${col?.label||newStatus}` }])
     setTasks(prev=>prev.map(t=>t.id===taskId?{...t,status:newStatus}:t))
     if (drawerTask?.id===taskId) {
@@ -322,7 +323,8 @@ export default function JobOrderPage() {
   }
 
   async function archiveTask(taskId) {
-    await supabase.from('tasks').update({ status:'archived' }).eq('id', taskId)
+    const { error } = await supabase.from('tasks').update({ status:'archived' }).eq('id', taskId)
+    if (error) { showToast('❌', error.message); return }
     await supabase.from('task_activity').insert([{ task_id:taskId, actor_id:currentUser?.id||null, action:'Archived this job order' }])
     setTasks(prev=>prev.map(t=>t.id===taskId?{...t,status:'archived'}:t))
     if (drawerTask?.id===taskId) { setDrawerTask(prev=>({...prev,status:'archived'})); setDrawerForm(prev=>({...prev,status:'archived'})) }
@@ -330,7 +332,8 @@ export default function JobOrderPage() {
   }
 
   async function restoreTask(taskId) {
-    await supabase.from('tasks').update({ status:'todo' }).eq('id', taskId)
+    const { error } = await supabase.from('tasks').update({ status:'todo' }).eq('id', taskId)
+    if (error) { showToast('❌', error.message); return }
     await supabase.from('task_activity').insert([{ task_id:taskId, actor_id:currentUser?.id||null, action:'Restored from archive' }])
     setTasks(prev=>prev.map(t=>t.id===taskId?{...t,status:'todo'}:t))
     showToast('♻️','Restored to To Do')
