@@ -134,7 +134,7 @@ function getDailyRate(employment_type, role) {
   const r = typeRates[role]
   if (!r) return 0
   if (r.daily) return r.daily
-  if (r.monthly) return r.monthly / 26
+  if (r.monthly) return r.monthly / 20
   return 0
 }
 
