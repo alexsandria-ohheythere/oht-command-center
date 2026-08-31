@@ -530,7 +530,7 @@ export default function PayrollPage() {
     showToast('✋', 'Adjustment rejected')
   }
 
-    // Separate from rejectAdjustment/undoApproval — reverses a REJECTED request back to Pending
+  // Separate from rejectAdjustment/undoApproval — reverses a REJECTED request back to Pending
   // so it reappears in the review queue, instead of the reject decision being final.
   async function undoRejection(adj) {
     if (!confirm(`Undo the rejection on ${adj.staff?.first_name} ${adj.staff?.last_name}'s adjustment and move it back to Pending for review?`)) return
@@ -557,7 +557,7 @@ export default function PayrollPage() {
     showToast('🔀', `Moved to ${cutoff.label} payroll`)
   }
 
-async function markRefundPaid(adj) {
+  async function markRefundPaid(adj) {
     if (!confirm(`Mark ${peso(adj.refund_amount)} refund for ${adj.staff?.first_name} ${adj.staff?.last_name} as paid now? This settles it outside payroll — it will NOT be added to their next payslip.`)) return
     setSettling(adj.id)
     const { error } = await supabase.from('timesheet_adjustments').update({
@@ -1270,7 +1270,10 @@ async function markRefundPaid(adj) {
                                     <tr><td colSpan={6} style={{padding:'8px',color:'var(--text-muted)',fontStyle:'italic'}}>No shifts.</td></tr>
                                   ) : shifts.map((sh,si)=>(
                                     <tr key={si} style={{borderBottom:'1px solid var(--border)'}}>
-                                      <td style={{padding:'5px 8px',fontFamily:"'DM Mono',monospace"}}>{sh.date}</td>
+                                      <td style={{padding:'5px 8px',fontFamily:"'DM Mono',monospace"}}>
+                                        {sh.date}
+                                        {correctedDates.has(sh.date) && <span title="Corrected by an approved Timesheet Adjustment, not yet baked into a saved timesheet" style={{marginLeft:6,fontSize:8,fontWeight:700,color:'var(--matcha-dark)',background:'var(--matcha-pale)',border:'1px solid var(--matcha)',borderRadius:5,padding:'1px 5px',fontFamily:"'DM Sans',sans-serif"}}>✓ corrected</span>}
+                                      </td>
                                       <td style={{padding:'5px 8px',fontFamily:"'DM Mono',monospace"}}>{sh.timeIn}</td>
                                       <td style={{padding:'5px 8px',fontFamily:"'DM Mono',monospace"}}>{sh.timeOut}</td>
                                       <td style={{padding:'5px 8px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:'var(--text-muted)'}}>{(sh.rawHours||0).toFixed(1)}h</td>
@@ -1724,6 +1727,13 @@ async function markRefundPaid(adj) {
                           </td>
                           <td style={{padding:'9px 12px',color:'var(--text-muted)',fontSize:10}}>{adj.review_note||'—'}</td>
                           <td style={{padding:'9px 12px'}}>
+                            {adj.status==='rejected' && (
+                              <button
+                                onClick={()=>undoRejection(adj)}
+                                title="Move this back to Pending for reconsideration"
+                                style={{background:'var(--surface)',border:'1px solid var(--border)',color:'var(--text-muted)',borderRadius:6,padding:'4px 9px',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",whiteSpace:'nowrap'}}
+                              >↩️ Undo</button>
+                            )}
                             {adj.status==='approved' && (
                               <button
                                 onClick={()=>undoApproval(adj)}
