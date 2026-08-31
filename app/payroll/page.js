@@ -298,6 +298,29 @@ export default function PayrollPage() {
     return adjustmentRequests.filter(a => a.staff_id === staffId && a.status === 'approved' && a.resolution === 'refund' && !a.applied)
       .reduce((sum, a) => sum + (parseFloat(a.refund_amount) || 0), 0)
   }
+  // Splits an approved refund into what it's actually correcting, so the payslip never shows
+  // a bare "Refund" line floating next to Incentives/Overtime. A refund is either:
+  //  (a) tied to THIS cutoff's own late/hours numbers (cutoff_id === the cutoff being viewed) —
+  //      then its late-minutes portion nets directly against this cutoff's own Late deduction,
+  //      and any extra-hours-worked portion folds into Basic; or
+  //  (b) a banked refund correcting a DIFFERENT (already-paid) cutoff, rolled forward and paid
+  //      out on whichever cutoff happens to be open/saved now — that has nothing to do with
+  //      THIS cutoff's late minutes, so the full amount just folds into Basic as found money.
+  function refundComponentsFor(staffId, isLocked) {
+    const records = isLocked
+      ? adjustmentRequests.filter(a => a.staff_id === staffId && a.status === 'approved' && a.resolution === 'refund' && a.applied && String(a.applied_cutoff_id) === String(selectedCutoff.id))
+      : adjustmentRequests.filter(a => a.staff_id === staffId && a.status === 'approved' && a.resolution === 'refund' && !a.applied)
+    let lateRefundNet = 0, basicTopUp = 0
+    records.forEach(a => {
+      if (String(a.cutoff_id) === String(selectedCutoff.id)) {
+        lateRefundNet += parseFloat(a.calc_late_refund) || 0
+        basicTopUp += parseFloat(a.calc_extra_hours_credit) || 0
+      } else {
+        basicTopUp += parseFloat(a.refund_amount) || 0
+      }
+    })
+    return { lateRefundNet: round2(lateRefundNet), basicTopUp: round2(basicTopUp) }
+  }
   // Approved-but-not-yet-applied overtime, SCOPED to the cutoff currently being viewed —
   // unlike refunds, overtime always belongs to the exact cutoff its shift fell in, so it
   // only pre-fills when that same cutoff is selected (never rolled into whichever cutoff
@@ -1339,16 +1362,22 @@ export default function PayrollPage() {
                   const adj = adjustments[r.staff.id] || {}
                   const incentives = isLocked ? (parseFloat(r.saved.incentives)||0) : (parseFloat(adj.incentives)||0)
                   const overtime   = isLocked ? (parseFloat(r.saved.overtime)||0)   : (parseFloat(adj.overtime)||0)
-                  const refund     = isLocked ? (parseFloat(r.saved.refund)||0)     : (parseFloat(adj.refund)||0)
                   const undertime  = isLocked ? (parseFloat(r.saved.undertime)||0)  : (parseFloat(adj.undertime)||0)
                   const serviceCharge = isLocked ? (parseFloat(r.saved.service_charge)||0) : 0
                   const isFT = (r.staff.employment_type||'Full-time')==='Full-time'
                   const additionalPayment = r.pay.additionalPayment || 0
-                  const grossPay = r.pay.gross + additionalPayment + incentives + overtime + refund + serviceCharge
+                  // No standalone "Refund" line — an approved refund is folded straight into what
+                  // it's actually correcting: extra hours worked add into Basic, and a late-minutes
+                  // correction reduces Late directly, so the payslip shows the real numbers instead
+                  // of two offsetting lines sitting far apart.
+                  const { lateRefundNet, basicTopUp } = refundComponentsFor(r.staff.id, isLocked)
+                  const basicPay = r.pay.gross + basicTopUp
+                  const actualLateDeduction = Math.max(0, round2(r.pay.lateDeduction - lateRefundNet))
+                  const grossPay = basicPay + additionalPayment + incentives + overtime + serviceCharge
                   const govDed = r.pay.sss + r.pay.philhealth + r.pay.pagibig + r.pay.tax
                   // For full-time, unpaid missed days are already excluded from gross (rate × daysWorked),
                   // so absence is NOT subtracted again here. Late/undertime still apply.
-                  const netPay = Math.max(0, grossPay - govDed - r.pay.lateDeduction - undertime)
+                  const netPay = Math.max(0, grossPay - govDed - actualLateDeduction - undertime)
                   const setAdj = (field,val) => setAdjustments(prev => ({...prev, [r.staff.id]: {...(prev[r.staff.id]||{}), [field]: val}}))
                   return (
                   <div key={r.staff.id} style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
@@ -1380,7 +1409,7 @@ export default function PayrollPage() {
                         </div>
                       )}
                       <div style={{borderTop:'1px solid var(--border)',margin:'8px 0',paddingTop:8}}>
-                        <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',fontWeight:600}}><span>Basic {isFT?`(${r.pay.basicPayDays??Math.min(r.pay.daysWorked,FULL_TIME_SHIFTS_PER_CUTOFF)}/${FULL_TIME_SHIFTS_PER_CUTOFF} shifts)`:''}</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(r.pay.gross)}</span></div>
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',fontWeight:600}}><span>Basic {isFT?`(${r.pay.basicPayDays??Math.min(r.pay.daysWorked,FULL_TIME_SHIFTS_PER_CUTOFF)}/${FULL_TIME_SHIFTS_PER_CUTOFF} shifts)`:''}{basicTopUp>0 && <span title="Includes an approved refund credit for extra hours worked" style={{fontSize:8,fontWeight:700,color:'var(--matcha-dark)'}}> (incl. {peso(basicTopUp)} credit)</span>}</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(basicPay)}</span></div>
                         {/* Extra shifts beyond the full-time 10-shifts-per-cutoff cap — paid, but broken out here instead of folded into Basic */}
                         {isFT && additionalPayment>0 && (
                           <div style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',color:'var(--matcha-dark)',fontWeight:600}}>
@@ -1388,8 +1417,9 @@ export default function PayrollPage() {
                             <span style={{fontFamily:"'DM Mono',monospace"}}>{peso(additionalPayment)}</span>
                           </div>
                         )}
-                        {/* Manual-entry earnings (editable until saved) */}
-                        {[['Incentives','incentives',incentives],['Overtime','overtime',overtime],['Refund','refund',refund]].map(([label,field,val])=>(
+                        {/* Manual-entry earnings (editable until saved) — Refund is not shown here: it's
+                            already folded into Basic (extra hours) and Late (late-minutes correction) above. */}
+                        {[['Incentives','incentives',incentives],['Overtime','overtime',overtime]].map(([label,field,val])=>(
                           <div key={field} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}>
                             <span>{label}</span>
                             {isLocked
@@ -1403,7 +1433,7 @@ export default function PayrollPage() {
                           <span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(serviceCharge)}</span>
                         </div>
                         <div style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'3px 0',fontWeight:600,borderTop:'1px solid var(--cream-dark)',marginTop:3}}><span>Gross Pay</span><span style={{fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)'}}>{peso(grossPay)}</span></div>
-                        {[['SSS',r.pay.sss],['PhilHealth',r.pay.philhealth],['Pag-IBIG',r.pay.pagibig],['Tax',r.pay.tax],['Late',r.pay.lateDeduction]].map(([l,v])=>(
+                        {[['SSS',r.pay.sss],['PhilHealth',r.pay.philhealth],['Pag-IBIG',r.pay.pagibig],['Tax',r.pay.tax],['Late',actualLateDeduction]].map(([l,v])=>(
                           <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',color:'var(--text-muted)'}}><span>{l}</span><span style={{fontFamily:"'DM Mono',monospace",color:'#c0392b'}}>-{peso(v)}</span></div>
                         ))}
                         {/* Undertime (editable until saved) */}
