@@ -75,6 +75,9 @@ export default function PayrollPage() {
   const [otPreviewing, setOtPreviewing]     = useState(null)
   const [otAmounts, setOtAmounts]           = useState({})
   const [otApproving, setOtApproving]       = useState(null)
+  // Management-initiated Overtime request form (Request Overtime card)
+  const [otForm, setOtForm]                 = useState({ staffId: '', date: '', shiftType: '', requestedHours: '', note: '' })
+  const [creatingOt, setCreatingOt]         = useState(false)
   const [auditResults, setAuditResults]     = useState(null)
   const [auditing, setAuditing]             = useState(false)
   const [previews, setPreviews]             = useState({})
@@ -117,6 +120,36 @@ export default function PayrollPage() {
       .order('created_at', { ascending: false })
     if (error) console.error('fetchOvertimeRequests error:', error)
     setOtRequests(data || [])
+  }
+
+  // Management-initiated: creates the request in 'requested' state — the staff member accepts
+  // or declines from the Staff Portal, then (if accepted) submits the actual period worked,
+  // which is what lands here for approval.
+  async function createOvertimeRequest() {
+    if (!otForm.staffId || !otForm.date || !otForm.requestedHours) { showToast('⚠️', 'Pick a staff member, date, and requested hours'); return }
+    const cutoff = CUTOFF_PERIODS.find(p => otForm.date >= p.start && otForm.date <= p.end)
+    if (!cutoff) { showToast('❌', "Couldn't match this date to a payroll cutoff"); return }
+    setCreatingOt(true)
+    const { data, error } = await supabase.from('overtime_requests').insert([{
+      staff_id: otForm.staffId,
+      requested_by: currentStaffId,
+      cutoff_id: cutoff.id, cutoff_label: cutoff.label,
+      shift_date: otForm.date, shift_type: otForm.shiftType || null,
+      requested_hours: parseFloat(otForm.requestedHours),
+      requested_note: otForm.note.trim() || null,
+      status: 'requested',
+    }]).select().single()
+    setCreatingOt(false)
+    if (error) { showToast('❌', error.message); return }
+    const noteText = otForm.note.trim()
+    setOtForm({ staffId: '', date: '', shiftType: '', requestedHours: '', note: '' })
+    await fetchOvertimeRequests()
+    showToast('✅', 'Overtime request sent to staff')
+    notifyOne(data.staff_id, {
+      type: 'overtime_requested',
+      title: '⏰ Overtime Requested',
+      message: `Management is asking you to work ${data.requested_hours}h overtime on ${new Date(data.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} (${cutoff.label}) — please accept or decline in the portal.${noteText ? ' Note: ' + noteText : ''}`,
+    }).catch(() => {})
   }
 
   async function fetchAttendanceRefs() {
@@ -692,7 +725,9 @@ export default function PayrollPage() {
       ? (monthlyPay / 2) / requiredDays
       : getDailyRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)
     const hourlyRate = round2(dailyRate / 8)
-    const amount = round2(hourlyRate * (parseFloat(req.hours) || 0))
+    // Pay is computed from what the employee actually submitted as worked, NOT what
+    // management originally requested — the request is only a target/expectation.
+    const amount = round2(hourlyRate * (parseFloat(req.actual_hours) || 0))
     return { hourlyRate, amount, cutoffLabel: cutoff?.label, existingRun }
   }
 
@@ -708,9 +743,11 @@ export default function PayrollPage() {
     setOtPreviewing(null)
   }
 
+  // Rejecting the SUBMITTED period is a dead end — no auto-retry. Management would create a
+  // brand new request if the overtime still needs to be covered.
   async function rejectOvertime(req) {
     const note = otReviewNotes[req.id] || ''
-    if (!confirm(`Reject ${req.staff?.first_name}'s overtime request?`)) return
+    if (!confirm(`Reject ${req.staff?.first_name}'s submitted overtime period? This closes the request — they'd need a new request to try again.`)) return
     const { error } = await supabase.from('overtime_requests').update({
       status: 'rejected', review_note: note, reviewed_by: currentStaffId,
       reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -718,8 +755,8 @@ export default function PayrollPage() {
     if (error) { showToast('❌', error.message); return }
     notifyOne(req.staff_id, {
       type: 'overtime_rejected',
-      title: '⏰ Overtime Request Rejected',
-      message: `Your ${req.hours}h overtime request for ${new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} (${req.cutoff_label}) was rejected${note ? ': ' + note : '.'}`,
+      title: '⏰ Overtime Rejected',
+      message: `Your submitted ${req.actual_hours}h overtime for ${new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} (${req.cutoff_label}) was rejected${note ? ': ' + note : '.'}`,
     }).catch(() => {})
     await fetchOvertimeRequests()
     showToast('✋', 'Overtime request rejected')
@@ -762,7 +799,7 @@ export default function PayrollPage() {
       notifyOne(req.staff_id, {
         type: 'overtime_approved',
         title: '⏰ Overtime Approved ✅',
-        message: `Your ${req.hours}h overtime for ${new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} was approved — ${peso(finalAmount)} on your ${cutoff?.label || ''} payslip.`,
+        message: `Your ${req.actual_hours}h overtime for ${new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} was approved — ${peso(finalAmount)} on your ${cutoff?.label || ''} payslip.`,
       }).catch(() => {})
       await fetchOvertimeRequests()
     } catch(e) {
@@ -947,7 +984,7 @@ export default function PayrollPage() {
 
         {/* Tabs */}
         <div style={{display:'flex',gap:4,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
-          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['servicecharge','🍽️ Service Charge'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`],['overtime',`⏰ Overtime${otRequests.filter(o=>o.status==='pending').length>0?` (${otRequests.filter(o=>o.status==='pending').length})`:''}`],['audit','🔍 Accuracy Check']].map(([key,label])=>(
+          {[['summary','📊 Summary'],['timesheets','📋 Timesheets'],['payslips','🧾 Payslips'],['servicecharge','🍽️ Service Charge'],['payments','💵 Payment Status'],['adjustments',`⏱️ Adjustments${adjustmentRequests.filter(a=>a.status==='pending').length>0?` (${adjustmentRequests.filter(a=>a.status==='pending').length})`:''}`],['overtime',`⏰ Overtime${otRequests.filter(o=>o.status==='submitted').length>0?` (${otRequests.filter(o=>o.status==='submitted').length})`:''}`],['audit','🔍 Accuracy Check']].map(([key,label])=>(
             <button key={key} onClick={()=>setTab(key)} style={{background:'transparent',border:'none',borderBottom:tab===key?'2px solid var(--matcha)':'2px solid transparent',marginBottom:-2,padding:'9px 16px',fontSize:12,fontWeight:tab===key?700:500,color:tab===key?'var(--matcha-dark)':'var(--text-muted)',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>{label}</button>
           ))}
         </div>
@@ -1636,17 +1673,87 @@ export default function PayrollPage() {
 
         {tab==='overtime' && (
           <div style={{display:'flex',flexDirection:'column',gap:20}}>
-            {/* Pending */}
+            {/* Request Overtime — management-initiated */}
             <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
               <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
-                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Pending Overtime Requests</div>
-                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Filed by staff via the Staff Portal. Preview computes the amount from their hourly rate for the shift's own cutoff — adjust it if needed before approving.</div>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Request Overtime</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Sends a request to the staff member's portal — they accept or decline, then (if accepted) submit the actual period they worked for your approval.</div>
               </div>
-              {otRequests.filter(o=>o.status==='pending').length===0 ? (
-                <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No pending overtime requests.</div>
+              <div style={{padding:'14px 20px',display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,alignItems:'end'}}>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Staff Member</div>
+                  <select value={otForm.staffId} onChange={e=>setOtForm(f=>({...f,staffId:e.target.value}))} style={iStyle}>
+                    <option value="">Select…</option>
+                    {[...staff].sort((a,b)=>(a.last_name||'').localeCompare(b.last_name||'')).map(s=>(
+                      <option key={s.id} value={s.id}>{s.last_name}, {s.first_name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Date</div>
+                  <input type="date" value={otForm.date} onChange={e=>setOtForm(f=>({...f,date:e.target.value}))} style={iStyle}/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Shift (optional)</div>
+                  <select value={otForm.shiftType} onChange={e=>setOtForm(f=>({...f,shiftType:e.target.value}))} style={iStyle}>
+                    <option value="">—</option>
+                    {Object.entries(SHIFT_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Requested Hours</div>
+                  <input type="number" step="0.5" min="0.5" value={otForm.requestedHours} onChange={e=>setOtForm(f=>({...f,requestedHours:e.target.value}))} style={iStyle}/>
+                </div>
+                <div style={{gridColumn:'span 3'}}>
+                  <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>Note (optional)</div>
+                  <input value={otForm.note} onChange={e=>setOtForm(f=>({...f,note:e.target.value}))} placeholder="e.g. Cover the late inventory count" style={iStyle}/>
+                </div>
+                <button onClick={createOvertimeRequest} disabled={creatingOt} style={{background:'var(--matcha)',border:'none',color:'white',borderRadius:8,padding:'9px 16px',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",height:36}}>{creatingOt?'Sending…':'⏰ Send Request'}</button>
+              </div>
+            </div>
+
+            {/* Awaiting employee response */}
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+              <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Awaiting Employee</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Sent to staff — waiting for them to accept/decline, or (once accepted) submit the period they worked.</div>
+              </div>
+              {otRequests.filter(o=>['requested','accepted'].includes(o.status)).length===0 ? (
+                <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>Nothing waiting on staff right now.</div>
+              ) : (
+                <div style={{padding:'14px 20px',display:'flex',flexDirection:'column',gap:10}}>
+                  {otRequests.filter(o=>['requested','accepted'].includes(o.status)).map(req=>{
+                    const s = req.staff || {}
+                    return (
+                      <div key={req.id} style={{border:'1px solid var(--border)',borderRadius:10,padding:'10px 14px',background:'var(--surface)',display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <div style={{width:26,height:26,borderRadius:'50%',background:getRoleColor(s.role),display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white',flexShrink:0}}>{initials(s.first_name,s.last_name)}</div>
+                          <div>
+                            <div style={{fontSize:12,fontWeight:700}}>{s.first_name} {s.last_name}</div>
+                            <div style={{fontSize:10,color:'var(--text-muted)'}}>{new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} · {req.cutoff_label} · asked for {req.requested_hours}h</div>
+                          </div>
+                        </div>
+                        <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:8,background: req.status==='requested' ? '#fef3e2' : '#eef6f2', color: req.status==='requested' ? '#a06000' : 'var(--matcha-dark)'}}>
+                          {req.status==='requested' ? '⏳ Awaiting response' : '✓ Accepted — awaiting their submission'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Pending approval — employee has submitted the actual period worked */}
+            <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
+              <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Pending Your Approval</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Staff submitted the actual period they worked. Preview computes the amount from THAT — adjust it if needed before approving.</div>
+              </div>
+              {otRequests.filter(o=>o.status==='submitted').length===0 ? (
+                <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No submitted overtime periods waiting on you.</div>
               ) : (
                 <div style={{padding:'14px 20px',display:'flex',flexDirection:'column',gap:12}}>
-                  {otRequests.filter(o=>o.status==='pending').map(req=>{
+                  {otRequests.filter(o=>o.status==='submitted').map(req=>{
                     const s = req.staff || {}
                     const preview = otPreviews[req.id]
                     return (
@@ -1659,18 +1766,19 @@ export default function PayrollPage() {
                               <div style={{fontSize:10,color:'var(--text-muted)'}}>{s.role} · {req.cutoff_label}</div>
                             </div>
                           </div>
-                          <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:8,background:'#fef3e2',color:'#a06000'}}>{req.hours}h overtime</span>
+                          <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:8,background:'#fef3e2',color:'#a06000'}}>{req.actual_hours}h worked (asked for {req.requested_hours}h)</span>
                         </div>
-                        <div style={{marginTop:10,display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,fontSize:11}}>
+                        <div style={{marginTop:10,display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,fontSize:11}}>
                           <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Date / Shift</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} · {SHIFT_LABELS[req.shift_type]||req.shift_type||'—'}</div></div>
-                          <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Hours Claimed</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{req.hours}h</div></div>
+                          <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Actual Period</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{req.actual_time_in||'—'} – {req.actual_time_out||'—'}</div></div>
+                          <div><div style={{color:'var(--text-muted)',fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Requested vs Actual</div><div style={{marginTop:2,fontFamily:"'DM Mono',monospace"}}>{req.requested_hours}h → {req.actual_hours}h</div></div>
                         </div>
-                        {req.reason && <div style={{marginTop:8,fontSize:11,color:'var(--text-primary)',background:'var(--white)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px'}}>"{req.reason}"</div>}
+                        {req.requested_note && <div style={{marginTop:8,fontSize:11,color:'var(--text-primary)',background:'var(--white)',border:'1px solid var(--border)',borderRadius:7,padding:'6px 10px'}}>Request note: "{req.requested_note}"</div>}
 
                         {preview && (
                           <div style={{marginTop:10,background:'#eef6f2',border:'1px solid var(--matcha)',borderRadius:8,padding:'10px 12px'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-                              <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Suggested: {peso(preview.amount)} ({req.hours}h × {peso(preview.hourlyRate)}/hr)</div>
+                              <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Suggested: {peso(preview.amount)} ({req.actual_hours}h × {peso(preview.hourlyRate)}/hr)</div>
                               <div style={{display:'flex',alignItems:'center',gap:6}}>
                                 <span style={{fontSize:10,color:'var(--text-muted)'}}>Amount to approve</span>
                                 <input type="number" value={otAmounts[req.id]??preview.amount} onChange={e=>setOtAmounts(p=>({...p,[req.id]:e.target.value}))} style={{width:90,textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,border:'1px solid var(--border)',borderRadius:6,padding:'4px 8px',outline:'none'}}/>
@@ -1695,12 +1803,12 @@ export default function PayrollPage() {
               )}
             </div>
 
-            {/* Resolved */}
+            {/* Resolved: declined by employee, rejected by management, or approved */}
             <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,overflow:'hidden'}}>
               <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)'}}>
                 <div style={{fontWeight:700,fontSize:14,color:'var(--text-primary)'}}>Resolved</div>
               </div>
-              {otRequests.filter(o=>o.status!=='pending').length===0 ? (
+              {otRequests.filter(o=>['declined','rejected','approved'].includes(o.status)).length===0 ? (
                 <div style={{padding:'30px 20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>Nothing resolved yet.</div>
               ) : (
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
@@ -1708,13 +1816,13 @@ export default function PayrollPage() {
                     <tr style={{background:'var(--espresso)'}}>
                       <th style={thBase}>Employee</th>
                       <th style={thBase}>Cutoff / Date</th>
-                      <th style={thBase}>Hours</th>
+                      <th style={thBase}>Requested → Actual</th>
                       <th style={thBase}>Outcome</th>
                       <th style={thBase}>Note</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {otRequests.filter(o=>o.status!=='pending').map((req,i)=>{
+                    {otRequests.filter(o=>['declined','rejected','approved'].includes(o.status)).map((req,i)=>{
                       const s = req.staff || {}
                       return (
                         <tr key={req.id} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'var(--white)':'var(--surface)'}}>
@@ -1725,9 +1833,11 @@ export default function PayrollPage() {
                             </div>
                           </td>
                           <td style={{padding:'9px 12px'}}>{req.cutoff_label}<br/><span style={{color:'var(--text-muted)',fontSize:10}}>{new Date(req.shift_date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</span></td>
-                          <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace"}}>{req.hours}h</td>
+                          <td style={{padding:'9px 12px',fontFamily:"'DM Mono',monospace"}}>{req.requested_hours}h{req.actual_hours!=null?` → ${req.actual_hours}h`:''}</td>
                           <td style={{padding:'9px 12px'}}>
-                            {req.status==='rejected' ? (
+                            {req.status==='declined' ? (
+                              <span style={{color:'var(--text-muted)',fontWeight:700}}>👍 Declined by employee</span>
+                            ) : req.status==='rejected' ? (
                               <span style={{color:'#c0392b',fontWeight:700}}>✗ Rejected</span>
                             ) : req.applied ? (
                               <span style={{color:'var(--matcha-dark)',fontWeight:700}}>✓ {peso(req.amount)} applied · {req.cutoff_label}</span>
@@ -1735,7 +1845,7 @@ export default function PayrollPage() {
                               <span style={{color:'#a06000',fontWeight:700}}>⏳ {peso(req.amount)} — on next Save Payroll</span>
                             )}
                           </td>
-                          <td style={{padding:'9px 12px',color:'var(--text-muted)',fontSize:10}}>{req.review_note||'—'}</td>
+                          <td style={{padding:'9px 12px',color:'var(--text-muted)',fontSize:10}}>{req.status==='declined' ? (req.decline_note||'—') : (req.review_note||'—')}</td>
                         </tr>
                       )
                     })}
