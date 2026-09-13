@@ -255,7 +255,7 @@ export default function SalesPage() {
       const rawHeaders = lines[0].split(',').map(h=>h.trim())
       const col = {}
       rawHeaders.forEach((h, i) => {
-        const n = h.toLowerCase()
+        const n = h.toLowerCase().replace(/\s*php$/, '').trim() // StoreHub suffixes money columns with " PHP" in some exports
         if (n === 'date / time' || n === 'date')  col.date = i
         if (n === 'total sales')                   col.gross = i
         if (n === 'net sales')                     col.net = i
