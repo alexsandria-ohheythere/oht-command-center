@@ -765,8 +765,11 @@ export default function PayrollPage() {
     const staffMember = adj.staff
     const isFT = (staffMember.employment_type || 'Full-time') === 'Full-time'
     const monthlyPay = staffMember.monthly_pay || getBaseRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)?.monthly || 0
-    const dailyRate = (isFT && existingRun.required_days > 0 && monthlyPay > 0)
-      ? (monthlyPay / 2) / existingRun.required_days
+    // Fixed monthly ÷ 20 — same rate shown in Settings → Payroll and on every payslip
+    // (see lib/payroll.js computeCutoffPayroll for why this must not divide by
+    // that cutoff's own scheduled-day count).
+    const dailyRate = (isFT && monthlyPay > 0)
+      ? monthlyPay / 20
       : getDailyRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)
     const hourlyRate = dailyRate / 8
     const minuteRate = hourlyRate / 60
@@ -919,9 +922,9 @@ export default function PayrollPage() {
 
   // ── Overtime Requests: preview / approve / reject ─────────────────────────
   // Self-contained rate lookup (mirrors computeAdjustmentPreview above) so this works whether
-  // the request's cutoff is the one currently selected on screen or not: prefers the ALREADY
-  // SAVED payroll_runs row's required_days for that cutoff+staff when one exists (source of
-  // truth once saved), otherwise counts published schedule days for that cutoff directly.
+  // the request's cutoff is the one currently selected on screen or not. Rate is the fixed
+  // monthly ÷ 20 (see dailyRate comment below); existingRun is fetched only so the caller
+  // knows which payroll_runs row (if any) to update.
   async function computeOvertimeAmount(req) {
     const cutoff = CUTOFF_PERIODS.find(p => p.id === req.cutoff_id)
     const staffMember = req.staff
@@ -930,15 +933,11 @@ export default function PayrollPage() {
     const { data: existingRun } = await supabase.from('payroll_runs')
       .select('id, required_days, overtime, net_pay')
       .eq('cutoff_id', req.cutoff_id).eq('staff_id', req.staff_id).maybeSingle()
-    let requiredDays = existingRun?.required_days || 0
-    if (!requiredDays && cutoff) {
-      const { data: sch } = await supabase.from('schedules').select('shift_date')
-        .eq('staff_id', req.staff_id).eq('published', true)
-        .gte('shift_date', cutoff.start).lte('shift_date', cutoff.end)
-      requiredDays = new Set((sch || []).map(s => s.shift_date)).size
-    }
-    const dailyRate = (isFT && requiredDays > 0 && monthlyPay > 0)
-      ? (monthlyPay / 2) / requiredDays
+    // Fixed monthly ÷ 20 — same rate shown in Settings → Payroll and on every payslip
+    // (see lib/payroll.js computeCutoffPayroll for why this must not divide by
+    // that cutoff's own scheduled-day count).
+    const dailyRate = (isFT && monthlyPay > 0)
+      ? monthlyPay / 20
       : getDailyRate(staffMember.employment_type || 'Full-time', staffMember.role, rateOverrides)
     const hourlyRate = round2(dailyRate / 8)
     // Pay is computed from what the employee actually submitted as worked, NOT what
