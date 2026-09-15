@@ -1096,10 +1096,23 @@ export default function PayrollPage() {
       // Only write into the target cutoff if it already has a saved payroll_runs row for this
       // staff — never create a phantom row just to carry a service_charge value.
       if (!existingTargetPairs.has(staffId)) { skipped++; return }
+      // That target row's net_pay was saved (at ITS OWN Save Payroll time) with service_charge
+      // still at whatever it was then — normally 0, since Service Charge for a month is only
+      // meant to land on next month's cutoff after that cutoff's own payroll is already saved.
+      // Payment Status (and Summary) read net_pay straight from the DB rather than recomputing
+      // it, so without this the SC share never showed up there even though it was saved.
+      // Back out whatever old service_charge is already baked into net_pay and add the new
+      // share, instead of adding on top — keeps this safe to re-run (pool total changes as more
+      // sales come in, an eligibility override changes, etc.) without double-counting.
+      const existingRun = scTargetRuns.find(r => r.staff_id === staffId && r.cutoff_id === scTargetCutoffId)
+      const newServiceCharge = serviceChargeRows.shares[staffId] || 0
+      const oldServiceCharge = parseFloat(existingRun?.service_charge) || 0
+      const newNetPay = round2((parseFloat(existingRun?.net_pay) || 0) - oldServiceCharge + newServiceCharge)
       upsertData.push({
         cutoff_id: scTargetCutoffId, cutoff_label: targetCutoff?.label, cutoff_start: targetCutoff?.start, cutoff_end: targetCutoff?.end,
         staff_id: staffId,
-        service_charge: serviceChargeRows.shares[staffId] || 0,
+        service_charge: newServiceCharge,
+        net_pay: newNetPay,
       })
     })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })

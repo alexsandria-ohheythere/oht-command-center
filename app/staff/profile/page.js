@@ -21,12 +21,15 @@ const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
 const initials = (f,l) => ((f||'')[0]||'').toUpperCase()+((l||'')[0]||'').toUpperCase()
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'}) : '—'
 const fmtPeso = n => n != null ? `₱ ${Number(n).toLocaleString('en-PH',{minimumFractionDigits:2})}` : '—'
+// For pre-filling a native <input type="date"> from whatever format `birthday` is stored in.
+const toDateInputValue = d => { if (!d) return ''; const dt = new Date(d); return isNaN(dt) ? '' : dt.toISOString().slice(0,10) }
 
-function Section({ title, children }) {
+function Section({ title, children, action }) {
   return (
     <div style={{ background:'var(--white)', border:'1px solid var(--border)', borderRadius:13, overflow:'hidden', marginBottom:16 }}>
-      <div style={{ padding:'12px 18px', borderBottom:'1px solid var(--border)', background:'var(--surface)' }}>
+      <div style={{ padding:'12px 18px', borderBottom:'1px solid var(--border)', background:'var(--surface)', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
         <p style={{ fontSize:11, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', color:'var(--text-muted)', margin:0 }}>{title}</p>
+        {action}
       </div>
       <div style={{ padding:'16px 18px' }}>{children}</div>
     </div>
@@ -38,6 +41,41 @@ function Field({ label, value }) {
     <div style={{ marginBottom:12 }}>
       <p style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:'var(--text-muted)', margin:'0 0 3px' }}>{label}</p>
       <p style={{ fontSize:13, color:'var(--text-primary)', margin:0, fontWeight:500 }}>{value || '—'}</p>
+    </div>
+  )
+}
+
+// Same slot as Field, but an editable input — swapped in for Field while a section is in edit mode.
+function EditField({ label, value, onChange, type='text' }) {
+  return (
+    <div style={{ marginBottom:12 }}>
+      <p style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:'var(--text-muted)', margin:'0 0 3px' }}>{label}</p>
+      <input type={type} value={value ?? ''} onChange={onChange}
+        style={{ width:'100%', boxSizing:'border-box', fontSize:13, padding:'6px 9px', border:'1px solid var(--border)', borderRadius:7, background:'var(--surface)', fontFamily:"'DM Sans',sans-serif", color:'var(--text-primary)', outline:'none' }} />
+    </div>
+  )
+}
+
+// Small Edit/Save/Cancel button cluster, used as a Section's `action`.
+function EditActions({ editing, saving, onStart, onSave, onCancel, label='Edit' }) {
+  if (!editing) {
+    return (
+      <button onClick={onStart}
+        style={{ padding:'4px 10px', background:'transparent', color:'#4a90c4', border:'1px solid #4a90c444', borderRadius:6, fontSize:11, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }}>
+        ✎ {label}
+      </button>
+    )
+  }
+  return (
+    <div style={{ display:'flex', gap:6 }}>
+      <button onClick={onSave} disabled={saving}
+        style={{ padding:'4px 10px', background:'var(--matcha)', color:'white', border:'none', borderRadius:6, fontSize:11, fontWeight:700, cursor:'pointer' }}>
+        {saving ? '…' : 'Save'}
+      </button>
+      <button onClick={onCancel} disabled={saving}
+        style={{ padding:'4px 10px', background:'transparent', color:'var(--text-muted)', border:'1px solid var(--border)', borderRadius:6, fontSize:11, cursor:'pointer' }}>
+        Cancel
+      </button>
     </div>
   )
 }
@@ -209,6 +247,18 @@ export default function StaffProfilePage() {
   const [activeTab, setActiveTab] = useState('overview')
   const [userEmail, setUserEmail]   = useState(null)
 
+  // Government IDs (Overview tab) — inline edit
+  const [govEditing, setGovEditing] = useState(false)
+  const [govForm, setGovForm]       = useState({})
+  const [govSaving, setGovSaving]   = useState(false)
+  const [govMsg, setGovMsg]         = useState(null)
+
+  // Personal tab (basic info / contact / address / family / emergency contact) — inline edit
+  const [persEditing, setPersEditing] = useState(false)
+  const [persForm, setPersForm]       = useState({})
+  const [persSaving, setPersSaving]   = useState(false)
+  const [persMsg, setPersMsg]         = useState(null)
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const staffId = params.get('id')
@@ -252,6 +302,52 @@ export default function StaffProfilePage() {
     const supabase = createClient()
     const { data: s } = await supabase.from('staff').select('*').eq('id', id).single()
     if (s) setStaff(s)
+  }
+
+  function startGovEdit() {
+    setGovMsg(null)
+    setGovForm({ sss: staff.sss || '', philhealth: staff.philhealth || '', pagibig: staff.pagibig || '', tin: staff.tin || '' })
+    setGovEditing(true)
+  }
+  const gf = k => e => setGovForm(p => ({ ...p, [k]: e.target.value }))
+
+  async function saveGovIds() {
+    setGovSaving(true)
+    const supabase = createClient()
+    const { error } = await supabase.from('staff').update(govForm).eq('id', staff.id)
+    setGovSaving(false)
+    if (error) { setGovMsg({ ok:false, text: error.message }); return }
+    setStaff(prev => ({ ...prev, ...govForm }))
+    setGovEditing(false)
+    setGovMsg({ ok:true, text: '✓ Government IDs updated' })
+  }
+
+  function startPersonalEdit() {
+    setPersMsg(null)
+    setPersForm({
+      first_name: staff.first_name || '', last_name: staff.last_name || '', middle_name: staff.middle_name || '',
+      nickname: staff.nickname || '', birthday: toDateInputValue(staff.birthday), age: staff.age ?? '', birthplace: staff.birthplace || '',
+      email: staff.email || '', phone: staff.phone || '', mobile: staff.mobile || '',
+      house_no: staff.house_no || '', street: staff.street || '', village: staff.village || '', barangay: staff.barangay || '', city: staff.city || '', zipcode: staff.zipcode || '',
+      father_last: staff.father_last || '', father_first: staff.father_first || '', father_middle: staff.father_middle || '',
+      mother_maiden: staff.mother_maiden || '', mother_first: staff.mother_first || '', mother_middle: staff.mother_middle || '',
+      emergency_name: staff.emergency_name || '', emergency_contact: staff.emergency_contact || '', emergency_relationship: staff.emergency_relationship || '',
+    })
+    setPersEditing(true)
+  }
+  const pf = k => e => setPersForm(p => ({ ...p, [k]: e.target.value }))
+
+  async function savePersonal() {
+    if (!persForm.first_name || !persForm.last_name) { setPersMsg({ ok:false, text:'First and last name are required' }); return }
+    setPersSaving(true)
+    const supabase = createClient()
+    const payload = { ...persForm, age: persForm.age === '' ? null : (parseInt(persForm.age) || null), birthday: persForm.birthday || null }
+    const { error } = await supabase.from('staff').update(payload).eq('id', staff.id)
+    setPersSaving(false)
+    if (error) { setPersMsg({ ok:false, text: error.message }); return }
+    setStaff(prev => ({ ...prev, ...payload }))
+    setPersEditing(false)
+    setPersMsg({ ok:true, text: '✓ Personal info updated' })
   }
 
   const isHR = userEmail === HR_EMAIL
@@ -370,11 +466,25 @@ export default function StaffProfilePage() {
               </Section>
             </Grid>
             <Grid>
-              <Section title="Government IDs">
-                <Field label="SSS" value={staff.sss} />
-                <Field label="PhilHealth" value={staff.philhealth} />
-                <Field label="Pag-IBIG" value={staff.pagibig} />
-                <Field label="TIN" value={staff.tin} />
+              <Section title="Government IDs" action={
+                <EditActions editing={govEditing} saving={govSaving} onStart={startGovEdit} onSave={saveGovIds} onCancel={()=>setGovEditing(false)} />
+              }>
+                {govEditing ? (
+                  <>
+                    <EditField label="SSS" value={govForm.sss} onChange={gf('sss')} />
+                    <EditField label="PhilHealth" value={govForm.philhealth} onChange={gf('philhealth')} />
+                    <EditField label="Pag-IBIG" value={govForm.pagibig} onChange={gf('pagibig')} />
+                    <EditField label="TIN" value={govForm.tin} onChange={gf('tin')} />
+                  </>
+                ) : (
+                  <>
+                    <Field label="SSS" value={staff.sss} />
+                    <Field label="PhilHealth" value={staff.philhealth} />
+                    <Field label="Pag-IBIG" value={staff.pagibig} />
+                    <Field label="TIN" value={staff.tin} />
+                  </>
+                )}
+                {govMsg && <p style={{ fontSize:11, color: govMsg.ok?'#4a7a1e':'#c0392b', margin:'8px 0 0' }}>{govMsg.text}</p>}
               </Section>
               <Section title="Attendance">
                 <Field label="Late minutes" value={staff.late_minutes} />
@@ -389,49 +499,120 @@ export default function StaffProfilePage() {
         {/* PERSONAL */}
         {activeTab === 'personal' && (
           <div>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:10, marginBottom:10 }}>
+              {persMsg && <p style={{ fontSize:12, color: persMsg.ok?'#4a7a1e':'#c0392b', margin:0 }}>{persMsg.text}</p>}
+              <EditActions editing={persEditing} saving={persSaving} onStart={startPersonalEdit} onSave={savePersonal} onCancel={()=>setPersEditing(false)} label="Edit personal info" />
+            </div>
             <Grid>
               <Section title="Basic info">
-                <Field label="First name" value={staff.first_name} />
-                <Field label="Last name" value={staff.last_name} />
-                <Field label="Middle name" value={staff.middle_name} />
-                <Field label="Nickname" value={staff.nickname} />
-                <Field label="Birthday" value={fmtDate(staff.birthday)} />
-                <Field label="Age" value={staff.age} />
-                <Field label="Birthplace" value={staff.birthplace} />
+                {persEditing ? (
+                  <>
+                    <EditField label="First name" value={persForm.first_name} onChange={pf('first_name')} />
+                    <EditField label="Last name" value={persForm.last_name} onChange={pf('last_name')} />
+                    <EditField label="Middle name" value={persForm.middle_name} onChange={pf('middle_name')} />
+                    <EditField label="Nickname" value={persForm.nickname} onChange={pf('nickname')} />
+                    <EditField label="Birthday" type="date" value={persForm.birthday} onChange={pf('birthday')} />
+                    <EditField label="Age" type="number" value={persForm.age} onChange={pf('age')} />
+                    <EditField label="Birthplace" value={persForm.birthplace} onChange={pf('birthplace')} />
+                  </>
+                ) : (
+                  <>
+                    <Field label="First name" value={staff.first_name} />
+                    <Field label="Last name" value={staff.last_name} />
+                    <Field label="Middle name" value={staff.middle_name} />
+                    <Field label="Nickname" value={staff.nickname} />
+                    <Field label="Birthday" value={fmtDate(staff.birthday)} />
+                    <Field label="Age" value={staff.age} />
+                    <Field label="Birthplace" value={staff.birthplace} />
+                  </>
+                )}
               </Section>
               <Section title="Contact">
-                <Field label="Email" value={staff.email} />
-                <Field label="Phone" value={staff.phone} />
-                <Field label="Mobile" value={staff.mobile} />
+                {persEditing ? (
+                  <>
+                    <EditField label="Email" value={persForm.email} onChange={pf('email')} />
+                    <EditField label="Phone" value={persForm.phone} onChange={pf('phone')} />
+                    <EditField label="Mobile" value={persForm.mobile} onChange={pf('mobile')} />
+                  </>
+                ) : (
+                  <>
+                    <Field label="Email" value={staff.email} />
+                    <Field label="Phone" value={staff.phone} />
+                    <Field label="Mobile" value={staff.mobile} />
+                  </>
+                )}
               </Section>
             </Grid>
             <Section title="Address">
               <Grid cols={3}>
-                <Field label="House no." value={staff.house_no} />
-                <Field label="Street" value={staff.street} />
-                <Field label="Village" value={staff.village} />
-                <Field label="Barangay" value={staff.barangay} />
-                <Field label="City" value={staff.city} />
-                <Field label="ZIP code" value={staff.zipcode} />
+                {persEditing ? (
+                  <>
+                    <EditField label="House no." value={persForm.house_no} onChange={pf('house_no')} />
+                    <EditField label="Street" value={persForm.street} onChange={pf('street')} />
+                    <EditField label="Village" value={persForm.village} onChange={pf('village')} />
+                    <EditField label="Barangay" value={persForm.barangay} onChange={pf('barangay')} />
+                    <EditField label="City" value={persForm.city} onChange={pf('city')} />
+                    <EditField label="ZIP code" value={persForm.zipcode} onChange={pf('zipcode')} />
+                  </>
+                ) : (
+                  <>
+                    <Field label="House no." value={staff.house_no} />
+                    <Field label="Street" value={staff.street} />
+                    <Field label="Village" value={staff.village} />
+                    <Field label="Barangay" value={staff.barangay} />
+                    <Field label="City" value={staff.city} />
+                    <Field label="ZIP code" value={staff.zipcode} />
+                  </>
+                )}
               </Grid>
             </Section>
             <Grid>
               <Section title="Father">
-                <Field label="Last name" value={staff.father_last} />
-                <Field label="First name" value={staff.father_first} />
-                <Field label="Middle name" value={staff.father_middle} />
+                {persEditing ? (
+                  <>
+                    <EditField label="Last name" value={persForm.father_last} onChange={pf('father_last')} />
+                    <EditField label="First name" value={persForm.father_first} onChange={pf('father_first')} />
+                    <EditField label="Middle name" value={persForm.father_middle} onChange={pf('father_middle')} />
+                  </>
+                ) : (
+                  <>
+                    <Field label="Last name" value={staff.father_last} />
+                    <Field label="First name" value={staff.father_first} />
+                    <Field label="Middle name" value={staff.father_middle} />
+                  </>
+                )}
               </Section>
               <Section title="Mother">
-                <Field label="Maiden name" value={staff.mother_maiden} />
-                <Field label="First name" value={staff.mother_first} />
-                <Field label="Middle name" value={staff.mother_middle} />
+                {persEditing ? (
+                  <>
+                    <EditField label="Maiden name" value={persForm.mother_maiden} onChange={pf('mother_maiden')} />
+                    <EditField label="First name" value={persForm.mother_first} onChange={pf('mother_first')} />
+                    <EditField label="Middle name" value={persForm.mother_middle} onChange={pf('mother_middle')} />
+                  </>
+                ) : (
+                  <>
+                    <Field label="Maiden name" value={staff.mother_maiden} />
+                    <Field label="First name" value={staff.mother_first} />
+                    <Field label="Middle name" value={staff.mother_middle} />
+                  </>
+                )}
               </Section>
             </Grid>
             <Section title="Emergency contact">
               <Grid cols={3}>
-                <Field label="Name" value={staff.emergency_name} />
-                <Field label="Contact no." value={staff.emergency_contact} />
-                <Field label="Relationship" value={staff.emergency_relationship} />
+                {persEditing ? (
+                  <>
+                    <EditField label="Name" value={persForm.emergency_name} onChange={pf('emergency_name')} />
+                    <EditField label="Contact no." value={persForm.emergency_contact} onChange={pf('emergency_contact')} />
+                    <EditField label="Relationship" value={persForm.emergency_relationship} onChange={pf('emergency_relationship')} />
+                  </>
+                ) : (
+                  <>
+                    <Field label="Name" value={staff.emergency_name} />
+                    <Field label="Contact no." value={staff.emergency_contact} />
+                    <Field label="Relationship" value={staff.emergency_relationship} />
+                  </>
+                )}
               </Grid>
             </Section>
           </div>
