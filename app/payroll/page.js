@@ -462,7 +462,7 @@ export default function PayrollPage() {
         const isFT = (s.employment_type||'Full-time')==='Full-time'
         const savedReq = saved.required_days || reqDays
         const monthlyPay = s.monthly_pay || getBaseRate(s.employment_type||'Full-time', s.role, rateOverrides)?.monthly || 0
-        const savedDaily = (isFT && savedReq>0 && monthlyPay>0) ? round2((monthlyPay/2)/savedReq) : getDailyRate(s.employment_type||'Full-time',s.role,rateOverrides)
+        const savedDaily = (isFT && monthlyPay>0) ? round2(monthlyPay/20) : getDailyRate(s.employment_type||'Full-time',s.role,rateOverrides)
         const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, bigLateCount:saved.big_late_count||0, gross:parseFloat(saved.gross), additionalPayment:parseFloat(saved.additional_payment)||0, extraShiftDays:isFT?Math.max(0,(saved.days_worked||0)-FULL_TIME_SHIFTS_PER_CUTOFF):0, lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:round2(parseFloat(saved.sss||0) * (9.5/4.5)), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:round2(savedDaily/8), requiredDays:savedReq, noSchedule:false }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
