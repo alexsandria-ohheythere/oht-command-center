@@ -512,7 +512,30 @@ export default function PayrollPage() {
     }
     setSaving(true)
     const rows = buildPayrollRows()
-    const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, big_late_count:r.pay.bigLateCount||0, gross:r.pay.gross, additional_payment:r.pay.additionalPayment||0, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives:parseFloat(adj.incentives)||0, overtime:parseFloat(adj.overtime)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
+    // Incentives/Overtime/Undertime only render as EDITABLE inputs (feeding `adjustments`)
+    // before a cutoff's first save — once `r.saved` exists they render as read-only figures
+    // pulled straight from the saved row (see isLocked in the Payslips tab), including any
+    // Overtime that approveOvertime() patched directly onto an already-saved row. Re-uploading
+    // a timesheet to recompute (e.g. after a rate-card fix) re-enters this same function, but
+    // `adjustments[staffId]` was never populated for that already-applied amount — so blindly
+    // writing `adj.field || 0` here silently wiped it back to 0 on every recompute+resave.
+    // Fall back to whatever was already saved whenever this session hasn't typed a fresh value.
+    const upsertData = rows.map(r => {
+      const adj = adjustments[r.staff.id] || {}
+      const prevIncentives = r.saved ? (parseFloat(r.saved.incentives) || 0) : 0
+      const prevOvertime   = r.saved ? (parseFloat(r.saved.overtime)   || 0) : 0
+      const prevUndertime  = r.saved ? (parseFloat(r.saved.undertime)  || 0) : 0
+      const prevServiceCharge = r.saved ? (parseFloat(r.saved.service_charge) || 0) : 0
+      const incentives = (adj.incentives !== undefined && adj.incentives !== '') ? (parseFloat(adj.incentives) || 0) : prevIncentives
+      const overtime   = (adj.overtime   !== undefined && adj.overtime   !== '') ? (parseFloat(adj.overtime)   || 0) : prevOvertime
+      const undertime  = (adj.undertime  !== undefined && adj.undertime  !== '') ? (parseFloat(adj.undertime)  || 0) : prevUndertime
+      // net_pay must include these same adjustments — otherwise Payment Status/Summary (which
+      // read net_pay straight from this column, unlike Payslips which recomputes it live) go
+      // stale the moment any Incentives/Overtime/Undertime exist, same class of bug already
+      // fixed once for Service Charge. Mirrors the Payslips card's own netPay formula exactly.
+      const netPay = Math.max(0, round2(r.pay.gross + r.pay.additionalPayment + incentives + overtime + prevServiceCharge - r.pay.totalDeductions - undertime))
+      return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, big_late_count:r.pay.bigLateCount||0, gross:r.pay.gross, additional_payment:r.pay.additionalPayment||0, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives, overtime, refund:parseFloat(adj.refund)||0, undertime, updated_at:new Date().toISOString() })
+    })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     if (error) { showToast('❌',error.message); setSaving(false); return }
     // Bake any approved timesheet corrections into the archived copy so the record reflects true attendance.
