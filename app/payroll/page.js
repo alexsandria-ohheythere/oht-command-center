@@ -9,7 +9,8 @@ import { notifyOne } from '../../lib/notify'
 const peso = n => '₱' + (n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const ROLE_COLORS = {'Cafe Supervisor':'#b06af5','Cafe Operations Support':'#4a90c4','Senior Barista':'#7ab648','Junior Barista - Milk Station':'#d4a843','Junior Barista - Cashier':'#e8845a','Executive Chef':'#c0392b','Sous Chef':'#2d7a6a','Kitchen Staff':'#5c3d1e'}
 // Ownership/management roles excluded entirely from the Service Charge pool — it's for rank-and-file staff, not the owners.
-const SC_EXCLUDED_ROLES = ['CEO','Managing Director']
+// Cafe Supervisor (also OHT's HR point person) is excluded the same way — not part of the front-line pool being split.
+const SC_EXCLUDED_ROLES = ['CEO','Managing Director','Cafe Supervisor']
 const ISSUE_LABELS = { no_time_in:'No time-in recorded', no_time_out:'No time-out recorded', wrong_time:'Wrong time recorded', missed_entirely:'Entire shift missing', payroll_correction:'Payroll correction (admin-initiated)' }
 const SHIFT_LABELS = { am:'AM', ops:'OPS', mid:'MID', pm:'PM' }
 const getRoleColor = r => ROLE_COLORS[r] || '#7a6a50'
@@ -94,6 +95,15 @@ export default function PayrollPage() {
   const [scRuns, setScRuns]                 = useState([]) // payroll_runs rows for the month's cutoff(s) — hours source
   const [scTargetRuns, setScTargetRuns]     = useState([]) // payroll_runs rows for the payout cutoff (next month) — existence check + display
   const [scSaving, setScSaving]             = useState(false)
+  // Whole-month attendance refs (schedule + timesheet archives) for the Service Charge absence
+  // check — separate from `schedules`/`tsSource` above, which are scoped to `selectedCutoff` only.
+  const [scSchedules, setScSchedules]       = useState([])
+  const [scTimesheetBlobs, setScTimesheetBlobs] = useState([]) // [{cutoff_id, employees}] for the month's cutoff(s)
+  // Manual per-staff Service Charge override for the month (service_charge_overrides table),
+  // keyed by staff_id: { included: true|false } forces eligibility either way regardless of the
+  // automatic lates/violations/absences calculation. Absent key = automatic.
+  const [scOverrides, setScOverrides]       = useState({})
+  const [scOverrideSaving, setScOverrideSaving] = useState(null)
   const fileRef = useRef()
 
   useEffect(() => { fetchStaff(); fetchRateOverrides(); fetchAdjustmentRequests(); fetchOvertimeRequests(); fetchCurrentStaffId() }, [])
@@ -214,24 +224,97 @@ export default function PayrollPage() {
     const cutoffs = cutoffsForMonth(scMonth)
     const ids = cutoffs.map(c => c.id)
     const payoutIds = cutoffsForMonth(nextMonthStr(scMonth)).map(c => c.id)
-    if (!ids.length) { setScRuns([]); setScTargetRuns([]); setServiceChargePool(0); setScTargetCutoffId(null); return }
+    if (!ids.length) {
+      setScRuns([]); setScTargetRuns([]); setServiceChargePool(0); setScTargetCutoffId(null)
+      setScSchedules([]); setScTimesheetBlobs([]); setScOverrides({})
+      return
+    }
     // Default the "apply to" cutoff to the FIRST cutoff of the FOLLOWING month, unless the admin
     // already picked a valid one for this month's payout.
     setScTargetCutoffId(prev => (prev && payoutIds.includes(prev)) ? prev : (payoutIds[0] ?? null))
     const allIds = [...new Set([...ids, ...payoutIds])]
-    const [{ data: runs, error: runsErr }, { data: salesRows, error: salesErr }] = await Promise.all([
+    const monthStart = cutoffs[0].start
+    const monthEnd = cutoffs[cutoffs.length - 1].end
+    const [
+      { data: runs, error: runsErr },
+      { data: salesRows, error: salesErr },
+      { data: schedRows, error: schedErr },
+      { data: tsRows, error: tsErr },
+      { data: overrideRows, error: ovErr },
+    ] = await Promise.all([
       allIds.length
         ? supabase.from('payroll_runs').select('*, staff(first_name,last_name,nickname,role,employment_type,violation_count)').in('cutoff_id', allIds)
         : Promise.resolve({ data: [] }),
       supabase.from('sales').select('service_charge').gte('sale_date', scMonth+'-01').lte('sale_date', monthEndISO(scMonth)),
+      // Published schedule rows across the WHOLE month (both cutoffs), for the absence check below —
+      // `schedules` state elsewhere on this page is scoped to `selectedCutoff` only.
+      supabase.from('schedules').select('staff_id,shift_date').eq('published', true).gte('shift_date', monthStart).lte('shift_date', monthEnd),
+      // Archived timesheets for each of the month's cutoffs (same shape as `savedTimesheet.employees`),
+      // so we can tell which scheduled dates were actually worked without re-uploading anything.
+      supabase.from('timesheet_uploads').select('cutoff_id,employees').in('cutoff_id', ids),
+      supabase.from('service_charge_overrides').select('*').eq('month', scMonth),
     ])
     if (runsErr) console.error('fetchScMonthData runs error:', runsErr)
     if (salesErr) console.error('fetchScMonthData sales error:', salesErr)
+    if (schedErr) console.error('fetchScMonthData schedules error:', schedErr)
+    if (tsErr) console.error('fetchScMonthData timesheet error:', tsErr)
+    if (ovErr) console.error('fetchScMonthData overrides error:', ovErr)
     const allRuns = runs || []
     setScRuns(allRuns.filter(r => ids.includes(r.cutoff_id)))
     setScTargetRuns(allRuns.filter(r => payoutIds.includes(r.cutoff_id)))
     const total = (salesRows || []).reduce((sum, s) => sum + (parseFloat(s.service_charge) || 0), 0)
     setServiceChargePool(round2(total))
+    setScSchedules(schedRows || [])
+    setScTimesheetBlobs(tsRows || [])
+    const ovMap = {}
+    ;(overrideRows || []).forEach(o => { ovMap[o.staff_id] = o })
+    setScOverrides(ovMap)
+  }
+
+  // Unapproved (no advance leave/day-off on file) no-show days across the WHOLE Service Charge
+  // month for one staff member — any published shift they were scheduled for but never clocked
+  // into, and that isn't covered by an approved leave or day-off request. Approving a leave/day-off
+  // AFTER the fact (bereavement, hospitalization, accident, critical illness) still clears it here,
+  // same as any other approved leave — it's the approval, not the timing, that this check sees.
+  function computeMonthNoShowCount(staffId, staffInfo) {
+    const scheduledDates = [...new Set(scSchedules.filter(s => s.staff_id === staffId).map(s => s.shift_date))]
+    if (!scheduledDates.length) return 0
+    const workedISO = new Set()
+    scTimesheetBlobs.forEach(blob => {
+      const key = staffInfo ? findTimesheetKey(blob.employees, staffInfo) : null
+      if (!key) return
+      ;(blob.employees[key].shifts || []).forEach(sh => {
+        const iso = mmddyyyyToISO(sh.date)
+        if (iso) workedISO.add(iso)
+      })
+    })
+    return scheduledDates.filter(iso => !workedISO.has(iso) && !isExcused(staffId, iso)).length
+  }
+
+  // Manually force a staff member's Service Charge eligibility for the month — `included: true`
+  // includes them even if the automatic check would exclude them (e.g. an absence Alex wants to
+  // waive without filing a formal leave record), `included: false` excludes them even if
+  // otherwise eligible. Passing null clears the override and reverts to the automatic result.
+  async function setServiceChargeOverride(staffId, included) {
+    setScOverrideSaving(staffId)
+    if (included === null) {
+      const existing = scOverrides[staffId]
+      if (existing) {
+        const { error } = await supabase.from('service_charge_overrides').delete().eq('id', existing.id)
+        if (error) { showToast('❌', error.message); setScOverrideSaving(null); return }
+      }
+      setScOverrides(prev => { const next = { ...prev }; delete next[staffId]; return next })
+      setScOverrideSaving(null)
+      showToast('↩️', 'Reverted to automatic Service Charge eligibility')
+      return
+    }
+    const { data, error } = await supabase.from('service_charge_overrides')
+      .upsert({ staff_id: staffId, month: scMonth, included, updated_at: new Date().toISOString() }, { onConflict: 'staff_id,month' })
+      .select().single()
+    setScOverrideSaving(null)
+    if (error) { showToast('❌', error.message); return }
+    setScOverrides(prev => ({ ...prev, [staffId]: data }))
+    showToast(included ? '✅' : '🚫', included ? 'Manually included for Service Charge' : 'Manually excluded from Service Charge')
   }
 
   async function fetchSavedTimesheet() {
@@ -958,12 +1041,15 @@ export default function PayrollPage() {
   // end (summed across both of that month's cutoffs), not per-cutoff. Someone with 7 lates in the
   // first half and 3 in the second half has 10 lates that month and is NOT eligible at all, even
   // though one of the two cutoffs individually looked fine. If eligible, ALL their hours that
-  // month count; if not, NONE of their hours count (not just the excess).
+  // month count; if not, NONE of their hours count (not just the excess). A single unapproved
+  // no-show anywhere in the month also disqualifies outright (see computeMonthNoShowCount), and
+  // an admin can always force either outcome for a given staff member via a manual override.
   const serviceChargeRows = useMemo(() => {
     const byStaff = {}
     scRuns.forEach(r => {
-      // Ownership/management roles (CEO, Managing Director) aren't part of the service charge
-      // pool at all — it's for rank-and-file staff, not the owners running the business.
+      // Ownership/management roles (CEO, Managing Director) and the Cafe Supervisor (also OHT's
+      // HR point person) aren't part of the service charge pool at all — it's for rank-and-file
+      // staff, not the owners/management running the business.
       if (SC_EXCLUDED_ROLES.includes(r.staff?.role)) return
       const id = r.staff_id
       if (!byStaff[id]) byStaff[id] = { staff: r.staff, totalHours: 0, totalLateCount: 0, violationCount: r.staff?.violation_count || 0 }
@@ -973,12 +1059,16 @@ export default function PayrollPage() {
     const eligibleHours = {}
     Object.keys(byStaff).forEach(id => {
       const v = byStaff[id]
-      v.eligible = isServiceChargeEligible(v.totalLateCount, v.violationCount)
+      v.noShowCount = computeMonthNoShowCount(id, v.staff)
+      v.autoEligible = isServiceChargeEligible(v.totalLateCount, v.violationCount, v.noShowCount)
+      const override = scOverrides[id]
+      v.override = override ? !!override.included : null
+      v.eligible = override ? !!override.included : v.autoEligible
       if (v.eligible) eligibleHours[id] = v.totalHours
     })
     const { ratePerHour, shares } = computeServiceChargeShares(serviceChargePool, eligibleHours)
     return { ratePerHour, shares, byStaff }
-  }, [serviceChargePool, scRuns])
+  }, [serviceChargePool, scRuns, scSchedules, scTimesheetBlobs, approvedLeaves, dayOffs, scOverrides])
 
   async function saveServiceCharge() {
     if (!scRuns.length) { showToast('⚠️','Save Payroll for at least one cutoff in this month first — Service Charge needs paid hours on record.'); return }
@@ -1549,7 +1639,9 @@ export default function PayrollPage() {
                     <th style={thBase}>Employee</th>
                     <th style={thBase}>Role</th>
                     <th style={{...thBase,textAlign:'center'}}>Eligible</th>
+                    <th style={{...thBase,textAlign:'center'}}>Override</th>
                     <th style={{...thBase,textAlign:'right'}}>Lates (Month)</th>
+                    <th style={{...thBase,textAlign:'right'}}>Absences (Month)</th>
                     <th style={{...thBase,textAlign:'right'}}>Hours (Month)</th>
                     <th style={{...thBase,textAlign:'right'}}>Service Charge Share</th>
                     <th style={{...thBase,textAlign:'right'}}>Saved on Target Cutoff</th>
@@ -1567,8 +1659,22 @@ export default function PayrollPage() {
                         </div>
                       </td>
                       <td style={{padding:'9px 12px'}}><span style={{fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:5,background:getRoleColor(v.staff?.role)+'22',color:getRoleColor(v.staff?.role)}}>{v.staff?.role}</span></td>
-                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}} title={`${v.totalLateCount} late(s) this month · ${v.violationCount} violation(s)`}>{v.eligible?'✅':'❌'}</td>
+                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}} title={`${v.totalLateCount} late(s) · ${v.noShowCount} unapproved absence(s) · ${v.violationCount} violation(s) this month${v.override!==null?' · manually '+(v.override?'included':'excluded'):''}`}>{v.eligible?'✅':'❌'}{v.override!==null && <span style={{marginLeft:3,fontSize:9}}>✋</span>}</td>
+                      <td style={{padding:'9px 12px',textAlign:'center'}}>
+                        <select
+                          value={v.override===null?'auto':(v.override?'include':'exclude')}
+                          disabled={scOverrideSaving===staffId}
+                          onChange={e=>{ const val=e.target.value; setServiceChargeOverride(staffId, val==='auto'?null:val==='include') }}
+                          style={{fontSize:10,padding:'3px 5px',borderRadius:6,border:'1px solid var(--border)',background:'var(--white)',color:'var(--text)'}}
+                          title="Manually include or exclude this person for the month, regardless of the automatic calculation"
+                        >
+                          <option value="auto">Auto ({v.autoEligible?'eligible':'not eligible'})</option>
+                          <option value="include">Force include</option>
+                          <option value="exclude">Force exclude</option>
+                        </select>
+                      </td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:v.totalLateCount>3?'#c0392b':'var(--text-muted)'}}>{v.totalLateCount}</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:v.noShowCount>0?'#c0392b':'var(--text-muted)'}} title={v.noShowCount>0?'Unapproved absence — no shift clocked, no leave/day-off on file for that date':''}>{v.noShowCount}</td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace"}}>{v.totalHours.toFixed(1)}h</td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-dark)'}}>{v.eligible ? peso(serviceChargeRows.shares[staffId]||0) : '—'}</td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,color:'var(--text-muted)'}}>{savedRun ? peso(parseFloat(savedRun.service_charge)||0) : '—'}</td>
@@ -1577,7 +1683,7 @@ export default function PayrollPage() {
                 </tbody>
                 <tfoot>
                   <tr style={{background:'var(--espresso)',borderTop:'2px solid var(--matcha)'}}>
-                    <td colSpan={5} style={{padding:'11px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
+                    <td colSpan={7} style={{padding:'11px 12px',color:'var(--matcha-light)',fontWeight:700,fontSize:11}}>TOTAL</td>
                     <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-light)'}}>{peso(Object.values(serviceChargeRows.shares).reduce((s,v)=>s+v,0))}</td>
                     <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#a8d672'}}>{peso(scTargetRuns.filter(r=>r.cutoff_id===scTargetCutoffId).reduce((s,r)=>s+(parseFloat(r.service_charge)||0),0))}</td>
                   </tr>
