@@ -271,11 +271,14 @@ export default function PayrollPage() {
     setScOverrides(ovMap)
   }
 
-  // Unapproved (no advance leave/day-off on file) no-show days across the WHOLE Service Charge
-  // month for one staff member — any published shift they were scheduled for but never clocked
-  // into, and that isn't covered by an approved leave or day-off request. Approving a leave/day-off
-  // AFTER the fact (bereavement, hospitalization, accident, critical illness) still clears it here,
-  // same as any other approved leave — it's the approval, not the timing, that this check sees.
+  // Unapproved no-show days across the WHOLE Service Charge month for one staff member — any
+  // published shift they were scheduled for but never clocked into, and that isn't covered by an
+  // approved leave or day-off request. Per the Handbook policy (effective 2026-09-01), staff are
+  // expected to give ≥3 days' advance notice of an absence; the exceptions — critical
+  // hospitalization, an accident, or the death of an immediate family member — don't need advance
+  // notice at all. Either way, whoever approves the leave/day-off record is the one judging notice
+  // and exceptions (with documentation if they ask for it) — this check only sees the outcome
+  // (approved or not), never the timing, so an after-the-fact approval clears it here too.
   function computeMonthNoShowCount(staffId, staffInfo) {
     const scheduledDates = [...new Set(scSchedules.filter(s => s.staff_id === staffId).map(s => s.shift_date))]
     if (!scheduledDates.length) return 0
@@ -460,7 +463,7 @@ export default function PayrollPage() {
         const savedReq = saved.required_days || reqDays
         const monthlyPay = s.monthly_pay || getBaseRate(s.employment_type||'Full-time', s.role, rateOverrides)?.monthly || 0
         const savedDaily = (isFT && savedReq>0 && monthlyPay>0) ? round2((monthlyPay/2)/savedReq) : getDailyRate(s.employment_type||'Full-time',s.role,rateOverrides)
-        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, gross:parseFloat(saved.gross), additionalPayment:parseFloat(saved.additional_payment)||0, extraShiftDays:isFT?Math.max(0,(saved.days_worked||0)-FULL_TIME_SHIFTS_PER_CUTOFF):0, lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:round2(parseFloat(saved.sss||0) * (9.5/4.5)), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:round2(savedDaily/8), requiredDays:savedReq, noSchedule:false }
+        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, bigLateCount:saved.big_late_count||0, gross:parseFloat(saved.gross), additionalPayment:parseFloat(saved.additional_payment)||0, extraShiftDays:isFT?Math.max(0,(saved.days_worked||0)-FULL_TIME_SHIFTS_PER_CUTOFF):0, lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:round2(parseFloat(saved.sss||0) * (9.5/4.5)), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:round2(savedDaily/8), requiredDays:savedReq, noSchedule:false }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
         return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides,selectedCutoff,reqDays), hasTimesheet:false, saved:null, isLive:false }
@@ -509,7 +512,7 @@ export default function PayrollPage() {
     }
     setSaving(true)
     const rows = buildPayrollRows()
-    const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, gross:r.pay.gross, additional_payment:r.pay.additionalPayment||0, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives:parseFloat(adj.incentives)||0, overtime:parseFloat(adj.overtime)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
+    const upsertData = rows.map(r => { const adj = adjustments[r.staff.id] || {}; return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, big_late_count:r.pay.bigLateCount||0, gross:r.pay.gross, additional_payment:r.pay.additionalPayment||0, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:r.pay.netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives:parseFloat(adj.incentives)||0, overtime:parseFloat(adj.overtime)||0, refund:parseFloat(adj.refund)||0, undertime:parseFloat(adj.undertime)||0, updated_at:new Date().toISOString() }) })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     if (error) { showToast('❌',error.message); setSaving(false); return }
     // Bake any approved timesheet corrections into the archived copy so the record reflects true attendance.
@@ -1052,15 +1055,16 @@ export default function PayrollPage() {
       // staff, not the owners/management running the business.
       if (SC_EXCLUDED_ROLES.includes(r.staff?.role)) return
       const id = r.staff_id
-      if (!byStaff[id]) byStaff[id] = { staff: r.staff, totalHours: 0, totalLateCount: 0, violationCount: r.staff?.violation_count || 0 }
+      if (!byStaff[id]) byStaff[id] = { staff: r.staff, totalHours: 0, totalLateCount: 0, totalBigLateCount: 0, violationCount: r.staff?.violation_count || 0 }
       byStaff[id].totalHours += parseFloat(r.paid_hours) || 0
       byStaff[id].totalLateCount += parseInt(r.late_count) || 0
+      byStaff[id].totalBigLateCount += parseInt(r.big_late_count) || 0
     })
     const eligibleHours = {}
     Object.keys(byStaff).forEach(id => {
       const v = byStaff[id]
       v.noShowCount = computeMonthNoShowCount(id, v.staff)
-      v.autoEligible = isServiceChargeEligible(v.totalLateCount, v.violationCount, v.noShowCount)
+      v.autoEligible = isServiceChargeEligible(v.totalLateCount, v.violationCount, v.noShowCount, v.totalBigLateCount)
       const override = scOverrides[id]
       v.override = override ? !!override.included : null
       v.eligible = override ? !!override.included : v.autoEligible
@@ -1659,7 +1663,7 @@ export default function PayrollPage() {
                         </div>
                       </td>
                       <td style={{padding:'9px 12px'}}><span style={{fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:5,background:getRoleColor(v.staff?.role)+'22',color:getRoleColor(v.staff?.role)}}>{v.staff?.role}</span></td>
-                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}} title={`${v.totalLateCount} late(s) · ${v.noShowCount} unapproved absence(s) · ${v.violationCount} violation(s) this month${v.override!==null?' · manually '+(v.override?'included':'excluded'):''}`}>{v.eligible?'✅':'❌'}{v.override!==null && <span style={{marginLeft:3,fontSize:9}}>✋</span>}</td>
+                      <td style={{padding:'9px 12px',textAlign:'center',fontSize:13}} title={`${v.totalLateCount} late(s) (${v.totalBigLateCount} of 60+min) · ${v.noShowCount} unapproved absence(s) · ${v.violationCount} violation(s) this month${v.override!==null?' · manually '+(v.override?'included':'excluded'):''}`}>{v.eligible?'✅':'❌'}{v.override!==null && <span style={{marginLeft:3,fontSize:9}}>✋</span>}</td>
                       <td style={{padding:'9px 12px',textAlign:'center'}}>
                         <select
                           value={v.override===null?'auto':(v.override?'include':'exclude')}
@@ -1673,7 +1677,7 @@ export default function PayrollPage() {
                           <option value="exclude">Force exclude</option>
                         </select>
                       </td>
-                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:v.totalLateCount>3?'#c0392b':'var(--text-muted)'}}>{v.totalLateCount}</td>
+                      <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:(v.totalLateCount>=3||v.totalBigLateCount>=2)?'#c0392b':'var(--text-muted)'}} title={v.totalBigLateCount>0?`${v.totalBigLateCount} of these were 60+ minutes late`:''}>{v.totalLateCount}{v.totalBigLateCount>0 && <span style={{fontSize:9,marginLeft:3}}>({v.totalBigLateCount}⏱️60+)</span>}</td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",color:v.noShowCount>0?'#c0392b':'var(--text-muted)'}} title={v.noShowCount>0?'Unapproved absence — no shift clocked, no leave/day-off on file for that date':''}>{v.noShowCount}</td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace"}}>{v.totalHours.toFixed(1)}h</td>
                       <td style={{padding:'9px 12px',textAlign:'right',fontFamily:"'DM Mono',monospace",fontWeight:700,color:'var(--matcha-dark)'}}>{v.eligible ? peso(serviceChargeRows.shares[staffId]||0) : '—'}</td>
