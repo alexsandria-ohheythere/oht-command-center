@@ -139,8 +139,10 @@ export default function FinancePage() {
     const file = e.target.files[0]; if(!file) return
     const reader = new FileReader()
     reader.onload = async ev => {
-      const lines = ev.target.result.split('\n').filter(l=>l.trim())
-      const headers = lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,''))
+      const lines = ev.target.result.replace(/^\uFEFF/, '').split('\n').filter(l=>l.trim())
+      // StoreHub suffixes money columns with " PHP" or " (PHP)" depending on export — strip it
+      // so "Total Sales (PHP)" still becomes total_sales.
+      const headers = lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/\s*\((php|%)\)\s*$/,'').replace(/\s*php$/,'').trim().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,''))
       const rows = []
       for (let i=1;i<lines.length;i++) {
         const vals = lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''))
@@ -148,6 +150,7 @@ export default function FinancePage() {
         // Date column is always first — parsed from the raw cell (see parseStoreHubDate above)
         // rather than by header name, since "Date / Time" mangles unpredictably.
         let saleDate = parseStoreHubDate(vals[0])
+        if (!saleDate) { const iso = (vals[0]||'').match(/^(\d{4})-(\d{2})-(\d{2})/); if (iso) saleDate = `${iso[1]}-${iso[2]}-${iso[3]}` }
         if (!saleDate) {
           const rawDate = obj.date||obj.sale_date||obj.transaction_date||vals[0]||''
           if (rawDate) { const d = new Date(rawDate); if (!isNaN(d)) saleDate = toISO(d) }
