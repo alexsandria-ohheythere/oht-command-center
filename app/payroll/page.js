@@ -463,7 +463,7 @@ export default function PayrollPage() {
         const savedReq = saved.required_days || reqDays
         const monthlyPay = s.monthly_pay || getBaseRate(s.employment_type||'Full-time', s.role, rateOverrides)?.monthly || 0
         const savedDaily = (isFT && monthlyPay>0) ? round2(monthlyPay/20) : getDailyRate(s.employment_type||'Full-time',s.role,rateOverrides)
-        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, bigLateCount:saved.big_late_count||0, gross:parseFloat(saved.gross), additionalPayment:parseFloat(saved.additional_payment)||0, extraShiftDays:isFT?Math.max(0,(saved.days_worked||0)-FULL_TIME_SHIFTS_PER_CUTOFF):0, lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:round2(parseFloat(saved.sss||0) * (9.5/4.5)), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:round2(savedDaily/8), requiredDays:savedReq, noSchedule:false }
+        const pay = { daysWorked:saved.days_worked, paidHours:parseFloat(saved.paid_hours), totalLateMins:saved.total_late_mins, lateCount:saved.late_count, bigLateCount:saved.big_late_count||0, gross:parseFloat(saved.gross), additionalPayment:parseFloat(saved.additional_payment)||0, holidayPay:parseFloat(saved.holiday_pay)||0, holidayUnworkedDays:saved.holiday_unworked_days||0, holidayDetails:[], basicPayDays:isFT?Math.min((saved.days_worked||0)+(saved.holiday_unworked_days||0),FULL_TIME_SHIFTS_PER_CUTOFF):(saved.days_worked||0), extraShiftDays:isFT?Math.max(0,(saved.days_worked||0)+(saved.holiday_unworked_days||0)-FULL_TIME_SHIFTS_PER_CUTOFF):0, lateDeduction:parseFloat(saved.late_deduction), sss:parseFloat(saved.sss), philhealth:parseFloat(saved.philhealth), pagibig:parseFloat(saved.pagibig), tax:parseFloat(saved.tax), sssEmployer:round2(parseFloat(saved.sss||0) * (9.5/4.5)), philhealthEmployer:parseFloat(saved.philhealth), pagibigEmployer:parseFloat(saved.pagibig), totalDeductions:parseFloat(saved.total_deductions), netPay:parseFloat(saved.net_pay), eligible:saved.service_charge_eligible, dailyRate:savedDaily, hourlyRate:round2(savedDaily/8), requiredDays:savedReq, noSchedule:false }
         return { staff:s, ts:null, periodShifts:[], pay, hasTimesheet:false, saved, isLive:false }
       } else {
         return { staff:s, ts:null, periodShifts:[], pay:computeCutoffPayroll(s,[],rateOverrides,selectedCutoff,reqDays), hasTimesheet:false, saved:null, isLive:false }
@@ -533,8 +533,8 @@ export default function PayrollPage() {
       // read net_pay straight from this column, unlike Payslips which recomputes it live) go
       // stale the moment any Incentives/Overtime/Undertime exist, same class of bug already
       // fixed once for Service Charge. Mirrors the Payslips card's own netPay formula exactly.
-      const netPay = Math.max(0, round2(r.pay.gross + r.pay.additionalPayment + incentives + overtime + prevServiceCharge - r.pay.totalDeductions - undertime))
-      return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, big_late_count:r.pay.bigLateCount||0, gross:r.pay.gross, additional_payment:r.pay.additionalPayment||0, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives, overtime, refund:parseFloat(adj.refund)||0, undertime, updated_at:new Date().toISOString() })
+      const netPay = Math.max(0, round2(r.pay.gross + r.pay.additionalPayment + (r.pay.holidayPay||0) + incentives + overtime + prevServiceCharge - r.pay.totalDeductions - undertime))
+      return ({ cutoff_id:selectedCutoff.id, cutoff_label:selectedCutoff.label, cutoff_start:selectedCutoff.start, cutoff_end:selectedCutoff.end, staff_id:r.staff.id, days_worked:r.pay.daysWorked, paid_hours:r.pay.paidHours, total_late_mins:r.pay.totalLateMins, late_count:r.pay.lateCount, big_late_count:r.pay.bigLateCount||0, gross:r.pay.gross, additional_payment:r.pay.additionalPayment||0, holiday_pay:r.pay.holidayPay||0, holiday_unworked_days:r.pay.holidayUnworkedDays||0, late_deduction:r.pay.lateDeduction, sss:r.pay.sss, philhealth:r.pay.philhealth, pagibig:r.pay.pagibig, tax:r.pay.tax, total_deductions:r.pay.totalDeductions, net_pay:netPay, service_charge_eligible:r.pay.eligible, required_days:r.pay.requiredDays||0, incentives, overtime, refund:parseFloat(adj.refund)||0, undertime, updated_at:new Date().toISOString() })
     })
     const { error } = await supabase.from('payroll_runs').upsert(upsertData, { onConflict:'cutoff_id,staff_id' })
     if (error) { showToast('❌',error.message); setSaving(false); return }
@@ -596,6 +596,7 @@ export default function PayrollPage() {
       const runData = {
         gross: r.pay.gross,
         additional_payment: r.pay.additionalPayment || 0,
+        holiday_pay: r.pay.holidayPay || 0,
         sss: r.pay.sss, philhealth: r.pay.philhealth, pagibig: r.pay.pagibig, tax: r.pay.tax,
         late_deduction: r.pay.lateDeduction,
         incentives: r.saved ? saved.incentives : (parseFloat(adj.incentives)||0),
@@ -1050,8 +1051,8 @@ export default function PayrollPage() {
   function exportCSV() {
     const rows = buildPayrollRows()
     const data = [
-      ['Name','Role','Type','Days','Paid Hours','Late (mins)','Basic (Gross)','Additional Payment (Extra Shifts)','Late Deduction','SSS','PhilHealth','Pag-IBIG','Tax','Total Deductions','Service Charge','Net Pay','SC Eligible'],
-      ...rows.map(r => [`${r.staff.last_name}, ${r.staff.first_name}`,r.staff.role,r.staff.employment_type||'Full-time',r.pay.daysWorked,r.pay.paidHours.toFixed(2),r.pay.totalLateMins,r.pay.gross,r.pay.additionalPayment||0,r.pay.lateDeduction,r.pay.sss,r.pay.philhealth,r.pay.pagibig,r.pay.tax,r.pay.totalDeductions,parseFloat(r.saved?.service_charge)||0,r.pay.netPay,r.pay.eligible?'Yes':'No'])
+      ['Name','Role','Type','Days','Paid Hours','Late (mins)','Basic (Gross)','Additional Payment (Extra Shifts)','Holiday Pay','Late Deduction','SSS','PhilHealth','Pag-IBIG','Tax','Total Deductions','Service Charge','Net Pay','SC Eligible'],
+      ...rows.map(r => [`${r.staff.last_name}, ${r.staff.first_name}`,r.staff.role,r.staff.employment_type||'Full-time',r.pay.daysWorked,r.pay.paidHours.toFixed(2),r.pay.totalLateMins,r.pay.gross,r.pay.additionalPayment||0,r.pay.holidayPay||0,r.pay.lateDeduction,r.pay.sss,r.pay.philhealth,r.pay.pagibig,r.pay.tax,r.pay.totalDeductions,parseFloat(r.saved?.service_charge)||0,r.pay.netPay,r.pay.eligible?'Yes':'No'])
     ]
     const csv = data.map(r=>r.join(',')).join('\n')
     const blob = new Blob([csv],{type:'text/csv'})
@@ -1526,6 +1527,7 @@ export default function PayrollPage() {
                   const serviceCharge = isLocked ? (parseFloat(r.saved.service_charge)||0) : 0
                   const isFT = (r.staff.employment_type||'Full-time')==='Full-time'
                   const additionalPayment = r.pay.additionalPayment || 0
+                  const holidayPay = r.pay.holidayPay || 0
                   // No standalone "Refund" line — an approved refund is folded straight into what
                   // it's actually correcting: extra hours worked add into Basic, and a late-minutes
                   // correction reduces Late directly, so the payslip shows the real numbers instead
@@ -1533,7 +1535,7 @@ export default function PayrollPage() {
                   const { lateRefundNet, basicTopUp } = refundComponentsFor(r.staff.id, isLocked)
                   const basicPay = r.pay.gross + basicTopUp
                   const actualLateDeduction = Math.max(0, round2(r.pay.lateDeduction - lateRefundNet))
-                  const grossPay = basicPay + additionalPayment + incentives + overtime + serviceCharge
+                  const grossPay = basicPay + additionalPayment + holidayPay + incentives + overtime + serviceCharge
                   const govDed = r.pay.sss + r.pay.philhealth + r.pay.pagibig + r.pay.tax
                   // For full-time, unpaid missed days are already excluded from gross (rate × daysWorked),
                   // so absence is NOT subtracted again here. Late/undertime still apply.
@@ -1577,6 +1579,25 @@ export default function PayrollPage() {
                             <span style={{fontFamily:"'DM Mono',monospace"}}>{peso(additionalPayment)}</span>
                           </div>
                         )}
+                        {/* PH holidays in this cutoff (full-time only). Unworked regular holidays are paid
+                            inside Basic; worked holidays earn the premium shown as Holiday Pay. */}
+                        {isFT && (r.pay.holidayUnworkedDays||0)>0 && (
+                          <div style={{fontSize:9,padding:'1px 0 2px',color:'var(--text-muted)',fontStyle:'italic'}}>
+                            Basic includes {r.pay.holidayUnworkedDays} unworked regular holiday{r.pay.holidayUnworkedDays===1?'':'s'} (paid 100%)
+                          </div>
+                        )}
+                        {isFT && holidayPay>0 && (
+                          <div style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',color:'var(--matcha-dark)',fontWeight:600}}>
+                            <span>Holiday Pay</span>
+                            <span style={{fontFamily:"'DM Mono',monospace"}}>{peso(holidayPay)}</span>
+                          </div>
+                        )}
+                        {isFT && (r.pay.holidayDetails||[]).map(h=>(
+                          <div key={h.date} style={{display:'flex',justifyContent:'space-between',fontSize:9,padding:'1px 0 1px 8px',color:'var(--text-muted)'}}>
+                            <span>🎌 {new Date(h.date+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})} {h.name} · {h.type==='regular'?'Regular':'Special'} · {h.worked?'worked':'not worked'}</span>
+                            <span style={{fontFamily:"'DM Mono',monospace"}}>{h.worked?`+${peso(h.premium)}`:(h.type==='regular'?'in Basic':'—')}</span>
+                          </div>
+                        ))}
                         {/* Manual-entry earnings (editable until saved) — Refund is not shown here: it's
                             already folded into Basic (extra hours) and Late (late-minutes correction) above. */}
                         {[['Incentives','incentives',incentives],['Overtime','overtime',overtime]].map(([label,field,val])=>(
