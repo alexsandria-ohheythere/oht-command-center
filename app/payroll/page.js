@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, applyScheduleToLateMinutes, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares, isServiceChargeEligible, FULL_TIME_SHIFTS_PER_CUTOFF } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, applyScheduleToLateMinutes, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares, isServiceChargeEligible, FULL_TIME_SHIFTS_PER_CUTOFF, getHoliday, getHolidayOvertimeMultiplier } from '../../lib/payroll'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 import { notifyOne } from '../../lib/notify'
 
@@ -966,8 +966,12 @@ export default function PayrollPage() {
     const hourlyRate = round2(dailyRate / 8)
     // Pay is computed from what the employee actually submitted as worked, NOT what
     // management originally requested — the request is only a target/expectation.
-    const amount = round2(hourlyRate * (parseFloat(req.actual_hours) || 0))
-    return { hourlyRate, amount, cutoffLabel: cutoff?.label, existingRun }
+    // Full-timers working overtime ON a PH holiday get the DOLE holiday OT rate
+    // (169% special day / 260% regular holiday — see getHolidayOvertimeMultiplier).
+    const holidayMultiplier = isFT ? getHolidayOvertimeMultiplier(req.shift_date) : 1
+    const holiday = holidayMultiplier > 1 ? getHoliday(req.shift_date) : null
+    const amount = round2(hourlyRate * (parseFloat(req.actual_hours) || 0) * holidayMultiplier)
+    return { hourlyRate, amount, holidayMultiplier, holiday, cutoffLabel: cutoff?.label, existingRun }
   }
 
   async function previewOvertime(req) {
@@ -2124,7 +2128,7 @@ export default function PayrollPage() {
                         {preview && (
                           <div style={{marginTop:10,background:'#eef6f2',border:'1px solid var(--matcha)',borderRadius:8,padding:'10px 12px'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-                              <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Suggested: {peso(preview.amount)} ({req.actual_hours}h × {peso(preview.hourlyRate)}/hr)</div>
+                              <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Suggested: {peso(preview.amount)} ({req.actual_hours}h × {peso(preview.hourlyRate)}/hr{preview.holidayMultiplier>1?` × ${Math.round(preview.holidayMultiplier*100)}% — ${preview.holiday?.name} holiday OT`:''})</div>
                               <div style={{display:'flex',alignItems:'center',gap:6}}>
                                 <span style={{fontSize:10,color:'var(--text-muted)'}}>Amount to approve</span>
                                 <input type="number" value={otAmounts[req.id]??preview.amount} onChange={e=>setOtAmounts(p=>({...p,[req.id]:e.target.value}))} style={{width:90,textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,border:'1px solid var(--border)',borderRadius:6,padding:'4px 8px',outline:'none'}}/>
