@@ -968,10 +968,15 @@ export default function PayrollPage() {
     // management originally requested — the request is only a target/expectation.
     // Full-timers working overtime ON a PH holiday get the DOLE holiday OT rate
     // (169% special day / 260% regular holiday — see getHolidayOvertimeMultiplier).
+    // The holiday rate is baked into the OT HOURLY RATE itself (e.g. special day:
+    // basic hourly × 130% × 130%), so the per-hour rate saved on the request and shown
+    // on screen is the actual rate paid — not the plain basic hourly rate.
     const holidayMultiplier = isFT ? getHolidayOvertimeMultiplier(req.shift_date) : 1
     const holiday = holidayMultiplier > 1 ? getHoliday(req.shift_date) : null
-    const amount = round2(hourlyRate * (parseFloat(req.actual_hours) || 0) * holidayMultiplier)
-    return { hourlyRate, amount, holidayMultiplier, holiday, cutoffLabel: cutoff?.label, existingRun }
+    const baseHourlyRate = hourlyRate
+    const otHourlyRate = round2(baseHourlyRate * holidayMultiplier)
+    const amount = round2(otHourlyRate * (parseFloat(req.actual_hours) || 0))
+    return { hourlyRate: otHourlyRate, baseHourlyRate, amount, holidayMultiplier, holiday, cutoffLabel: cutoff?.label, existingRun }
   }
 
   async function previewOvertime(req) {
@@ -2128,12 +2133,17 @@ export default function PayrollPage() {
                         {preview && (
                           <div style={{marginTop:10,background:'#eef6f2',border:'1px solid var(--matcha)',borderRadius:8,padding:'10px 12px'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-                              <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Suggested: {peso(preview.amount)} ({req.actual_hours}h × {peso(preview.hourlyRate)}/hr{preview.holidayMultiplier>1?` × ${Math.round(preview.holidayMultiplier*100)}% — ${preview.holiday?.name} holiday OT`:''})</div>
+                              <div style={{fontWeight:700,fontSize:13,color:'var(--matcha-dark)'}}>Suggested: {peso(preview.amount)} ({req.actual_hours}h × {peso(preview.hourlyRate)}/hr OT rate)</div>
                               <div style={{display:'flex',alignItems:'center',gap:6}}>
                                 <span style={{fontSize:10,color:'var(--text-muted)'}}>Amount to approve</span>
                                 <input type="number" value={otAmounts[req.id]??preview.amount} onChange={e=>setOtAmounts(p=>({...p,[req.id]:e.target.value}))} style={{width:90,textAlign:'right',fontFamily:"'DM Mono',monospace",fontSize:11,border:'1px solid var(--border)',borderRadius:6,padding:'4px 8px',outline:'none'}}/>
                               </div>
                             </div>
+                            {preview.holidayMultiplier>1 && (
+                              <div style={{marginTop:4,fontSize:11,color:'var(--matcha-dark)'}}>
+                                🎌 {preview.holiday?.name} — OT hourly rate: {peso(preview.baseHourlyRate)}/hr × {preview.holiday?.type==='regular'?'200% × 130%':'130% × 130%'} = {peso(preview.hourlyRate)}/hr ({Math.round(preview.holidayMultiplier*100)}%)
+                              </div>
+                            )}
                             <div style={{marginTop:4,fontSize:10,color:'var(--text-muted)'}}>
                               {preview.existingRun ? `⚠️ ${req.cutoff_label} payroll is already saved — approving will patch this amount straight into that saved payslip and net pay.` : `${req.cutoff_label} hasn't been saved yet — approving pre-fills the Overtime field on the Payslips tab; it locks in when you Save Payroll for that cutoff.`}
                             </div>
