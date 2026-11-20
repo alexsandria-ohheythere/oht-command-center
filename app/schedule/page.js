@@ -23,6 +23,16 @@ const LEADERSHIP_ROLES = ['Managing Director','CEO']
 const KITCHEN_FLEX_ROWS = ['Sous Chef','Kitchen Staff','Junior Barista']
 const isKitchenFlexRole = r => r==='Sous Chef' || r==='Kitchen Staff' || (r||'').startsWith('Junior Barista')
 
+// Retired role rows — { role: 'YYYY-MM-DD' first date the row is no longer scheduled }.
+// Dates BEFORE the retire date keep the row exactly as it was (history untouched).
+// From the retire date on, the row's cells are locked (no new assignments), and once a whole
+// week is past the retire date the row is hidden — unless an old assignment is still sitting
+// in it, so nothing ever disappears silently (drag it to another row to clear it).
+// Staff whose own title is "Kitchen Staff" can still be placed in the Sous Chef /
+// Junior Barista rows.
+const RETIRED_ROWS = { 'Kitchen Staff': '2026-11-20' }
+const isRowRetiredOn = (role, iso) => !!RETIRED_ROWS[role] && iso >= RETIRED_ROWS[role]
+
 const ROLE_ROWS = [
   // AM
   { shiftId:'am', role:'Cafe Supervisor',          label:'Cafe Supervisor',    group:'front' },
@@ -184,6 +194,10 @@ export default function SchedulePage() {
   async function addAssignment(dayIdx, shiftType, staffId, rowRole) {
     const date = toISO(weekDates[dayIdx])
     const member = staff.find(x=>x.id===staffId)
+    if (isRowRetiredOn(rowRole, date)) {
+      showToast('🚫',`${rowRole} is no longer scheduled from ${RETIRED_ROWS[rowRole]} — use Sous Chef or Junior Barista`)
+      return
+    }
     if (rowRole && KITCHEN_FLEX_ROWS.includes(rowRole) && !isKitchenFlexRole(member?.role)) {
       showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to a kitchen-team slot`)
       return
@@ -216,6 +230,10 @@ export default function SchedulePage() {
   async function moveAssignment(sourceDate, sourceShift, staffId, targetDayIdx, targetShift, targetRole) {
     const targetDate=toISO(weekDates[targetDayIdx])
     const member = staff.find(x=>x.id===staffId)
+    if (isRowRetiredOn(targetRole, targetDate)) {
+      showToast('🚫',`${targetRole} is no longer scheduled from ${RETIRED_ROWS[targetRole]} — use Sous Chef or Junior Barista`)
+      return
+    }
     if (targetRole && KITCHEN_FLEX_ROWS.includes(targetRole) && !isKitchenFlexRole(member?.role)) {
       showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to a kitchen-team slot`)
       return
@@ -328,6 +346,14 @@ export default function SchedulePage() {
   })
 
   const ROW_H = 68 // cell height px
+
+  // Hide retired rows for weeks fully past the retire date (unless something is still in them)
+  const visibleRows = ROLE_ROWS.filter(row => {
+    if (!RETIRED_ROWS[row.role]) return true
+    const allRetired = weekDates.every(d => isRowRetiredOn(row.role, toISO(d)))
+    if (!allRetired) return true
+    return weekDates.some((_, di) => getCellAssignments(di, row.shiftId, row.role).length > 0)
+  })
 
   return (
     <AuthShell>
@@ -517,7 +543,7 @@ export default function SchedulePage() {
               </div>
 
               {/* Role rows */}
-              {ROLE_ROWS.map((row,rowIdx)=>{
+              {visibleRows.map((row,rowIdx)=>{
                 const shift=SHIFTS.find(s=>s.id===row.shiftId)
 
                 return (
@@ -566,13 +592,16 @@ export default function SchedulePage() {
                         const isToday=d.toDateString()===new Date().toDateString()
                         const cellHol=holidayOn(dateISO)
                         const cellHolBg=cellHol?getHolidayType(cellHol.type).bg:null
-                        const cellBg = assignments.length===0 && CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId)
+                        const cellRetired=isRowRetiredOn(row.role,dateISO)
+                        const cellBg = cellRetired
+                          ? 'repeating-linear-gradient(45deg,#f4f1ec,#f4f1ec 6px,#ebe6de 6px,#ebe6de 12px)'
+                          : assignments.length===0 && CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId)
                           ? (isToday ? '#ffe0e088' : '#fff0f0')
                           : (cellHolBg || (isToday ? shift.bg+'66' : 'var(--white)'))
 
                         return (
                           <div key={dayIdx}
-                            onDragOver={e=>{e.preventDefault();e.currentTarget.style.background=shift.bg;e.currentTarget.style.outline=`2px dashed ${shift.border}`}}
+                            onDragOver={e=>{e.preventDefault();if(cellRetired)return;e.currentTarget.style.background=shift.bg;e.currentTarget.style.outline=`2px dashed ${shift.border}`}}
                             onDragLeave={e=>{e.currentTarget.style.background=cellBg;e.currentTarget.style.outline=''}}
                             onDrop={e=>{
                               e.preventDefault()
@@ -605,7 +634,9 @@ export default function SchedulePage() {
 
                             {assignments.length===0 && (
                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
-                                {CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId) ? (
+                                {cellRetired ? (
+                                  <span style={{fontSize:8,fontWeight:700,color:'#a89c88',textAlign:'center',lineHeight:1.2,fontFamily:"'DM Sans',sans-serif",letterSpacing:.5,textTransform:'uppercase'}}>Retired</span>
+                                ) : CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId) ? (
                                   <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
                                     <span style={{fontSize:12}}>🚨</span>
                                     <span style={{fontSize:8,fontWeight:700,color:'#c0392b',textAlign:'center',lineHeight:1.2,fontFamily:"'DM Sans',sans-serif"}}>Required</span>
