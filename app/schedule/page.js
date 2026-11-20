@@ -4,6 +4,11 @@ import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { useRoles } from '../../lib/roles'
 import { fetchHolidays, getHolidayType, fmtHolidayDate } from '../../lib/holidays'
+import { getDailyRate, getBaseRate, HOLIDAY_PREMIUM, HOLIDAY_PAY_EFFECTIVE_FROM, round2 } from '../../lib/payroll'
+
+// Manpower cost row is admin-only (Alex, CJ) — HR has no Finance/Payroll access.
+const COST_VIEW_EMAILS = ['ohheythere.matcha@gmail.com', 'ohheythere.group@gmail.com']
+const peso = n => '₱' + Number(n||0).toLocaleString('en-PH', { minimumFractionDigits:2, maximumFractionDigits:2 })
 
 const SHIFTS = [
   { id:'am',  label:'AM',  time:'6:30AM–3:30PM',  paid:8, color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648' },
@@ -143,6 +148,51 @@ export default function SchedulePage() {
   const weekStart = toISO(weekDates[0])
 
   useEffect(()=>{ fetchStaff(); fetchHolidays(supabase).then(list=>setHolidays(list||[])) },[])
+
+  // ── Daily manpower cost (admins only) ──
+  // Same rate rules as Payroll: Full-time = monthly ÷ 20 (staff monthly_pay, else rate card);
+  // Part-time / Freelancer = daily rate card. Rate cards come from Settings → Payroll.
+  // Holiday premium follows lib/payroll.js: Full-time only, Regular +100%, Special +30%,
+  // holidays on/after HOLIDAY_PAY_EFFECTIVE_FROM. Overtime/late deductions aren't known
+  // until timesheets, so this is the scheduled (planned) cost.
+  const [canSeeCost, setCanSeeCost]       = useState(false)
+  const [rateOverrides, setRateOverrides] = useState(null)
+  useEffect(()=>{
+    supabase.auth.getSession().then(({data:{session}})=>{
+      const email=(session?.user?.email||'').toLowerCase()
+      if(!COST_VIEW_EMAILS.includes(email)) return
+      setCanSeeCost(true)
+      supabase.from('settings').select('value').eq('key','payroll_rates').maybeSingle().then(({data})=>{
+        if(data?.value){ try{ setRateOverrides(typeof data.value==='string'?JSON.parse(data.value):data.value) }catch(e){} }
+      })
+    })
+  },[])
+  function staffDailyRate(m) {
+    const type = m.employment_type || 'Full-time'
+    if (type === 'Full-time') {
+      const monthly = m.monthly_pay || getBaseRate(type, m.role, rateOverrides)?.monthly || 0
+      if (monthly > 0) return monthly / 20
+    }
+    return getDailyRate(type, m.role, rateOverrides)
+  }
+  function dayCost(iso) {
+    const h = holidayOn(iso)
+    const premRate = (h && iso >= HOLIDAY_PAY_EFFECTIVE_FROM && HOLIDAY_PREMIUM[h.type]) || 0
+    const seen = new Set(), lines = []
+    let base = 0, premium = 0
+    schedules.forEach(sc=>{
+      if (sc.shift_date!==iso || seen.has(sc.staff_id)) return
+      const m = staff.find(x=>x.id===sc.staff_id)
+      if (!m) return
+      seen.add(sc.staff_id)
+      const rate = staffDailyRate(m)
+      const isFT = (m.employment_type||'Full-time')==='Full-time'
+      const prem = isFT ? rate*premRate : 0
+      base += rate; premium += prem
+      lines.push(`${m.nickname||m.first_name} ${m.last_name||''} · ${m.employment_type||'Full-time'} · ${peso(rate)}${prem?` + ${peso(prem)} holiday`:''}${rate?'':' (no rate set)'}`)
+    })
+    return { base:round2(base), premium:round2(premium), total:round2(base+premium), count:seen.size, lines, holiday: premRate?h:null }
+  }
 
   // ── Holidays (managed in the Holidays module, /holidays) ──
   const holidayOn = iso => holidays.find(h=>h.date===iso) || null
@@ -704,6 +754,32 @@ export default function SchedulePage() {
                   </div>
                 )
               })}
+
+              {/* Daily manpower cost — admins only */}
+              {canSeeCost && (()=>{
+                const days = weekDates.map(d=>dayCost(toISO(d)))
+                const weekTotal = round2(days.reduce((a,c)=>a+c.total,0))
+                const weekPrem = round2(days.reduce((a,c)=>a+c.premium,0))
+                return (
+                  <div style={{display:'grid',gridTemplateColumns:'140px repeat(7,1fr)',borderTop:'3px solid var(--espresso)',background:'#faf7f0'}}>
+                    <div style={{padding:'8px 12px',borderRight:'2px solid var(--border)'}}>
+                      <div style={{fontSize:9,fontWeight:900,letterSpacing:1,textTransform:'uppercase',color:'var(--espresso)'}}>💰 Manpower cost</div>
+                      <div style={{fontSize:12,fontWeight:700,fontFamily:"'DM Mono',monospace",color:'var(--matcha-dark)',marginTop:3}}>{peso(weekTotal)}</div>
+                      <div style={{fontSize:8,color:'var(--text-muted)',marginTop:1}}>week total{weekPrem>0?` · incl. ${peso(weekPrem)} holiday`:''}</div>
+                    </div>
+                    {days.map((c,i)=>(
+                      <div key={i} title={c.lines.length?c.lines.join('\n'):'No one scheduled'}
+                        style={{borderLeft:'1px solid var(--border)',padding:'8px 6px',textAlign:'center',cursor:'help',background:c.holiday?getHolidayType(c.holiday.type).bg:undefined}}>
+                        <div style={{fontSize:12,fontWeight:700,fontFamily:"'DM Mono',monospace",color:c.total?'var(--espresso)':'var(--text-muted)'}}>{peso(c.total)}</div>
+                        <div style={{fontSize:8,color:'var(--text-muted)',marginTop:2}}>{c.count} staff</div>
+                        {c.premium>0 && (
+                          <div style={{fontSize:8,fontWeight:700,color:'#a0451e',marginTop:2}}>🎌 incl. {peso(c.premium)} holiday</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
 
               {/* Shifts summary — frozen to bottom of the scroll area so it stays visible */}
               {filteredStaff.length>0&&(
