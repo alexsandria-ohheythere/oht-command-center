@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
 import { useRoles } from '../../lib/roles'
+import { fetchHolidays, getHolidayType, fmtHolidayDate } from '../../lib/holidays'
 
 const SHIFTS = [
   { id:'am',  label:'AM',  time:'6:30AM–3:30PM',  paid:8, color:'#4a7a1e', bg:'#eef7e4', border:'#7ab648' },
@@ -101,11 +102,25 @@ export default function SchedulePage() {
   const [dragStaffId, setDragStaffId]   = useState(null)
   const [dragSource, setDragSource]     = useState(null)
   const [sidebarSearch, setSidebarSearch] = useState('')
+  const [holidays, setHolidays]           = useState([])
 
   const weekDates = getWeekDates(weekOffset)
   const weekStart = toISO(weekDates[0])
 
-  useEffect(()=>{ fetchStaff() },[])
+  useEffect(()=>{ fetchStaff(); fetchHolidays(supabase).then(list=>setHolidays(list||[])) },[])
+
+  // ── Holidays (managed in the Holidays module, /holidays) ──
+  const holidayOn = iso => holidays.find(h=>h.date===iso) || null
+  const weekHolidays = weekDates.map((d,i)=>{ const h=holidayOn(toISO(d)); return h?{...h,dayIdx:i}:null }).filter(Boolean)
+  // Heads-up for the 2 weeks after the week being viewed
+  const upcomingEnd = (()=>{ const d=new Date(weekDates[6]); d.setDate(d.getDate()+14); return toISO(d) })()
+  const upcomingHolidays = holidays.filter(h=>h.date>toISO(weekDates[6]) && h.date<=upcomingEnd)
+  function holidayNote(iso) {
+    const h = holidayOn(iso)
+    if (!h) return ''
+    const t = getHolidayType(h.type)
+    return ` · 🎌 ${h.name} (${t.short}) — ${t.pay}`
+  }
   useEffect(()=>{ if(staff.length){ fetchSchedules(); fetchLeaves() } },[weekOffset,staff])
 
   async function fetchStaff() {
@@ -189,7 +204,8 @@ export default function SchedulePage() {
     setSchedules(prev=>prev.map(s=>s.id===temp.id?data:s))
     const m=staff.find(x=>x.id===staffId)
     const sh=SHIFTS.find(x=>x.id===shiftType)
-    showToast('✅',`${m?.first_name} → ${rowRole||sh?.label}`)
+    const hNote = holidayNote(date)
+    showToast(hNote?'🎌':'✅',`${m?.first_name} → ${rowRole||sh?.label}${hNote}`)
   }
 
   async function removeAssignment(id) {
@@ -220,7 +236,8 @@ export default function SchedulePage() {
       setSchedules(prev=>[...prev.filter(s=>s.id!==old?.id),data])
       const m=staff.find(x=>x.id===staffId)
       const sh=SHIFTS.find(x=>x.id===targetShift)
-      showToast('🔄',`${m?.first_name} moved to ${targetRole||sh?.label} · ${DAYS[targetDayIdx]}`)
+      const hNote = holidayNote(targetDate)
+      showToast(hNote?'🎌':'🔄',`${m?.first_name} moved to ${targetRole||sh?.label} · ${DAYS[targetDayIdx]}${hNote}`)
     }
   }
 
@@ -381,6 +398,46 @@ export default function SchedulePage() {
         </div>
       )}
 
+      {/* HOLIDAY ALERT — this week + next 2 weeks */}
+      {(weekHolidays.length > 0 || upcomingHolidays.length > 0) && (
+        <div style={{background:'#fff7f0',borderBottom:'1px solid #f0c9a8',padding:'7px 20px',display:'flex',alignItems:'flex-start',gap:10,flexShrink:0,flexWrap:'wrap'}}>
+          <span style={{fontSize:14,flexShrink:0,marginTop:1}}>🎌</span>
+          <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:5}}>
+            {weekHolidays.length > 0 && (
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                <span style={{fontSize:11,fontWeight:700,color:'#a0451e',flexShrink:0}}>{weekHolidays.length} holiday{weekHolidays.length!==1?'s':''} this week:</span>
+                {weekHolidays.map(h=>{
+                  const t=getHolidayType(h.type)
+                  const staffed=new Set(schedules.filter(sc=>sc.shift_date===h.date).map(sc=>sc.staff_id)).size
+                  return (
+                    <span key={h.date} title={t.pay} style={{background:'white',border:`1px solid ${t.border}`,borderRadius:7,padding:'2px 9px',fontSize:11,fontWeight:600,color:'var(--espresso)',whiteSpace:'nowrap'}}>
+                      <span style={{color:t.color,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{DAYS[h.dayIdx]}</span>
+                      {' '}{h.name}{' '}
+                      <span style={{fontSize:9,fontWeight:700,color:t.color,background:t.bg,borderRadius:10,padding:'1px 6px'}}>{t.short}</span>
+                      <span style={{fontSize:10,color:'var(--text-muted)'}}> · {staffed} scheduled</span>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+            {upcomingHolidays.length > 0 && (
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',flexShrink:0}}>Coming up (next 2 weeks):</span>
+                {upcomingHolidays.map(h=>{
+                  const t=getHolidayType(h.type)
+                  return (
+                    <span key={h.date} title={t.pay} style={{background:'white',border:'1px dashed '+t.border,borderRadius:7,padding:'2px 9px',fontSize:11,fontWeight:600,color:'var(--espresso)',whiteSpace:'nowrap'}}>
+                      <span style={{color:t.color,fontWeight:700}}>{fmtHolidayDate(h.date)}</span> — {h.name} <span style={{fontSize:9,fontWeight:700,color:t.color}}>({t.short})</span>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          <a href="/holidays" style={{fontSize:10,fontWeight:700,color:'#a0451e',textDecoration:'none',flexShrink:0,marginTop:2}}>Manage →</a>
+        </div>
+      )}
+
       {/* MAIN */}
       <div style={{display:'flex',flex:1,overflow:'hidden',height:'calc(100vh - 108px)'}}>
 
@@ -442,11 +499,18 @@ export default function SchedulePage() {
                 <div style={{padding:'10px 12px',fontSize:9,fontWeight:700,letterSpacing:1.5,color:'rgba(255,255,255,.5)',textTransform:'uppercase'}}>Role / Day</div>
                 {weekDates.map((d,i)=>{
                   const isToday=d.toDateString()===new Date().toDateString()
+                  const hol=holidayOn(toISO(d))
+                  const ht=hol?getHolidayType(hol.type):null
                   return (
-                    <div key={i} style={{padding:'10px 6px',textAlign:'center',borderLeft:'1px solid rgba(255,255,255,.1)'}}>
+                    <div key={i} title={hol?`${hol.name} — ${ht.label} · ${ht.pay}`:undefined} style={{padding:'10px 6px',textAlign:'center',borderLeft:'1px solid rgba(255,255,255,.1)',background:hol?ht.color:'transparent',boxShadow:hol?'inset 0 -3px 0 rgba(0,0,0,.18)':'none'}}>
                       <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:isToday?'#a8d672':'rgba(255,255,255,.5)'}}>{DAYS[i]}</div>
                       <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:18,fontWeight:900,color:isToday?'#a8d672':'white',lineHeight:1.1,marginTop:2}}>{d.getDate()}</div>
                       <div style={{fontSize:8,color:'rgba(255,255,255,.35)',marginTop:1}}>{fmtDate(d)}</div>
+                      {hol && (
+                        <div style={{marginTop:4,fontSize:8,fontWeight:700,color:'white',background:'rgba(0,0,0,.2)',borderRadius:5,padding:'2px 4px',lineHeight:1.25,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                          🎌 {hol.name}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
@@ -500,14 +564,19 @@ export default function SchedulePage() {
                         const assignments=getCellAssignments(dayIdx,row.shiftId,row.role)
                         const dateISO=toISO(d)
                         const isToday=d.toDateString()===new Date().toDateString()
+                        const cellHol=holidayOn(dateISO)
+                        const cellHolBg=cellHol?getHolidayType(cellHol.type).bg:null
+                        const cellBg = assignments.length===0 && CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId)
+                          ? (isToday ? '#ffe0e088' : '#fff0f0')
+                          : (cellHolBg || (isToday ? shift.bg+'66' : 'var(--white)'))
 
                         return (
                           <div key={dayIdx}
                             onDragOver={e=>{e.preventDefault();e.currentTarget.style.background=shift.bg;e.currentTarget.style.outline=`2px dashed ${shift.border}`}}
-                            onDragLeave={e=>{e.currentTarget.style.background='';e.currentTarget.style.outline=''}}
+                            onDragLeave={e=>{e.currentTarget.style.background=cellBg;e.currentTarget.style.outline=''}}
                             onDrop={e=>{
                               e.preventDefault()
-                              e.currentTarget.style.background=''
+                              e.currentTarget.style.background=cellBg
                               e.currentTarget.style.outline=''
                               // Read from dataTransfer as fallback — dragStaffId can be null on drop in some browsers
                               const sid = dragStaffId || e.dataTransfer.getData('staffId')
@@ -529,9 +598,7 @@ export default function SchedulePage() {
                               borderLeft:'1px solid var(--border)',
                               padding:4,
                               minHeight:ROW_H,
-                              background: assignments.length===0 && CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId)
-                                ? (isToday ? '#ffe0e088' : '#fff0f0')
-                                : (isToday ? shift.bg+'66' : 'var(--white)'),
+                              background: cellBg,
                               position:'relative',
                               transition:'background .1s',
                             }}>
