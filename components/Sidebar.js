@@ -78,6 +78,7 @@ export default function Sidebar({ user, userRole, onClose }) {
     { type:'link', id:'tasks',            href:'/tasks',                  icon:'📋', label:'Job Orders',           show: can(role,'tasks') },
     { type:'link', id:'leave',            href:'/leave',                  icon:'🗓️', label:'Leave & Unavail.',     show: can(role,'leaveReview') },
     { type:'link', id:'dayoff',           href:'/dayoff',                 icon:'📆', label:'Day-Off',               show: can(role,'schedule') },
+    { type:'link', id:'holidays',         href:'/holidays',               icon:'🎌', label:'Holidays',              show: can(role,'schedule') },
     { type:'link', id:'roles',            href:'/roles',                  icon:'📝', label:'Role Tasks',           show: can(role,'roles') },
     { type:'link', id:'checkin',          href:'/checkin',                icon:'✔️', label:'Daily Check-In',       show: can(role,'checkin') },
     { type:'link', id:'recurring-tasks',  href:'/recurring-tasks',        icon:'🧹', label:'Recurring Tasks',      show: can(role,'roles') },
