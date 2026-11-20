@@ -28,6 +28,7 @@ function parseStoreHubDate(raw) {
 
 const TABS = [
   { id:'overview',   label:'Financial Statement', icon:'📊' },
+  { id:'graph',      label:'Sales Graph',         icon:'📉' },
   { id:'sales',      label:'Sales',               icon:'💰' },
   { id:'expenses',   label:'Expenses',             icon:'🧾' },
   { id:'forecast',   label:'Forecast',             icon:'📈' },
@@ -353,10 +354,10 @@ export default function FinancePage() {
       <div className="topbar">
         <div>
           <div className="topbar-title">Finance</div>
-          <div className="topbar-sub">{fmtDate(dateFrom)} – {fmtDate(dateTo)}</div>
+          <div className="topbar-sub">{tab==='graph'?'Sales trend':`${fmtDate(dateFrom)} – ${fmtDate(dateTo)}`}</div>
         </div>
-        {/* Period selector */}
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
+        {/* Period selector (hidden on Sales Graph — it has its own date controls) */}
+        <div style={{display:tab==='graph'?'none':'flex',alignItems:'center',gap:8}}>
           <div style={{display:'flex',gap:5}}>
             {PERIODS.map(p=>(
               <button key={p} onClick={()=>applyPeriod(p)}
@@ -479,6 +480,9 @@ export default function FinancePage() {
             </div>
           </div>
         )}
+
+        {/* ── SALES GRAPH ── */}
+        {tab==='graph'&&<SalesGraph/>}
 
         {/* ── SALES ── */}
         {tab==='sales'&&(
@@ -791,6 +795,253 @@ function PRow({ label, value, bold, big, red, color }) {
     <div style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid var(--cream-dark)',fontSize:big?14:12}}>
       <span style={{color:'var(--text-muted)',fontWeight:bold?700:400}}>{label}</span>
       <span style={{fontWeight:bold?700:500,color:color||(red?'#c0392b':bold?'var(--espresso)':'var(--text-primary)'),fontFamily:"'DM Mono',monospace"}}>{value}</span>
+    </div>
+  )
+}
+
+// ── SALES GRAPH TAB ──
+// Self-contained: has its own date controls (Custom range / Month / Year) and
+// fetches its own sales rows, so it doesn't depend on the top-bar period filter.
+const GRAPH_MODES = [
+  { id:'custom', label:'Custom Dates' },
+  { id:'month',  label:'Month' },
+  { id:'year',   label:'Year' },
+]
+const GRAPH_METRICS = [
+  { id:'net_sales',         label:'Net Sales',      money:true,  color:'#7ab648' },
+  { id:'gross_sales',       label:'Gross Sales',    money:true,  color:'#4a7a1e' },
+  { id:'service_charge',    label:'Service Charge', money:true,  color:'#4a90c4' },
+  { id:'transaction_count', label:'Transactions',   money:false, color:'#d4a843' },
+]
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+const pesoShort = n => {
+  const v = Math.abs(n)
+  const trim = x => String(parseFloat(x.toFixed(1)))
+  if (v >= 1000000) return '₱' + trim(n/1000000) + 'M'
+  if (v >= 1000)    return '₱' + trim(n/1000) + 'k'
+  return '₱' + Math.round(n)
+}
+
+function SalesGraph() {
+  const supabase = createClient()
+  const now = new Date()
+  const [mode, setMode]       = useState('month')
+  const [metric, setMetric]   = useState('net_sales')
+  const [groupBy, setGroupBy] = useState('day') // custom mode only: day | week | month
+  const [month, setMonth]     = useState(toMonthStr(now))
+  const [year, setYear]       = useState(String(now.getFullYear()))
+  const [from, setFrom]       = useState(toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()-29)))
+  const [to, setTo]           = useState(toISO(now))
+  const [rows, setRows]       = useState([])
+  const [loading, setLoading] = useState(true)
+  const [hover, setHover]     = useState(null)
+
+  // Resolve the actual date range for the current mode
+  let rangeFrom, rangeTo
+  if (mode === 'month')      { [rangeFrom, rangeTo] = monthRange(month) }
+  else if (mode === 'year')  { rangeFrom = `${year}-01-01`; rangeTo = `${year}-12-31` }
+  else                       { rangeFrom = from <= to ? from : to; rangeTo = from <= to ? to : from }
+
+  useEffect(() => { load() }, [rangeFrom, rangeTo])
+
+  async function load() {
+    if (!rangeFrom || !rangeTo) return
+    setLoading(true)
+    // Page through results — Supabase caps a single select at 1000 rows
+    let all = [], start = 0
+    while (true) {
+      const { data, error } = await supabase.from('sales')
+        .select('sale_date,source,gross_sales,net_sales,service_charge,transaction_count')
+        .gte('sale_date', rangeFrom).lte('sale_date', rangeTo)
+        .order('sale_date', { ascending:true })
+        .range(start, start + 999)
+      if (error || !data) break
+      all = all.concat(data)
+      if (data.length < 1000) break
+      start += 1000
+    }
+    setRows(all)
+    setLoading(false)
+  }
+
+  // Bucket size: Month → days, Year → months, Custom → user's choice
+  const bucket = mode === 'month' ? 'day' : mode === 'year' ? 'month' : groupBy
+
+  // Build the full list of buckets (including empty ones, so gaps show as zero)
+  const buckets = []
+  const keyFor = iso => {
+    if (bucket === 'month') return iso.slice(0,7)
+    if (bucket === 'week') {
+      const d = new Date(iso+'T00:00:00'); const day = d.getDay()
+      d.setDate(d.getDate() - (day===0?6:day-1)) // Monday start
+      return toISO(d)
+    }
+    return iso
+  }
+  if (rangeFrom && rangeTo) {
+    const end = new Date(rangeTo+'T00:00:00')
+    const seen = new Set()
+    for (let d = new Date(rangeFrom+'T00:00:00'); d <= end; d.setDate(d.getDate()+1)) {
+      const k = keyFor(toISO(d))
+      if (!seen.has(k)) { seen.add(k); buckets.push({ key:k, value:0, days:0 }) }
+      if (buckets.length > 800) break // safety cap for huge ranges
+    }
+  }
+  const idx = {}; buckets.forEach((b,i)=>{ idx[b.key]=i })
+  const daysWithSales = new Set()
+  rows.forEach(r => {
+    const i = idx[keyFor(r.sale_date)]
+    if (i === undefined) return
+    buckets[i].value += parseFloat(r[metric]) || 0
+    daysWithSales.add(r.sale_date)
+  })
+
+  const labelFor = k => {
+    if (bucket === 'month') { const [y,m] = k.split('-').map(Number); return mode==='year' ? MONTH_NAMES[m-1] : `${MONTH_NAMES[m-1]} ${String(y).slice(2)}` }
+    const d = new Date(k+'T00:00:00')
+    if (bucket === 'week') return `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}`
+    return mode === 'month' ? String(d.getDate()) : `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}`
+  }
+  const tipFor = k => {
+    if (bucket === 'month') { const [y,m] = k.split('-').map(Number); return `${MONTH_NAMES[m-1]} ${y}` }
+    if (bucket === 'week') { const d = new Date(k+'T00:00:00'); const e = new Date(d); e.setDate(d.getDate()+6); return `Week of ${fmtDate(k)} – ${fmtDate(toISO(e))}` }
+    return new Date(k+'T00:00:00').toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'})
+  }
+
+  const m = GRAPH_METRICS.find(x=>x.id===metric)
+  const fmtVal = v => m.money ? peso(v) : Math.round(v).toLocaleString('en-PH')
+  const fmtAxis = v => m.money ? pesoShort(v) : Math.round(v).toLocaleString('en-PH')
+  const total   = buckets.reduce((a,b)=>a+b.value,0)
+  const nonZero = buckets.filter(b=>b.value>0)
+  const avg     = nonZero.length ? total / nonZero.length : 0
+  const best    = nonZero.reduce((a,b)=> (!a || b.value > a.value) ? b : a, null)
+  const unitWord = bucket==='day'?'day':bucket==='week'?'week':'month'
+
+  // Chart geometry
+  const W = 900, H = 320, PL = 64, PR = 16, PT = 16, PB = 40
+  const cw = W - PL - PR, ch = H - PT - PB
+  const rawMax = Math.max(0, ...buckets.map(b=>b.value))
+  const niceMax = (() => {
+    if (rawMax <= 0) return 1
+    const p = Math.pow(10, Math.floor(Math.log10(rawMax)))
+    const n = rawMax / p
+    return (n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10) * p
+  })()
+  const ticks = [0,0.25,0.5,0.75,1].map(t=>t*niceMax)
+  const slot = buckets.length ? cw / buckets.length : cw
+  const barW = Math.max(2, Math.min(48, slot * 0.7))
+  const labelEvery = Math.max(1, Math.ceil(buckets.length / 16))
+  const avgY = PT + ch - (avg/niceMax)*ch
+
+  const btn = active => ({padding:'6px 12px',borderRadius:7,border:`1px solid ${active?'var(--espresso)':'var(--border)'}`,background:active?'var(--espresso)':'transparent',color:active?'var(--cream)':'var(--text-muted)',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",transition:'all .15s'})
+  const yearOptions = []; for (let y = now.getFullYear()+1; y >= 2024; y--) yearOptions.push(String(y))
+
+  return (
+    <div>
+      {/* Controls */}
+      <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'14px 16px',marginBottom:16,display:'flex',flexWrap:'wrap',alignItems:'center',gap:12}}>
+        <div style={{display:'flex',gap:5}}>
+          {GRAPH_MODES.map(x=>(<button key={x.id} onClick={()=>{setMode(x.id);setHover(null)}} style={btn(mode===x.id)}>{x.label}</button>))}
+        </div>
+
+        {mode==='month' && (
+          <input type="month" value={month} onChange={e=>e.target.value&&setMonth(e.target.value)} style={{...iStyle,width:'auto',padding:'6px 10px'}}/>
+        )}
+        {mode==='year' && (
+          <select value={year} onChange={e=>setYear(e.target.value)} style={{...iStyle,width:'auto',padding:'6px 10px'}}>
+            {yearOptions.map(y=>(<option key={y} value={y}>{y}</option>))}
+          </select>
+        )}
+        {mode==='custom' && (
+          <>
+            <input type="date" value={from} onChange={e=>e.target.value&&setFrom(e.target.value)} style={{...iStyle,width:'auto',padding:'6px 10px'}}/>
+            <span style={{fontSize:11,color:'var(--text-muted)'}}>to</span>
+            <input type="date" value={to} onChange={e=>e.target.value&&setTo(e.target.value)} style={{...iStyle,width:'auto',padding:'6px 10px'}}/>
+            <div style={{display:'flex',alignItems:'center',gap:5}}>
+              <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)'}}>Group by</span>
+              {['day','week','month'].map(g=>(<button key={g} onClick={()=>setGroupBy(g)} style={btn(groupBy===g)}>{g[0].toUpperCase()+g.slice(1)}</button>))}
+            </div>
+          </>
+        )}
+
+        <select value={metric} onChange={e=>setMetric(e.target.value)} style={{...iStyle,width:'auto',padding:'6px 10px',marginLeft:'auto'}}>
+          {GRAPH_METRICS.map(x=>(<option key={x.id} value={x.id}>{x.label}</option>))}
+        </select>
+      </div>
+
+      {/* KPIs */}
+      <div className="kpi-grid" style={{marginBottom:16}}>
+        {[
+          {label:`Total ${m.label}`, value:fmtVal(total), cls:'c-matcha', icon:'💰', sub:`${fmtDate(rangeFrom)} – ${fmtDate(rangeTo)}`},
+          {label:`Average per ${unitWord}`, value:fmtVal(avg), cls:'c-gold', icon:'📊', sub:`Across ${nonZero.length} ${unitWord}${nonZero.length===1?'':'s'} with sales`},
+          {label:`Best ${unitWord}`, value:best?fmtVal(best.value):'—', cls:'c-sky', icon:'🏆', sub:best?tipFor(best.key):'No sales yet'},
+          {label:'Days with sales', value:String(daysWithSales.size), cls:'c-blush', icon:'📅', sub:`${rows.length} records`},
+        ].map(k=>(
+          <div key={k.label} className={`kpi-card ${k.cls}`}>
+            <div className="kpi-icon">{k.icon}</div>
+            <div className="kpi-label">{k.label}</div>
+            <div className="kpi-value" style={{fontSize:20}}>{k.value}</div>
+            <div className="kpi-delta neutral">{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Chart */}
+      <div style={{background:'var(--white)',border:'1px solid var(--border)',borderRadius:13,padding:'18px 18px 10px'}}>
+        <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:8,gap:10,flexWrap:'wrap'}}>
+          <div style={{fontFamily:"'Montserrat',sans-serif",fontSize:14,fontWeight:700}}>
+            {m.label} by {unitWord}
+          </div>
+          <div style={{fontSize:11,color:'var(--text-muted)',minHeight:16}}>
+            {hover!==null && buckets[hover]
+              ? <span><b style={{color:'var(--espresso-mid)'}}>{tipFor(buckets[hover].key)}</b> · <span style={{fontFamily:"'DM Mono',monospace",color:m.color,fontWeight:700}}>{fmtVal(buckets[hover].value)}</span></span>
+              : <span>Hover a bar to see the exact amount · dashed line = average</span>}
+          </div>
+        </div>
+
+        {loading ? (
+          <div style={{height:H,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,color:'var(--text-muted)'}}>Loading sales…</div>
+        ) : rows.length===0 ? (
+          <div style={{height:H,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'var(--text-muted)'}}>
+            <div style={{fontSize:36,marginBottom:8}}>📉</div>
+            <div style={{fontSize:13,fontWeight:600}}>No sales recorded for this period</div>
+          </div>
+        ) : (
+          <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',display:'block'}} onMouseLeave={()=>setHover(null)}>
+            {ticks.map((t,i)=>{
+              const y = PT + ch - (t/niceMax)*ch
+              return (
+                <g key={i}>
+                  <line x1={PL} x2={W-PR} y1={y} y2={y} stroke="#e8e0d0" strokeWidth="1"/>
+                  <text x={PL-8} y={y+4} textAnchor="end" fontSize="11" fill="#7a6a50" fontFamily="DM Mono, monospace">{fmtAxis(t)}</text>
+                </g>
+              )
+            })}
+            {buckets.map((b,i)=>{
+              const h = (b.value/niceMax)*ch
+              const x = PL + slot*i + (slot-barW)/2
+              const y = PT + ch - h
+              const active = hover===i
+              return (
+                <g key={b.key} onMouseEnter={()=>setHover(i)} onClick={()=>setHover(i)} style={{cursor:'pointer'}}>
+                  <rect x={PL+slot*i} y={PT} width={slot} height={ch} fill={active?'#f5f0e8':'transparent'}/>
+                  {b.value>0 && <rect x={x} y={y} width={barW} height={Math.max(1,h)} rx={Math.min(4,barW/3)} fill={m.color} opacity={hover===null||active?1:0.55}/>}
+                  {i % labelEvery === 0 && (
+                    <text x={PL+slot*i+slot/2} y={H-PB+16} textAnchor="middle" fontSize="11" fill="#7a6a50">{labelFor(b.key)}</text>
+                  )}
+                </g>
+              )
+            })}
+            {avg>0 && (
+              <g pointerEvents="none">
+                <line x1={PL} x2={W-PR} y1={avgY} y2={avgY} stroke="#EF4576" strokeWidth="1.5" strokeDasharray="5 4"/>
+                <text x={W-PR} y={avgY-5} textAnchor="end" fontSize="10" fontWeight="700" fill="#EF4576">avg {fmtAxis(avg)}</text>
+              </g>
+            )}
+            <line x1={PL} x2={W-PR} y1={PT+ch} y2={PT+ch} stroke="#d8cebb" strokeWidth="1"/>
+          </svg>
+        )}
+      </div>
     </div>
   )
 }
