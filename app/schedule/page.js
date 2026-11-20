@@ -29,8 +29,9 @@ const isKitchenFlexRole = r => r==='Sous Chef' || r==='Kitchen Staff' || (r||'')
 // week is past the retire date the row is hidden — unless an old assignment is still sitting
 // in it, so nothing ever disappears silently (drag it to another row to clear it).
 // Staff whose own title is "Kitchen Staff" can still be placed in the Sous Chef /
-// Junior Barista rows.
-const RETIRED_ROWS = { 'Kitchen Staff': '2026-11-20' }
+// Junior Barista rows. Shift headers follow the first VISIBLE row of each shift, so
+// retiring a shift's first row (e.g. Cafe Supervisor) doesn't drop the header.
+const RETIRED_ROWS = { 'Kitchen Staff': '2026-11-20', 'Cafe Supervisor': '2026-11-20' }
 const isRowRetiredOn = (role, iso) => !!RETIRED_ROWS[role] && iso >= RETIRED_ROWS[role]
 
 const ROLE_ROWS = [
@@ -88,6 +89,16 @@ function roleMatches(staffRole, rowRole) {
   // Executive Chef row also covers R&D Specialist — they share the same kitchen slot.
   if (rowRole === 'Executive Chef' && staffRole === 'R&D Specialist') return true
   return false
+}
+
+// Which row an assignment is pinned to. Kitchen flex rows always store it. Any other row stores
+// it only when the person's own title doesn't match that row (e.g. a "Cafe Supervisor"-titled
+// staff member placed in the Cafe Support row) — otherwise they'd be drawn back into the row
+// for their title. null = place by title (original behaviour).
+function assignedRoleFor(member, rowRole) {
+  if (!rowRole) return null
+  if (KITCHEN_FLEX_ROWS.includes(rowRole)) return rowRole
+  return roleMatches(member?.role, rowRole) ? null : rowRole
 }
 
 export default function SchedulePage() {
@@ -180,9 +191,9 @@ export default function SchedulePage() {
       if (s.shift_date !== date || s.shift_type !== shiftId) return false
       const member = staff.find(x => x.id === s.staff_id)
       if (!member) return false
+      // Explicitly pinned assignments go to exactly that row.
+      if (s.assigned_role) return s.assigned_role === rowRole
       if (KITCHEN_FLEX_ROWS.includes(rowRole)) {
-        // Placement is explicit for rows saved after assigned_role existed.
-        if (s.assigned_role) return s.assigned_role === rowRole
         // Legacy fallback for schedule rows saved before this column existed.
         if (rowRole === 'Junior Barista') return member.role.startsWith('Junior Barista')
         return member.role === rowRole
@@ -195,7 +206,7 @@ export default function SchedulePage() {
     const date = toISO(weekDates[dayIdx])
     const member = staff.find(x=>x.id===staffId)
     if (isRowRetiredOn(rowRole, date)) {
-      showToast('🚫',`${rowRole} is no longer scheduled from ${RETIRED_ROWS[rowRole]} — use Sous Chef or Junior Barista`)
+      showToast('🚫',`${rowRole} is no longer scheduled from ${RETIRED_ROWS[rowRole]}`)
       return
     }
     if (rowRole && KITCHEN_FLEX_ROWS.includes(rowRole) && !isKitchenFlexRole(member?.role)) {
@@ -210,7 +221,7 @@ export default function SchedulePage() {
       showToast('❌',`${m?.first_name} ${m?.last_name} is already assigned to ${sh?.label} on ${DAYS[dayIdx]} — remove that shift first`)
       return
     }
-    const newRow = { staff_id:staffId, shift_date:date, shift_type:shiftType, week_start:weekStart, published:false, assigned_role: KITCHEN_FLEX_ROWS.includes(rowRole) ? rowRole : null }
+    const newRow = { staff_id:staffId, shift_date:date, shift_type:shiftType, week_start:weekStart, published:false, assigned_role: assignedRoleFor(member, rowRole) }
     const temp = { ...newRow, id:'temp_'+Date.now() }
     setSchedules(prev=>[...prev,temp])
     const {data,error} = await supabase.from('schedules').insert([newRow]).select().single()
@@ -231,7 +242,7 @@ export default function SchedulePage() {
     const targetDate=toISO(weekDates[targetDayIdx])
     const member = staff.find(x=>x.id===staffId)
     if (isRowRetiredOn(targetRole, targetDate)) {
-      showToast('🚫',`${targetRole} is no longer scheduled from ${RETIRED_ROWS[targetRole]} — use Sous Chef or Junior Barista`)
+      showToast('🚫',`${targetRole} is no longer scheduled from ${RETIRED_ROWS[targetRole]}`)
       return
     }
     if (targetRole && KITCHEN_FLEX_ROWS.includes(targetRole) && !isKitchenFlexRole(member?.role)) {
@@ -239,7 +250,7 @@ export default function SchedulePage() {
       return
     }
     const old=schedules.find(s=>s.shift_date===sourceDate&&s.shift_type===sourceShift&&s.staff_id===staffId)
-    if(sourceDate===targetDate&&sourceShift===targetShift&&(old?.assigned_role||null)===(KITCHEN_FLEX_ROWS.includes(targetRole)?targetRole:null))return
+    if(sourceDate===targetDate&&sourceShift===targetShift&&(old?.assigned_role||null)===assignedRoleFor(member,targetRole))return
     const conflict = schedules.find(s=>s.shift_date===targetDate&&s.staff_id===staffId&&s.id!==old?.id)
     if (conflict) {
       const m=staff.find(x=>x.id===staffId)
@@ -248,7 +259,7 @@ export default function SchedulePage() {
       return
     }
     if(old)await supabase.from('schedules').delete().eq('id',old.id)
-    const newRow={staff_id:staffId,shift_date:targetDate,shift_type:targetShift,week_start:weekStart,published:false,assigned_role:KITCHEN_FLEX_ROWS.includes(targetRole)?targetRole:null}
+    const newRow={staff_id:staffId,shift_date:targetDate,shift_type:targetShift,week_start:weekStart,published:false,assigned_role:assignedRoleFor(member,targetRole)}
     const {data}=await supabase.from('schedules').insert([newRow]).select().single()
     if(data){
       setSchedules(prev=>[...prev.filter(s=>s.id!==old?.id),data])
@@ -545,23 +556,16 @@ export default function SchedulePage() {
               {/* Role rows */}
               {visibleRows.map((row,rowIdx)=>{
                 const shift=SHIFTS.find(s=>s.id===row.shiftId)
+                const isShiftStart = rowIdx===0 || visibleRows[rowIdx-1].shiftId!==row.shiftId
 
                 return (
                   <div key={rowIdx}>
                     {/* Shift group header */}
-                    {row.shiftBreak && (
-                      <div style={{display:'grid',gridTemplateColumns:'140px repeat(7,1fr)',background:shift.color,borderTop:'3px solid rgba(0,0,0,.15)'}}>
+                    {isShiftStart && (
+                      <div style={{display:'grid',gridTemplateColumns:'140px repeat(7,1fr)',background:shift.color,borderTop:rowIdx===0?'3px solid rgba(0,0,0,.1)':'3px solid rgba(0,0,0,.15)'}}>
                         <div style={{padding:'6px 12px',fontSize:10,fontWeight:900,color:'white',letterSpacing:1,textTransform:'uppercase',gridColumn:'1/-1',display:'flex',alignItems:'center',gap:8}}>
                           <span>{shift.label} SHIFT</span>
                           <span style={{fontSize:9,fontWeight:400,opacity:.7}}>{shift.time}</span>
-                        </div>
-                      </div>
-                    )}
-                    {rowIdx===0 && (
-                      <div style={{display:'grid',gridTemplateColumns:'140px repeat(7,1fr)',background:SHIFTS[0].color,borderTop:'3px solid rgba(0,0,0,.1)'}}>
-                        <div style={{padding:'6px 12px',fontSize:10,fontWeight:900,color:'white',letterSpacing:1,textTransform:'uppercase',gridColumn:'1/-1',display:'flex',alignItems:'center',gap:8}}>
-                          <span>AM SHIFT</span>
-                          <span style={{fontSize:9,fontWeight:400,opacity:.7}}>{SHIFTS[0].time}</span>
                         </div>
                       </div>
                     )}
