@@ -27,6 +27,10 @@ const LEADERSHIP_ROLES = ['Managing Director','CEO']
 // via the schedules.assigned_role column, not inferred from the staff member's own title.
 const KITCHEN_FLEX_ROWS = ['Sous Chef','Kitchen Staff','Junior Barista']
 const isKitchenFlexRole = r => r==='Sous Chef' || r==='Kitchen Staff' || (r||'').startsWith('Junior Barista')
+// Who may be placed in a kitchen-team row. Cafe Operations Support staff may also fill the
+// Junior Barista rows (bar only — not Sous Chef / Kitchen Staff).
+const canFillFlexRow = (staffRole, rowRole) =>
+  isKitchenFlexRole(staffRole) || (rowRole === 'Junior Barista' && staffRole === 'Cafe Operations Support')
 
 // Retired role rows — { role: 'YYYY-MM-DD' first date the row is no longer scheduled }.
 // Dates BEFORE the retire date keep the row exactly as it was (history untouched).
@@ -271,8 +275,8 @@ export default function SchedulePage() {
     const member = staff.find(x=>x.id===staffId)
     const closed = rowClosedReason(shiftType, rowRole, date)
     if (closed) { showToast('🚫', closed); return }
-    if (rowRole && KITCHEN_FLEX_ROWS.includes(rowRole) && !isKitchenFlexRole(member?.role)) {
-      showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to a kitchen-team slot`)
+    if (rowRole && KITCHEN_FLEX_ROWS.includes(rowRole) && !canFillFlexRow(member?.role, rowRole)) {
+      showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to the ${rowRole} row`)
       return
     }
     if (schedules.some(s=>s.shift_date===date&&s.shift_type===shiftType&&s.staff_id===staffId)) return
@@ -305,8 +309,8 @@ export default function SchedulePage() {
     const member = staff.find(x=>x.id===staffId)
     const closed = rowClosedReason(targetShift, targetRole, targetDate)
     if (closed) { showToast('🚫', closed); return }
-    if (targetRole && KITCHEN_FLEX_ROWS.includes(targetRole) && !isKitchenFlexRole(member?.role)) {
-      showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to a kitchen-team slot`)
+    if (targetRole && KITCHEN_FLEX_ROWS.includes(targetRole) && !canFillFlexRow(member?.role, targetRole)) {
+      showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to the ${targetRole} row`)
       return
     }
     const old=schedules.find(s=>s.shift_date===sourceDate&&s.shift_type===sourceShift&&s.staff_id===staffId)
