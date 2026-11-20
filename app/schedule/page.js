@@ -34,6 +34,19 @@ const isKitchenFlexRole = r => r==='Sous Chef' || r==='Kitchen Staff' || (r||'')
 const RETIRED_ROWS = { 'Kitchen Staff': '2026-11-20', 'Cafe Supervisor': '2026-11-20' }
 const isRowRetiredOn = (role, iso) => !!RETIRED_ROWS[role] && iso >= RETIRED_ROWS[role]
 
+// New rows can carry `from:'YYYY-MM-DD'` (first date the row is scheduled). Before that date
+// its cells are locked, and weeks entirely before it hide the row (unless something's in it).
+// MID Executive Chef / R&D Specialist starts 2026-11-30.
+const findRow = (shiftId, role) => ROLE_ROWS.find(r => r.shiftId === shiftId && r.role === role)
+function rowClosedReason(shiftId, role, iso) {
+  if (!role) return ''
+  if (isRowRetiredOn(role, iso)) return `${role} is no longer scheduled from ${RETIRED_ROWS[role]}`
+  const row = findRow(shiftId, role)
+  if (row?.from && iso < row.from) return `${row.label} starts on the ${(SHIFTS.find(s=>s.id===shiftId)?.label)||''} shift from ${row.from}`
+  return ''
+}
+const DIVIDER_LABELS = { bar:'🧋 Bar', kitchen:'🍳 Kitchen' }
+
 const ROLE_ROWS = [
   // AM
   { shiftId:'am', role:'Cafe Supervisor',          label:'Cafe Supervisor',    group:'front' },
@@ -50,6 +63,7 @@ const ROLE_ROWS = [
   { shiftId:'mid', role:'Cafe Supervisor',          label:'Cafe Supervisor',   group:'front', shiftBreak:true },
   { shiftId:'mid', role:'Cafe Operations Support',  label:'Cafe Support',      group:'front' },
   { shiftId:'mid', role:'Junior Barista',           label:'Junior Barista',    group:'bar', divider:true, dividerLabel:'🧋 Bar' },
+  { shiftId:'mid', role:'Executive Chef',           label:'Executive Chef / R&D Specialist', group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen', from:'2026-11-30' },
   { shiftId:'mid', role:'Sous Chef',                label:'Sous Chef',         group:'kitchen', divider:true, dividerLabel:'🍳 Kitchen' },
   { shiftId:'mid', role:'Kitchen Staff',            label:'Kitchen Staff',     group:'kitchen' },
   // PM
@@ -205,10 +219,8 @@ export default function SchedulePage() {
   async function addAssignment(dayIdx, shiftType, staffId, rowRole) {
     const date = toISO(weekDates[dayIdx])
     const member = staff.find(x=>x.id===staffId)
-    if (isRowRetiredOn(rowRole, date)) {
-      showToast('🚫',`${rowRole} is no longer scheduled from ${RETIRED_ROWS[rowRole]}`)
-      return
-    }
+    const closed = rowClosedReason(shiftType, rowRole, date)
+    if (closed) { showToast('🚫', closed); return }
     if (rowRole && KITCHEN_FLEX_ROWS.includes(rowRole) && !isKitchenFlexRole(member?.role)) {
       showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to a kitchen-team slot`)
       return
@@ -241,10 +253,8 @@ export default function SchedulePage() {
   async function moveAssignment(sourceDate, sourceShift, staffId, targetDayIdx, targetShift, targetRole) {
     const targetDate=toISO(weekDates[targetDayIdx])
     const member = staff.find(x=>x.id===staffId)
-    if (isRowRetiredOn(targetRole, targetDate)) {
-      showToast('🚫',`${targetRole} is no longer scheduled from ${RETIRED_ROWS[targetRole]}`)
-      return
-    }
+    const closed = rowClosedReason(targetShift, targetRole, targetDate)
+    if (closed) { showToast('🚫', closed); return }
     if (targetRole && KITCHEN_FLEX_ROWS.includes(targetRole) && !isKitchenFlexRole(member?.role)) {
       showToast('❌',`${member?.first_name} (${member?.role}) can't be assigned to a kitchen-team slot`)
       return
@@ -360,9 +370,9 @@ export default function SchedulePage() {
 
   // Hide retired rows for weeks fully past the retire date (unless something is still in them)
   const visibleRows = ROLE_ROWS.filter(row => {
-    if (!RETIRED_ROWS[row.role]) return true
-    const allRetired = weekDates.every(d => isRowRetiredOn(row.role, toISO(d)))
-    if (!allRetired) return true
+    if (!RETIRED_ROWS[row.role] && !row.from) return true
+    const allClosed = weekDates.every(d => !!rowClosedReason(row.shiftId, row.role, toISO(d)))
+    if (!allClosed) return true
     return weekDates.some((_, di) => getCellAssignments(di, row.shiftId, row.role).length > 0)
   })
 
@@ -557,6 +567,8 @@ export default function SchedulePage() {
               {visibleRows.map((row,rowIdx)=>{
                 const shift=SHIFTS.find(s=>s.id===row.shiftId)
                 const isShiftStart = rowIdx===0 || visibleRows[rowIdx-1].shiftId!==row.shiftId
+                // Bar / Kitchen divider on the first visible row of each section within a shift
+                const showDivider = !!DIVIDER_LABELS[row.group] && (isShiftStart || visibleRows[rowIdx-1].group!==row.group)
 
                 return (
                   <div key={rowIdx}>
@@ -571,10 +583,10 @@ export default function SchedulePage() {
                     )}
 
                     {/* Section divider — Kitchen / Bar */}
-                    {row.divider && (
+                    {showDivider && (
                       <div style={{display:'grid',gridTemplateColumns:'140px repeat(7,1fr)',background:'rgba(0,0,0,.04)',borderTop:'1px dashed var(--border)'}}>
                         <div style={{padding:'3px 12px',fontSize:8,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',gridColumn:'1/-1'}}>
-                          {row.dividerLabel}
+                          {DIVIDER_LABELS[row.group]}
                         </div>
                       </div>
                     )}
@@ -596,7 +608,8 @@ export default function SchedulePage() {
                         const isToday=d.toDateString()===new Date().toDateString()
                         const cellHol=holidayOn(dateISO)
                         const cellHolBg=cellHol?getHolidayType(cellHol.type).bg:null
-                        const cellRetired=isRowRetiredOn(row.role,dateISO)
+                        const cellClosedReason=rowClosedReason(row.shiftId,row.role,dateISO)
+                        const cellRetired=!!cellClosedReason
                         const cellBg = cellRetired
                           ? 'repeating-linear-gradient(45deg,#f4f1ec,#f4f1ec 6px,#ebe6de 6px,#ebe6de 12px)'
                           : assignments.length===0 && CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId)
@@ -639,7 +652,7 @@ export default function SchedulePage() {
                             {assignments.length===0 && (
                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
                                 {cellRetired ? (
-                                  <span style={{fontSize:8,fontWeight:700,color:'#a89c88',textAlign:'center',lineHeight:1.2,fontFamily:"'DM Sans',sans-serif",letterSpacing:.5,textTransform:'uppercase'}}>Retired</span>
+                                  <span style={{fontSize:8,fontWeight:700,color:'#a89c88',textAlign:'center',lineHeight:1.2,fontFamily:"'DM Sans',sans-serif",letterSpacing:.5,textTransform:'uppercase'}}>{isRowRetiredOn(row.role,dateISO)?'Retired':'Starts '+fmtDate(new Date(row.from+'T00:00:00'))}</span>
                                 ) : CRITICAL_ROLES.includes(row.role) && CRITICAL_SHIFTS.includes(row.shiftId) ? (
                                   <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
                                     <span style={{fontSize:12}}>🚨</span>
