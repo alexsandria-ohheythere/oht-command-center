@@ -2,7 +2,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import AuthShell from '../../components/AuthShell'
 import { createClient } from '../../lib/supabase'
-import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, applyScheduleToLateMinutes, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares, isServiceChargeEligible, FULL_TIME_SHIFTS_PER_CUTOFF, getHoliday, getHolidayOvertimeMultiplier } from '../../lib/payroll'
+import { CUTOFF_PERIODS, getCurrentCutoff, parseTimesheetCSV, filterShiftsByPeriod, matchStaff, computeCutoffPayroll, getDailyRate, getBaseRate, applyAdjustmentsToShifts, applyScheduleToLateMinutes, buildCorrectedShift, isoToMMDDYYYY, findTimesheetKey, capShiftHours, round2, computeServiceChargeShares, isServiceChargeEligible, FULL_TIME_SHIFTS_PER_CUTOFF, getHoliday, getHolidayOvertimeMultiplier, setHolidayList } from '../../lib/payroll'
+import { fetchHolidays } from '../../lib/holidays'
 import { generatePayslipPDF, buildPayslipRun } from '../../lib/payslipPdf'
 import { notifyOne } from '../../lib/notify'
 
@@ -107,6 +108,10 @@ export default function PayrollPage() {
   const fileRef = useRef()
 
   useEffect(() => { fetchStaff(); fetchRateOverrides(); fetchAdjustmentRequests(); fetchOvertimeRequests(); fetchCurrentStaffId() }, [])
+  // Holidays come from the Holidays module (/holidays). Loading them re-renders the page so
+  // holiday pay / holiday OT rates use the latest list (falls back to the built-in list).
+  const [holidaysLoaded, setHolidaysLoaded] = useState(0)
+  useEffect(() => { fetchHolidays(supabase).then(list => { setHolidayList(list); setHolidaysLoaded(n => n + 1) }) }, [])
   useEffect(() => { fetchSavedRuns(); fetchSavedTimesheet(); fetchAttendanceRefs() }, [selectedCutoff])
   useEffect(() => { fetchScMonthData() }, [scMonth])
 
